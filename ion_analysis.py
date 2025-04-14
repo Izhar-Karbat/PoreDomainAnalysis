@@ -20,6 +20,7 @@ import json
 from datetime import datetime
 import MDAnalysis as mda
 from MDAnalysis.analysis import distances
+from collections import defaultdict
 
 # Import from other modules
 try:
@@ -390,21 +391,22 @@ def visualize_binding_sites_g1_centric(sites_g1_centric, g1_ca_z_ref, output_dir
 
 # --- Ion Tracking ---
 
-def track_potassium_ions(run_dir, psf_file=None, dcd_file=None):
+def track_potassium_ions(run_dir, psf_file=None, dcd_file=None, exit_buffer_frames=5):
     """
     Track K+ ions near the selectivity filter over the trajectory.
-
-    Identifies filter, calculates sites, finds nearby K+ ions, records their Z positions,
-    and saves data/plots.
+    Only tracks ions when they are coordinated by binding sites, with a buffer period
+    before considering them "out" of the filter region.
 
     Args:
         run_dir (str): Directory containing trajectory files and for saving results.
         psf_file (str, optional): Path to PSF file. Defaults to 'step5_input.psf'.
         dcd_file (str, optional): Path to DCD file. Defaults to 'MD_Aligned.dcd'.
+        exit_buffer_frames (int, optional): Number of consecutive frames an ion must 
+                                           be outside filter before confirming exit.
 
     Returns:
         tuple: (ions_z_abs, time_points, ion_indices, g1_ref, sites, filter_residues)
-               - ions_z_abs (dict): {ion_idx: np.array(abs_z_positions)}
+               - ions_z_abs (dict): {ion_idx: np.array(abs_z_positions)} with NaN for frames when ion is not in filter
                - time_points (np.ndarray): Time points in ns.
                - ion_indices (list): Indices of tracked ions.
                - g1_ref (float | None): Absolute Z of G1 C-alpha plane.
@@ -493,16 +495,26 @@ def track_potassium_ions(run_dir, psf_file=None, dcd_file=None):
         return {}, time_points_err, [], g1_reference, filter_sites, filter_residues
 
     # Variables for tracking
-    ions_z_positions_abs = {ion.index: [] for ion in potassium_atoms}  # Store absolute Z
     frame_indices = []
-    tracked_ion_indices_near_filter = set()  # Ions that came close at least once
-    cutoff = 3.5
-    logger.info(f"Tracking K+ ions within {cutoff} Å of filter atoms...")
+    # Initialize numpy arrays filled with NaN for all ions (we'll only populate when ions are in filter)
+    ions_z_positions_abs = {ion.index: np.full(n_frames, np.nan) for ion in potassium_atoms}
+    
+    # Track state for each ion
+    ions_currently_inside = set()  # Set of ion indices currently in filter
+    ions_outside_streak = defaultdict(int)  # Track consecutive frames outside filter
+    ions_pending_exit_confirmation = {}  # Last frame ion was seen in filter before potential exit
+    tracked_ion_indices = set()  # Set of all ions that ever entered the filter
+    
+    cutoff = 3.5  # Distance cutoff for coordination
+    logger.info(f"Tracking K+ ions within {cutoff} Å of filter atoms, applying {exit_buffer_frames} frame exit buffer.")
 
     # --- Trajectory Iteration ---
     for ts in tqdm(u.trajectory, desc=f"Tracking K+ ({run_name})", unit="frame"):
-        frame_indices.append(ts.frame)
-        filter_atoms_pos = filter_atoms_group.positions  # Get current positions
+        frame_idx = ts.frame
+        frame_indices.append(frame_idx)
+        
+        # Get current positions
+        filter_atoms_pos = filter_atoms_group.positions
         potassium_pos = potassium_atoms.positions
         box = u.dimensions  # Use box dimensions for distance calculation
 
@@ -513,22 +525,82 @@ def track_potassium_ions(run_dir, psf_file=None, dcd_file=None):
         min_dists = np.min(dist_matrix, axis=1)
 
         # Identify ions currently near the filter
-        ions_near_this_frame = potassium_atoms[min_dists <= cutoff]
+        ions_near_this_frame = set(potassium_atoms[min_dists <= cutoff].indices)
+        
+        # --- State Transition Logic (with Exit Buffer) ---
+        # Determine ions that just entered, just exited, or stayed outside
+        if frame_idx > 0:
+            # Ions that were inside previous frame but exited this frame
+            exited_now = ions_currently_inside - ions_near_this_frame
+            # Ions that entered the filter this frame
+            entered_now = ions_near_this_frame - ions_currently_inside
+            # Ions that were outside and remained outside
+            stayed_outside = set(potassium_atoms.indices) - ions_near_this_frame - ions_currently_inside
+        else:
+            # First frame
+            exited_now = set()
+            entered_now = ions_near_this_frame
+            stayed_outside = set(potassium_atoms.indices) - ions_near_this_frame
+        
+        # 1. Handle ions entering now
+        for idx in entered_now:
+            tracked_ion_indices.add(idx)  # Add to the set of all tracked ions
+            ions_currently_inside.add(idx)
+            # Record Z position for this ion
+            ion_pos_idx = np.where(potassium_atoms.indices == idx)[0][0]
+            ions_z_positions_abs[idx][frame_idx] = potassium_pos[ion_pos_idx, 2]
+            # Clear any outside streak or pending exit
+            if idx in ions_outside_streak:
+                del ions_outside_streak[idx]
+            if idx in ions_pending_exit_confirmation:
+                del ions_pending_exit_confirmation[idx]
+        
+        # 2. Handle ions still inside filter
+        for idx in ions_currently_inside - exited_now:
+            # Record Z position
+            ion_pos_idx = np.where(potassium_atoms.indices == idx)[0][0]
+            ions_z_positions_abs[idx][frame_idx] = potassium_pos[ion_pos_idx, 2]
+        
+        # 3. Handle ions exiting now
+        for idx in exited_now:
+            if idx not in ions_pending_exit_confirmation:
+                ions_pending_exit_confirmation[idx] = frame_idx - 1  # Record last frame it was in
+            ions_outside_streak[idx] = 1  # Start outside streak
+            ions_currently_inside.remove(idx)  # Remove from inside set
+        
+        # 4. Handle ions staying outside
+        for idx in stayed_outside:
+            if idx in ions_outside_streak:
+                ions_outside_streak[idx] += 1
+                # Check if exit is confirmed (outside for > buffer frames)
+                if idx in ions_pending_exit_confirmation and ions_outside_streak[idx] > exit_buffer_frames:
+                    # Exit confirmed, clean up tracking state
+                    del ions_pending_exit_confirmation[idx]
+                    # Note: Keep outside streak for tracking purposes
+            elif idx in ions_pending_exit_confirmation:
+                # This shouldn't happen normally, but handle edge case
+                ions_outside_streak[idx] = 1
+        
+        # 5. Handle ions in exit confirmation window (they stay in 'currently_inside')
+        for idx in list(ions_pending_exit_confirmation.keys()):
+            if idx not in exited_now and idx not in stayed_outside:
+                # Ion returned to filter during confirmation window
+                del ions_pending_exit_confirmation[idx]
+                if idx in ions_outside_streak:
+                    del ions_outside_streak[idx]
+                # Make sure it's tracked as inside
+                ions_currently_inside.add(idx)
+                # Update position
+                ion_pos_idx = np.where(potassium_atoms.indices == idx)[0][0]
+                ions_z_positions_abs[idx][frame_idx] = potassium_pos[ion_pos_idx, 2]
 
-        # Update the set of ions that have been near the filter at least once
-        tracked_ion_indices_near_filter.update(ions_near_this_frame.indices)
-
-        # Record absolute Z position for ALL potassium ions in this frame
-        for i, ion in enumerate(potassium_atoms):
-            ions_z_positions_abs[ion.index].append(potassium_pos[i, 2])
-
-    # --- Post-Processing ---
+    # --- Post-Processing & Clean-up ---
     time_points = frames_to_time(frame_indices)
-    final_tracked_indices = sorted(list(tracked_ion_indices_near_filter))
-    logger.info(f"Identified {len(final_tracked_indices)} unique K+ ions passing near the filter.")
+    final_tracked_indices = sorted(list(tracked_ion_indices))
+    logger.info(f"Identified {len(final_tracked_indices)} unique K+ ions passing through the filter.")
 
     # Filter the main dictionary to keep only tracked ions
-    ions_z_tracked_abs = {idx: np.array(ions_z_positions_abs[idx]) for idx in final_tracked_indices if idx in ions_z_positions_abs}
+    ions_z_tracked_abs = {idx: ions_z_positions_abs[idx] for idx in final_tracked_indices}
 
     # Save position data (Absolute and G1-centric)
     save_ion_position_data(run_dir, time_points, ions_z_tracked_abs, final_tracked_indices, g1_reference)
@@ -538,17 +610,17 @@ def track_potassium_ions(run_dir, psf_file=None, dcd_file=None):
 
     return ions_z_tracked_abs, time_points, final_tracked_indices, g1_reference, filter_sites, filter_residues
 
-
 # --- Ion Data Saving & Plotting ---
 
 def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indices, g1_reference):
     """
     Save K+ ion Z-position data (absolute and G1-centric) to CSV files.
+    Properly handles NaN values for frames where ions are not in the filter.
 
     Args:
         run_dir (str): Directory to save the CSV files.
         time_points (np.ndarray): Array of time points in ns.
-        ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)}
+        ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)} with NaN when ion not in filter
         ion_indices (list): List of ion indices included in the dict.
         g1_reference (float): Absolute Z-coordinate of the G1 C-alpha plane.
     """
@@ -575,7 +647,7 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
     data_g1 = {'Time (ns)': time_points}
     for ion_idx in ion_indices:
         if ion_idx in ions_z_positions_abs:
-            # Calculate G1-centric positions
+            # Calculate G1-centric positions (retain NaN values)
             data_g1[f'Ion_{ion_idx}_Z_G1Centric'] = ions_z_positions_abs[ion_idx] - g1_reference
         else:
             data_g1[f'Ion_{ion_idx}_Z_G1Centric'] = np.full(len(time_points), np.nan)
@@ -587,6 +659,22 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
     except Exception as e:
         module_logger.error(f"Failed to save G1-centric ion position CSV: {e}")
 
+    # --- Add Column for Ion Presence ---
+    # Create a metadata version that includes a boolean column indicating when ion is in filter
+    data_meta = {'Time (ns)': time_points}
+    for ion_idx in ion_indices:
+        if ion_idx in ions_z_positions_abs:
+            # Add presence column (True when position is not NaN)
+            is_present = ~np.isnan(ions_z_positions_abs[ion_idx])
+            data_meta[f'Ion_{ion_idx}_InFilter'] = is_present
+    df_meta = pd.DataFrame(data_meta)
+    csv_path_meta = os.path.join(run_dir, 'K_Ion_Filter_Presence.csv')
+    try:
+        df_meta.to_csv(csv_path_meta, index=False)
+        module_logger.info(f"Saved ion filter presence data to {csv_path_meta}")
+    except Exception as e:
+        module_logger.error(f"Failed to save ion presence CSV: {e}")
+
     # Save metadata about the reference frame
     meta_path = os.path.join(run_dir, 'K_Ion_Coordinate_Reference.txt')
     try:
@@ -595,19 +683,20 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
             f.write(f"# Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             f.write(f"G1_C_alpha_reference_position_absolute_Z: {g1_reference:.4f} Å\n")
             f.write(f"Conversion_formula: Z_G1_centric = Z_Absolute - G1_C_alpha_reference_position_absolute_Z\n")
+            f.write(f"# Note: NaN values indicate frames where ion is not in the filter region\n")
         module_logger.info(f"Saved coordinate reference info to {meta_path}")
     except Exception as e:
          module_logger.error(f"Failed to save coordinate reference file: {e}")
 
-
 def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, filter_sites, g1_reference, logger=None):
     """
     Plot K+ ion Z positions (G1-centric) over time and their density distribution.
+    Properly handles NaN values for frames where ions are not in the filter.
 
     Args:
         run_dir (str): Directory to save the plots.
         time_points (np.ndarray): Time points in ns.
-        ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)}
+        ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)} with NaN when ion not in filter
         ion_indices (list): Indices of ions to plot.
         filter_sites (dict): Site positions relative to G1 C-alpha=0.
         g1_reference (float): Absolute Z of G1 C-alpha plane.
@@ -639,9 +728,42 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
         plot_colors = sns.color_palette("husl", len(ion_indices)) # Use a distinct color palette
         for i, ion_idx in enumerate(ion_indices):
             if ion_idx in ions_z_g1:
-                ax1.plot(time_points, ions_z_g1[ion_idx], color=plot_colors[i], linewidth=1.0, alpha=0.8)
-                # Optional: Add label if few ions
-                # if len(ion_indices) <= 10: ax1.plot(..., label=f'Ion {ion_idx}')
+                # Plot only non-NaN values (when ion is in filter)
+                ion_data = ions_z_g1[ion_idx]
+                mask = np.isfinite(ion_data)
+                if np.any(mask):  # Only plot if there's data
+                    # Use masked time points and data values
+                    t_points = time_points[mask]
+                    z_values = ion_data[mask]
+                    
+                    # Connect points only if they're adjacent in time
+                    segments = []
+                    current_segment = []
+                    
+                    for j in range(len(t_points)):
+                        if j > 0 and t_points[j] - t_points[j-1] > 1.5 * (time_points[1] - time_points[0]):
+                            # Gap detected, finish current segment
+                            if current_segment:
+                                segments.append(current_segment)
+                                current_segment = []
+                        
+                        current_segment.append((t_points[j], z_values[j]))
+                    
+                    # Add the last segment if it exists
+                    if current_segment:
+                        segments.append(current_segment)
+                    
+                    # Plot each segment separately
+                    for segment in segments:
+                        t_seg, z_seg = zip(*segment)
+                        ax1.plot(t_seg, z_seg, color=plot_colors[i], linewidth=1.0, alpha=0.8)
+                    
+                    # Optionally, add scatter points to show discrete positions
+                    # ax1.scatter(t_points, z_values, color=plot_colors[i], s=2, alpha=0.6)
+                    
+                    # Add label if few ions
+                    if len(ion_indices) <= 10:
+                        ax1.plot([], [], color=plot_colors[i], label=f'Ion {ion_idx}', linewidth=1.0)
 
         # Add site lines to left plot
         for site, z_pos_rel in filter_sites.items():
@@ -658,11 +780,11 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
         if len(ion_indices) <= 10: ax1.legend(fontsize='x-small')
 
         # Right subplot: Density
-        all_z_g1_flat = np.concatenate([arr for idx, arr in ions_z_g1.items() if arr is not None])
-        finite_z_g1 = all_z_g1_flat[np.isfinite(all_z_g1_flat)]
-
-        if len(finite_z_g1) > 10: # Need sufficient points for KDE
-             sns.kdeplot(y=finite_z_g1, ax=ax2, color='black', fill=True, alpha=0.2, linewidth=1.5)
+        # Collect all finite values across all ions (only when they're in filter)
+        all_z_g1_flat = np.concatenate([arr[np.isfinite(arr)] for idx, arr in ions_z_g1.items() if np.any(np.isfinite(arr))])
+        
+        if len(all_z_g1_flat) > 10: # Need sufficient points for KDE
+             sns.kdeplot(y=all_z_g1_flat, ax=ax2, color='black', fill=True, alpha=0.2, linewidth=1.5)
              ax2.set_xlabel('Density', fontsize=14)
         else:
              ax2.text(0.5, 0.5, 'Insufficient\ndata for\nDensity Plot', ha='center', va='center', transform=ax2.transAxes)
@@ -677,15 +799,14 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
         ax2.tick_params(axis='x', labelsize=10)
         ax2.grid(axis='y', linestyle=':', alpha=0.5, zorder=0)
 
-
         # Set shared Y limits based on site range or data range
         if filter_sites:
             site_values = list(filter_sites.values())
             y_min = min(site_values) - 3.0
             y_max = max(site_values) + 3.0
-        elif len(finite_z_g1) > 0 :
-            y_min = np.nanmin(finite_z_g1) - 3.0
-            y_max = np.nanmax(finite_z_g1) + 3.0
+        elif len(all_z_g1_flat) > 0:
+            y_min = np.nanmin(all_z_g1_flat) - 3.0
+            y_max = np.nanmax(all_z_g1_flat) + 3.0
         else:
              y_min, y_max = -15, 15 # Fallback limits
         ax1.set_ylim(y_min, y_max)
@@ -702,15 +823,146 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
         log.error(f"Failed to generate combined ion plot: {e}", exc_info=True)
         if 'fig' in locals() and plt.fignum_exists(fig.number): plt.close(fig)
 
-    # --- Standalone Density Plot (optional, maybe remove if combined is sufficient) ---
-    # (Code similar to right panel of combined plot)
-
     # --- Occupancy Heatmap/Bar Plot (using dedicated function) ---
     try:
         _ = create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1, ion_indices, filter_sites, logger=log)
     except Exception as e:
         log.error(f"Failed to create ion occupancy heatmap/plots: {e}", exc_info=True)
 
+
+def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_indices, filter_sites, logger=None):
+    """
+    Create heatmap and bar chart showing K+ ion occupancy in binding sites.
+    Properly handles NaN values for frames where ions are not in the filter.
+    Saves plots and occupancy data CSV.
+
+    Args:
+        run_dir (str): Directory to save the plot and CSV.
+        time_points (np.ndarray): Time points in ns.
+        ions_z_g1_centric (dict): {ion_idx: np.array(g1_centric_z_pos)} with NaN when ion not in filter
+        ion_indices (list): List of tracked ion indices.
+        filter_sites (dict): Site positions relative to G1 C-alpha=0.
+        logger (logging.Logger, optional): Logger instance. Defaults to module logger.
+
+    Returns:
+        str | None: Path to the saved heatmap PNG, or None on error.
+    """
+    log = logger if logger else module_logger
+    if not filter_sites:
+        log.warning("Filter sites data missing, cannot create occupancy heatmap.")
+        return None
+    if not ion_indices:
+        log.info("No ion indices provided for occupancy heatmap.")
+        # Create empty CSV for consistency? Or just return None? Let's return None.
+        return None
+
+    log.info("Creating K+ ion occupancy plots...")
+
+    # Define binding site boundaries (midway between ordered sites)
+    site_names_ordered = ['S0', 'S1', 'S2', 'S3', 'S4', 'Cavity'] # Extracellular to Intracellular
+    # Filter sites present in the input dict and sort them by Z-position (descending)
+    available_sites = {site: pos for site, pos in filter_sites.items() if site in site_names_ordered}
+    if not available_sites:
+         log.error("No standard sites (S0-S4, Cavity) found in filter_sites dict.")
+         return None
+
+    sorted_sites = sorted(available_sites.items(), key=lambda item: item[1], reverse=True)
+    site_names_plot = [item[0] for item in sorted_sites]
+    site_pos_plot = [item[1] for item in sorted_sites]
+
+    # Calculate boundaries: midway points + outer bounds
+    boundaries = []
+    boundaries.append(site_pos_plot[0] + 1.5 if site_pos_plot else np.inf) # Top boundary
+    for i in range(len(site_pos_plot) - 1):
+        boundaries.append((site_pos_plot[i] + site_pos_plot[i+1]) / 2)
+    boundaries.append(site_pos_plot[-1] - 1.5 if site_pos_plot else -np.inf) # Bottom boundary
+    n_sites = len(site_names_plot)
+
+    # Create occupancy matrix (frames x sites)
+    n_frames = len(time_points)
+    occupancy = np.zeros((n_frames, n_sites), dtype=int) # Use int for counts
+
+    for frame_idx in range(n_frames):
+        for ion_idx in ion_indices:
+            if ion_idx in ions_z_g1_centric:
+                z_pos = ions_z_g1_centric[ion_idx][frame_idx]
+                if np.isfinite(z_pos):  # Only consider non-NaN positions (ion is in filter)
+                    # Assign to site based on boundaries (upper_bound > z >= lower_bound)
+                    for site_idx in range(n_sites):
+                        upper_bound = boundaries[site_idx]
+                        lower_bound = boundaries[site_idx + 1]
+                        if lower_bound <= z_pos < upper_bound:
+                            occupancy[frame_idx, site_idx] += 1
+                            break # Ion assigned to one site
+
+    # --- Create Heatmap ---
+    try:
+        fig, ax = plt.subplots(figsize=(12, 6)) # Adjusted size
+        max_occ = np.max(occupancy) if occupancy.size > 0 else 1
+        cmap = plt.cm.get_cmap("viridis", max_occ + 1) # Discrete colormap based on max occupancy
+
+        im = ax.imshow(occupancy.T, aspect='auto', cmap=cmap,
+                       interpolation='nearest', origin='upper', # Origin upper to match site order S0->Cavity
+                       extent=[time_points[0], time_points[-1], n_sites, 0], # Adjust extent for origin='upper'
+                       vmin=-0.5, vmax=max_occ + 0.5) # Center ticks for discrete colors
+
+        # Add colorbar with integer ticks
+        cbar = plt.colorbar(im, ax=ax, ticks=np.arange(max_occ + 1))
+        cbar.set_label('Number of K+ Ions', fontsize=12)
+
+        ax.set_yticks(np.arange(n_sites) + 0.5) # Center ticks between site boundaries
+        ax.set_yticklabels(site_names_plot) # Use the ordered site names
+
+        ax.set_xlabel('Time (ns)', fontsize=14)
+        ax.set_ylabel('Binding Site', fontsize=14)
+        ax.set_title(f'K+ Ion Occupancy Heatmap ({os.path.basename(run_dir)})', fontsize=16)
+        plt.tight_layout()
+        heatmap_path = os.path.join(run_dir, 'K_Ion_Occupancy_Heatmap.png')
+        fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        log.debug(f"Saved occupancy heatmap to {heatmap_path}")
+    except Exception as e:
+         log.error(f"Failed to generate occupancy heatmap: {e}", exc_info=True)
+         heatmap_path = None # Indicate failure
+         if 'fig' in locals() and plt.fignum_exists(fig.number): plt.close(fig)
+
+    # --- Create Average Occupancy Bar Chart ---
+    try:
+        fig, ax = plt.subplots(figsize=(8, 5)) # Adjusted size
+        if occupancy.size > 0:
+            avg_occupancy = np.mean(occupancy, axis=0)
+            sns.barplot(x=site_names_plot, y=avg_occupancy, ax=ax, palette='viridis', order=site_names_plot)
+
+            # Add exact values above bars
+            for i, v in enumerate(avg_occupancy):
+                ax.text(i, v + 0.01 * np.max(avg_occupancy), f"{v:.2f}", ha='center', va='bottom', fontsize=9)
+        else:
+             ax.text(0.5, 0.5, 'No occupancy data', ha='center', va='center')
+
+        ax.set_xlabel('Binding Site', fontsize=12)
+        ax.set_ylabel('Average K+ Ion Occupancy', fontsize=12)
+        ax.set_title(f'Average Site Occupancy ({os.path.basename(run_dir)})', fontsize=14)
+        ax.tick_params(axis='x', rotation=45)
+        plt.tight_layout()
+        avg_path = os.path.join(run_dir, 'K_Ion_Average_Occupancy.png')
+        fig.savefig(avg_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        log.debug(f"Saved average occupancy bar chart to {avg_path}")
+    except Exception as e:
+        log.error(f"Failed to generate average occupancy plot: {e}", exc_info=True)
+        if 'fig' in locals() and plt.fignum_exists(fig.number): plt.close(fig)
+
+    # --- Save the raw occupancy data per frame ---
+    try:
+        df = pd.DataFrame(occupancy, columns=site_names_plot)
+        df.insert(0, 'Time (ns)', time_points)
+        csv_path = os.path.join(run_dir, 'K_Ion_Occupancy_Per_Frame.csv') # More descriptive name
+        df.to_csv(csv_path, index=False, float_format='%.4f')
+        log.info(f"Saved frame-by-frame ion occupancy to {csv_path}")
+    except Exception as e:
+        log.error(f"Failed to save occupancy per frame CSV: {e}")
+
+    return heatmap_path
 
 def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_indices, filter_sites, logger=None):
     """
@@ -851,12 +1103,13 @@ def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_in
 def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_indices, filter_sites, g1_reference):
     """
     Analyze K+ ion occupancy statistics for each binding site.
-    Uses G1-centric coordinates for calculations. Saves stats to CSV.
+    Uses G1-centric coordinates for calculations. Properly handles NaN values
+    for frames where ions are not in the filter. Saves stats to CSV.
 
     Args:
         run_dir (str): Directory to save the analysis results CSV.
         time_points (np.ndarray): Array of time points in ns.
-        ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)}
+        ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)} with NaN when ion not in filter
         ion_indices (list): List of tracked ion indices.
         filter_sites (dict): Site positions relative to G1 C-alpha=0.
         g1_reference (float): Absolute Z of G1 C-alpha plane.
@@ -879,7 +1132,6 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
         try: empty_df.to_csv(stats_path, index=False); coord_log.info(f"Saved empty ion stats file to {stats_path}")
         except: pass
         return empty_df
-
 
     # --- Convert to G1-Centric ---
     ions_z_g1 = {}
@@ -917,16 +1169,16 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
 
     for frame_idx in range(num_frames):
         for ion_idx in ion_indices:
-             if ion_idx in ions_z_g1: # Check if ion exists and has valid data
-                 z_pos = ions_z_g1[ion_idx][frame_idx]
-                 if np.isfinite(z_pos):
-                     for site_idx in range(n_sites):
-                         upper_bound = boundaries[site_idx]
-                         lower_bound = boundaries[site_idx + 1]
-                         if lower_bound <= z_pos < upper_bound:
-                             site_name = site_names_analysis[site_idx]
-                             site_occupancy_counts[site_name][frame_idx] += 1
-                             break
+            if ion_idx in ions_z_g1: # Check if ion exists and has valid data
+                z_pos = ions_z_g1[ion_idx][frame_idx]
+                if np.isfinite(z_pos):  # Only consider non-NaN positions (ion is in filter)
+                    for site_idx in range(n_sites):
+                        upper_bound = boundaries[site_idx]
+                        lower_bound = boundaries[site_idx + 1]
+                        if lower_bound <= z_pos < upper_bound:
+                            site_name = site_names_analysis[site_idx]
+                            site_occupancy_counts[site_name][frame_idx] += 1
+                            break
 
     # --- Calculate Statistics ---
     stats_data = []

@@ -387,6 +387,53 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
 
     logger.info(f"Finished filtering and saving data for {run_dir}.")
     # Return filtered data, filter info, and the newly calculated stats
+    # --- Generate and Save Plots --- # MOVED PLOTTING HERE
+    run_name = os.path.basename(run_dir) # Get run name for titles
+    try:
+        logger.info("Generating comparison and final plots...")
+
+        # G-G Plots
+        fig_gg_ac = plot_filtering_comparison(time_points, dist_ac, filtered_ac, filter_info_gg.get('AC', {}), f"{run_name} - A:C", data_type='gg')
+        fig_gg_bd = plot_filtering_comparison(time_points, dist_bd, filtered_bd, filter_info_gg.get('BD', {}), f"{run_name} - B:D", data_type='gg')
+        fig_gg_raw = plot_pore_diameter(time_points, dist_ac, dist_bd, run_name, filtered=False)
+        fig_gg_filtered = plot_pore_diameter(time_points, filtered_ac, filtered_bd, run_name, filtered=True)
+
+        fig_gg_ac.savefig(os.path.join(run_dir, "G_G_Distance_AC_Comparison.png"), bbox_inches='tight')
+        fig_gg_bd.savefig(os.path.join(run_dir, "G_G_Distance_BD_Comparison.png"), bbox_inches='tight')
+        fig_gg_raw.savefig(os.path.join(run_dir, "GG_Distance_Plot_raw.png"), bbox_inches='tight')
+        fig_gg_filtered.savefig(os.path.join(run_dir, "GG_Distance_Plot.png"), bbox_inches='tight')
+
+        plt.close(fig_gg_ac); plt.close(fig_gg_bd); plt.close(fig_gg_raw); plt.close(fig_gg_filtered)
+        logger.debug("G-G plots saved.")
+
+        # COM Plots (only if COM was analyzed)
+        if com_distances is not None:
+            if filtered_com is not None:
+                fig_com = plot_filtering_comparison(time_points, com_distances, filtered_com, filter_info_com, run_name, data_type='com')
+                fig_com.savefig(os.path.join(run_dir, "COM_Stability_Comparison.png"), bbox_inches='tight')
+                plt.close(fig_com)
+
+                fig_com_filtered = plot_com_positions(time_points, filtered_com, run_name, filtered=True)
+                fig_com_filtered.savefig(os.path.join(run_dir, "COM_Stability_Plot.png"), bbox_inches='tight')
+                plt.close(fig_com_filtered)
+            else:
+                 logger.warning("Filtered COM data is None, skipping comparison and filtered plots.")
+
+            fig_com_raw = plot_com_positions(time_points, com_distances, run_name, filtered=False)
+            fig_com_raw.savefig(os.path.join(run_dir, "COM_Stability_Plot_raw.png"), bbox_inches='tight')
+            plt.close(fig_com_raw)
+
+            # Generate KDE plot if raw data exists
+            fig_com_kde = plot_kde_analysis(time_points, com_distances, run_name, data_type='com')
+            fig_com_kde.savefig(os.path.join(run_dir, "COM_Stability_KDE_Analysis.png"), bbox_inches='tight')
+            plt.close(fig_com_kde)
+            logger.debug("COM plots saved.")
+        else:
+            logger.info("Skipping COM plot generation (no raw COM data).")
+
+    except Exception as e:
+        logger.error(f"Error generating plots: {e}", exc_info=True)
+
     return filtered_ac, filtered_bd, filtered_com, filter_info_gg, filter_info_com, raw_stats, percentile_stats
 
 
@@ -560,12 +607,10 @@ def plot_kde_analysis(time_points, data, title, data_type='com'):
         for i in range(n_levels):
             mask = assignments == i
             if np.any(mask):
-                ax2.scatter(time_points[mask], data[mask], color=colors[i], s=5, alpha=0.6, label=f"Level {i+1} (~{peak_values[i]:.2f}Å)")
-        ax2.legend(fontsize=9, loc='upper right')
+                ax2.scatter(time_points[mask], data[mask], color=colors[i], s=5, alpha=0.6)
         ax2.set_title('Time Series with Potential Level Assignments', fontsize=16)
     else:
         ax2.plot(time_points, data, color='steelblue', linewidth=1)
-        ax2.set_title('Raw Time Series Data', fontsize=16)
 
     ax2.set_xlabel('Time (ns)', fontsize=14)
     ax2.set_ylabel(ylabel, fontsize=14)

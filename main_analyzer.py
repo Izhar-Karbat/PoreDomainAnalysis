@@ -115,26 +115,39 @@ def main():
 
 
     # --- Determine Which Analyses to Run ---
-    run_all_analyses = args.all or not (args.GG or args.COM or args.orientation or args.ions or args.water)
-    if run_all_analyses:
-        logging.info("Running ALL analyses.")
+    run_all_initially = args.all or not (args.GG or args.COM or args.orientation or args.ions or args.water)
+    if run_all_initially:
+        logging.info("Initial flag setting: Running ALL analyses.")
     else:
-        logging.info("Running SPECIFIC analyses (HTML report generation will be skipped).")
+        logging.info("Initial flag setting: Running SPECIFIC analyses based on flags.")
 
-    run_gg = args.GG or run_all_analyses
-    run_com = args.COM or run_all_analyses
-    # Run orientation if specifically requested OR if COM is run (needed for summary)
-    run_orientation = args.orientation or run_com
-    # Run ion tracking if ions or water analysis is requested
-    run_ion_tracking = args.ions or args.water or run_all_analyses
-    run_ion_coordination = args.ions or run_all_analyses
-    run_water = args.water or run_all_analyses
+    run_gg = args.GG or run_all_initially
+    run_com = args.COM or run_all_initially
+    run_orientation = args.orientation or run_com # Keep dependency on run_com
+    run_ion_tracking = args.ions or args.water or run_all_initially # Keep dependency on water
+    run_ion_coordination = args.ions or run_all_initially
+    run_water = args.water or run_all_initially
+
+    # --- Override if --force_rerun is specified ---
+    if args.force_rerun:
+        logging.warning("--force_rerun specified. Overriding analysis flags to run ALL analyses.")
+        run_gg = True
+        run_com = True
+        run_orientation = True
+        run_ion_tracking = True
+        run_ion_coordination = True
+        run_water = True
+
+    # Final determination of whether to generate the full HTML report
+    # Generate HTML only if all individual analyses ended up being True
+    generate_html = run_gg and run_com and run_orientation and run_ion_tracking and run_ion_coordination and run_water
 
     # Flag indicating if *any* analysis requiring trajectory read should run
     run_any_core_analysis = run_gg or run_com or run_orientation or run_ion_tracking or run_water
 
-    logging.info(f"Analysis execution plan: GG={run_gg}, COM={run_com}, Orientation={run_orientation}, "
+    logging.info(f"Final analysis execution plan: GG={run_gg}, COM={run_com}, Orientation={run_orientation}, "
                  f"IonTracking={run_ion_tracking}, IonCoordination={run_ion_coordination}, Water={run_water}")
+    logging.info(f"Generate HTML Report: {generate_html}")
 
     # ===========================
     # --- PowerPoint Only Mode ---
@@ -224,7 +237,7 @@ def main():
                 run_ion_tracking=run_ion_tracking,
                 run_ion_coordination=run_ion_coordination,
                 run_water=run_water,
-                generate_html=run_all_analyses, # HTML only if all analyses requested
+                generate_html=generate_html, # HTML only if all analyses requested
                 box_z=args.box_z,
                 force_rerun=args.force_rerun # Pass force flag
             )
@@ -285,7 +298,7 @@ def main():
                 run_ion_tracking=run_ion_tracking,
                 run_ion_coordination=run_ion_coordination,
                 run_water=run_water,
-                generate_html=run_all_analyses, # HTML only if all analyses requested
+                generate_html=generate_html, # HTML only if all analyses requested
                 box_z=args.box_z,
                 force_rerun=args.force_rerun # Pass force flag
             )
@@ -352,7 +365,7 @@ def main():
                 run_ion_tracking=run_ion_tracking,
                 run_ion_coordination=run_ion_coordination,
                 run_water=run_water,
-                generate_html=run_all_analyses, # HTML only if all analyses requested
+                generate_html=generate_html, # HTML only if all analyses requested
                 box_z=args.box_z,
                 force_rerun=args.force_rerun # Pass force flag
             )
