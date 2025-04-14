@@ -51,6 +51,7 @@ from datetime import datetime
 from collections import defaultdict
 import traceback # For more detailed error logging
 import numpy as np
+import MDAnalysis as mda
 
 # --- Import constants and functions from refactored modules ---
 try:
@@ -59,7 +60,7 @@ try:
     from logger_setup import setup_root_logger, setup_system_logger
     from core_analysis import analyze_trajectory, filter_and_save_data
     from orientation_contacts import analyze_toxin_orientation
-    from ion_analysis import track_potassium_ions, analyze_ion_coordination # Make sure track returns filter_residues now
+    from ion_analysis import track_potassium_ions, analyze_ion_coordination
     from water_analysis import analyze_cavity_water
     from summary import calculate_and_save_run_summary
     from reporting import generate_html_report, Create_PPT
@@ -443,19 +444,28 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         'dist_ac': None, 'dist_bd': None, 'com_distances': None, 'time_points': None,
         'filtered_ac': None, 'filtered_bd': None, 'filtered_com': None,
         'filter_info_gg': {}, 'filter_info_com': {},
-        'ions_z_abs': None, 'time_points_ions': None, 'ion_indices': [],
-        'g1_reference': None, 'filter_sites': None, 'filter_residues': None, # Added filter_residues
-        'cavity_water_stats': {},
+        'ions_z_g1_filtered': None, 'time_points_ions': None, 'ion_indices': [], # Updated ion keys
+        'g1_reference': None, 'filter_sites': None, 'filter_residues': None,
+        'cavity_water_stats': {}, 'ion_transit_stats': {}, # Added ion transit stats
+        'orientation_rotation_stats': {}, 'raw_dist_stats': {}, 'percentile_stats': {},
         'com_analyzed': False, # Flag: Was COM calculated?
+        'is_control_system': False # Flag: Is this a control system?
     }
 
     # --- Execute Analyses ---
     try:
         # 1. Core Trajectory Analysis (G-G, COM Raw) - Always run if any analysis needed
         logging.info("Running Core Trajectory Analysis...")
-        results['dist_ac'], results['dist_bd'], results['com_distances'], results['time_points'], _ = \
+        # Unpack 6 values, including is_control_system
+        results['dist_ac'], results['dist_bd'], results['com_distances'], results['time_points'], _, results['is_control_system'] = \
             analyze_trajectory(run_dir, psf_file=psf_file, dcd_file=dcd_file)
         results['com_analyzed'] = results['com_distances'] is not None
+
+        # Update logs based on system type
+        if results['is_control_system']:
+            logging.info(f"CONTROL system detected (no toxin) for {system_name}/{run_name}")
+        else:
+            logging.info(f"Toxin-channel complex system detected for {system_name}/{run_name}")
 
         # Check if trajectory analysis returned valid time points
         if results['time_points'] is None or len(results['time_points']) == 0:
@@ -469,59 +479,85 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             results['raw_dist_stats'], results['percentile_stats'] = \
                 filter_and_save_data(
                     run_dir, results['dist_ac'], results['dist_bd'],
-                    results['com_distances'], results['time_points'], box_z=box_z
+                    results['com_distances'], results['time_points'],
+                    box_z=box_z,
+                    is_control_system=results['is_control_system'] # Pass flag
                 )
 
-            # Update com_analyzed based on filtered result too
+            # Update com_analyzed based on raw distance result
             results['com_analyzed'] = results['com_distances'] is not None
-            #if results['filtered_com'] is not None: results['com_analyzed'] = True # Redundant if raw check is done
 
         # 3. Ion Tracking (if requested or needed by water)
         if run_ion_tracking:
             logging.info("Running K+ Ion Tracking...")
-            # *** IMPORTANT: Ensure track_potassium_ions returns filter_residues ***
-            # Modify ion_analysis.py if needed. Assuming it now returns:
-            # ions_z_abs, time_points_ions, ion_indices, g1_ref, sites, filter_residues_dict
+            # track_potassium_ions returns: ions_z_abs, time_points, ion_indices, g1_ref, sites, filter_residues
             ions_z_abs, time_points_ions, ion_indices, g1_ref, sites, filter_res_dict = \
                 track_potassium_ions(run_dir, psf_file=psf_file, dcd_file=dcd_file)
-
-            # Store results
+            # Assign to results dictionary
             results['ions_z_abs'] = ions_z_abs
             results['time_points_ions'] = time_points_ions
             results['ion_indices'] = ion_indices
             results['g1_reference'] = g1_ref
             results['filter_sites'] = sites
-            results['filter_residues'] = filter_res_dict # Store the identified filter residues
+            results['filter_residues'] = filter_res_dict
+            # NOTE: results['ion_transit_stats'] is NOT assigned here anymore
 
-        # 4. Toxin Orientation/Contacts (if requested)
-        if run_orientation:
+        # 4. Toxin Orientation/Contacts (if requested and NOT a control system)
+        if run_orientation and not results['is_control_system']:
             logging.info("Running Toxin Orientation Analysis...")
             if results['com_analyzed']:
                 # This saves its own files and now returns rotation stats
-                # Unpack the results including the new rotation_stats
                 _, _, _, _, results['orientation_rotation_stats'] = \
                     analyze_toxin_orientation(dcd_file, psf_file, run_dir)
             else:
-                logging.warning("Skipping Toxin Orientation analysis (no COM data).")
+                # Should not happen if com_analyzed is False for control, but safety check
+                logging.warning("Skipping Toxin Orientation analysis (run requested but COM not analyzed).")
+                results['orientation_rotation_stats'] = {}
+        elif run_orientation and results['is_control_system']:
+            logging.info("Skipping Toxin Orientation analysis (control system without toxin).")
+            # Set empty rotation stats for control systems for consistency
+            results['orientation_rotation_stats'] = { # Set to None, not NaN, matching summary expectation
+                'Orient_RotX_Mean': None, 'Orient_RotX_Std': None,
+                'Orient_RotY_Mean': None, 'Orient_RotY_Std': None,
+                'Orient_RotZ_Mean': None, 'Orient_RotZ_Std': None
+            }
+        elif not run_orientation:
+             # If not run, ensure stats dict exists but is empty or nullified
+             results['orientation_rotation_stats'] = { # Set to None
+                'Orient_RotX_Mean': None, 'Orient_RotX_Std': None,
+                'Orient_RotY_Mean': None, 'Orient_RotY_Std': None,
+                'Orient_RotZ_Mean': None, 'Orient_RotZ_Std': None
+             }
 
         # 5. Ion Coordination (if requested)
         if run_ion_coordination:
             logging.info("Running K+ Ion Coordination Analysis...")
-            # Check prerequisites from ion tracking step
-            if results['filter_sites'] and results['ions_z_abs'] is not None and results['time_points_ions'] is not None:
-                analyze_ion_coordination(
-                    run_dir, results['time_points_ions'], results['ions_z_abs'],
-                    results['ion_indices'], results['filter_sites'], results['g1_reference']
-                )
+            # Prerequisites: Need results from ion tracking (filtered Z, indices, residues)
+            # and the Universe object needs to be loaded.
+            if results.get('ion_indices') is not None and results.get('filter_residues'):
+                try:
+                    # Call the refactored function with CORRECT arguments
+                    analyze_ion_coordination(
+                        run_dir,
+                        results['time_points_ions'],      # Pass correct time points
+                        results['ions_z_abs'],           # Pass correct Z positions
+                        results['ion_indices'],          # Pass correct indices
+                        results['filter_sites'],         # Pass correct filter sites
+                        results['g1_reference']          # Pass correct G1 reference
+                    )
+                except FileNotFoundError:
+                    logging.error("Coordination: PSF or DCD file not found. Cannot load Universe.")
+                except Exception as e_coord_setup:
+                    logging.error(f"Coordination: Error during setup or execution: {e_coord_setup}", exc_info=True)
             else:
-                logging.warning("Skipping Ion Coordination (missing prerequisites from ion tracking).")
+                logging.warning("Skipping Ion Coordination (missing prerequisites from ion tracking: indices or residues).")
 
         # 6. Cavity Water (if requested)
         if run_water:
             logging.info("Running Cavity Water Analysis...")
             # Check prerequisites (sites, reference, and the filter_residues dict)
-            if results['filter_sites'] and results['filter_residues'] \
-               and isinstance(results['g1_reference'], (float, int, np.number)):
+            if results.get('filter_sites') and results.get('filter_residues') \
+               and isinstance(results.get('g1_reference'), (float, int, np.number)):
                 results['cavity_water_stats'] = analyze_cavity_water(
                     run_dir, psf_file, dcd_file,
                     results['filter_sites'], results['g1_reference'], results['filter_residues'] # Pass filter_residues
@@ -533,13 +569,18 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
 
         # 7. Calculate and Save Final Summary JSON
         logging.info("Calculating and saving summary JSON...")
+        # Ensure all potentially needed dicts are present, even if empty
         calculate_and_save_run_summary(
             run_dir, system_name, run_name,
-            results['com_analyzed'], results['filter_info_com'], results['ion_indices'],
-            results['cavity_water_stats'],
-            raw_dist_stats=results.get('raw_dist_stats', {}),  # Pass new stats
-            percentile_stats=results.get('percentile_stats', {}), # Pass new stats
-            orientation_rotation_stats=results.get('orientation_rotation_stats', {}) # Pass new stats
+            results.get('com_analyzed', False), # Use .get with default
+            results.get('filter_info_com', {}),
+            results.get('ion_indices', []),
+            results.get('cavity_water_stats', {}),
+            raw_dist_stats=results.get('raw_dist_stats', {}), # Corrected from raw_stats
+            percentile_stats=results.get('percentile_stats', {}),
+            orientation_rotation_stats=results.get('orientation_rotation_stats', {}),
+            ion_transit_stats=results.get('ion_transit_stats', {}),
+            is_control_system=results.get('is_control_system', False) # <<< ADDED THIS ARGUMENT
         )
 
         # 8. Generate HTML Report (only if all analyses were run)

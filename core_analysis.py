@@ -39,6 +39,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     """
     Analyze a single trajectory file to extract raw G-G and COM distances.
     Opens the trajectory, calculates metrics per frame, and saves raw data to CSV files.
+    Detects if this is a control system (no toxin) and records this information.
 
     Args:
         run_dir (str): Path to the specific run directory (used for output and logging).
@@ -52,7 +53,9 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
             - com_distances (np.ndarray | None): Raw Toxin-Channel COM distances, or None if no toxin.
             - time_points (np.ndarray): Time points corresponding to frames (in ns).
             - system_dir (str): Name of the parent directory (system name). Returns 'Unknown' on error.
-            Returns (np.array([0]), np.array([0]), None, np.array([0]), 'Unknown') on critical error.
+            - is_control_system (bool): Flag indicating if this is a control system (no toxin present).
+              Returns True if no toxin chain was found, False otherwise.
+            Returns (np.array([0]), np.array([0]), None, np.array([0]), 'Unknown', True) on critical error.
     """
     # Set up system-specific logger
     logger = setup_system_logger(run_dir)
@@ -73,10 +76,10 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     if not os.path.exists(psf_file):
         logger.error(f"PSF file not found: {psf_file}")
-        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown'
+        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown', True  # Assume control on error
     if not os.path.exists(dcd_file):
         logger.error(f"DCD file not found: {dcd_file}")
-        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown'
+        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown', True  # Assume control on error
 
     # --- Load Universe ---
     try:
@@ -87,11 +90,11 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
         logger.info(f"Successfully loaded universe with {n_frames} frames")
         if n_frames == 0:
             logger.warning("Trajectory contains 0 frames.")
-            return np.array([]), np.array([]), None, np.array([]), system_dir
-
+            # Treat empty trajectory as control? Or error? Let's assume control for now.
+            return np.array([]), np.array([]), None, np.array([]), system_dir, True
     except Exception as e:
         logger.error(f"Failed to load MDAnalysis Universe: {e}", exc_info=True)
-        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
+        return np.array([]), np.array([]), None, np.array([]), 'Unknown', True  # Assume control on error
 
     # --- Setup Selections ---
     dist_ac = []
@@ -131,7 +134,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     except Exception as e:
         logger.error(f"Error finding reference Glycine for G-G distance: {e}", exc_info=True)
-        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
+        return np.array([]), np.array([]), None, np.array([]), 'Unknown', True  # Assume control on error
 
     # COM Selection (Toxin vs Channel)
     toxin_segids = ['PROE', 'E', 'PEP', 'TOX']
@@ -140,26 +143,36 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     pep_sel = None
     for seg in toxin_segids:
+        # Check if atoms actually exist for this segid in the Universe
+        # Using u.select_atoms is more robust than checking segids array
         if len(u.select_atoms(f'segid {seg}')) > 0:
             pep_sel = f'segid {seg}'
-            logger.info(f"Using Toxin selection: '{pep_sel}'")
+            logger.info(f"Found Toxin selection: '{pep_sel}'")
             break
 
     chan_sel = 'segid ' + ' or segid '.join(channel_segids_pro)
     if len(u.select_atoms(chan_sel)) == 0:
-        chan_sel = 'segid ' + ' or segid '.join(channel_segids_alt)
-        logger.info(f"Using Alternate Channel selection: '{chan_sel}'")
+        # Try alternate channel segids if PROA etc. not found
+        chan_sel_alt = 'segid ' + ' or segid '.join(channel_segids_alt)
+        if len(u.select_atoms(chan_sel_alt)) > 0:
+             chan_sel = chan_sel_alt
+             logger.info(f"Using Alternate Channel selection: '{chan_sel}'")
+        else:
+             logger.warning(f"Could not find channel atoms using standard selections: '{chan_sel}' or '{chan_sel_alt}'.")
+             # Attempt to proceed with G-G only if possible? For now, treat as error.
+             return np.array([]), np.array([]), None, np.array([]), 'Unknown', True # Assume control if channel not found
+
     else:
         logger.info(f"Using Channel selection: '{chan_sel}'")
 
-    if len(u.select_atoms(chan_sel)) == 0:
-        logger.error(f"Could not find channel atoms using standard selections.")
-        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
-
     # Determine if COM analysis is possible (if toxin was found)
     com_analyzed = pep_sel is not None
-    if not com_analyzed:
-        logger.info("No toxin selection found. COM distance analysis will be skipped.")
+    is_control_system = not com_analyzed  # NEW: Flag to indicate control system (no toxin)
+
+    if is_control_system:
+        logger.info("No toxin selection found. This appears to be a CONTROL system without toxin.")
+    else:
+        logger.info(f"Toxin found with selection '{pep_sel}'. This appears to be a toxin-channel complex system.")
 
     # --- Trajectory Iteration ---
     logger.info(f"Starting trajectory analysis loop ({n_frames} frames)...")
@@ -171,24 +184,46 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
             try:
                 ca_atoms = {}
                 found_all_gg = True
-                for pro_seg, alt_seg in zip(channel_segids_pro, channel_segids_alt):
-                    sel_str = f'resid {reference_resid} and name CA and (segid {pro_seg} or segid {alt_seg})'
-                    atoms = u.select_atoms(sel_str)
-                    if len(atoms) == 1:
-                        ca_atoms[alt_seg] = atoms
-                    elif len(atoms) == 0:
-                        logger.warning(f"Missing CA atom for G-G distance at frame {ts.frame}: {sel_str}")
-                        ca_atoms[alt_seg] = None
-                        found_all_gg = False
-                    else:
-                        logger.warning(f"Multiple CA atoms found for G-G distance at frame {ts.frame}: {sel_str}")
-                        ca_atoms[alt_seg] = atoms[0]
+                # Iterate through pairs of opposing chains (A/C, B/D) based on selected channel segids
+                opposing_chains = [('A', 'C'), ('B', 'D')]
+                current_channel_segids = [s.replace('segid ', '') for s in chan_sel.split(' or ')]
 
-                if found_all_gg and ca_atoms['A'] and ca_atoms['C'] and ca_atoms['B'] and ca_atoms['D']:
+                # Determine the base names (A, B, C, D) from the found channel segids
+                chain_map = {}
+                for seg in current_channel_segids:
+                    if seg.startswith("PRO"): chain_map[seg[-1]] = seg # Map A to PROA etc.
+                    else: chain_map[seg] = seg # Map A to A etc.
+
+                for chain1_base, chain2_base in opposing_chains:
+                    segid1 = chain_map.get(chain1_base)
+                    segid2 = chain_map.get(chain2_base)
+
+                    if not segid1 or not segid2:
+                         logger.warning(f"Could not find matching segids for G-G pair {chain1_base}-{chain2_base} from {current_channel_segids}")
+                         found_all_gg = False
+                         continue
+
+                    # Find CA for chain 1
+                    sel_str1 = f'resid {reference_resid} and name CA and segid {segid1}'
+                    atoms1 = u.select_atoms(sel_str1)
+                    if len(atoms1) == 1: ca_atoms[chain1_base] = atoms1
+                    else: logger.warning(f"G-G: Found {len(atoms1)} atoms for {sel_str1} at frame {ts.frame}"); found_all_gg = False; ca_atoms[chain1_base] = None
+
+                    # Find CA for chain 2
+                    sel_str2 = f'resid {reference_resid} and name CA and segid {segid2}'
+                    atoms2 = u.select_atoms(sel_str2)
+                    if len(atoms2) == 1: ca_atoms[chain2_base] = atoms2
+                    else: logger.warning(f"G-G: Found {len(atoms2)} atoms for {sel_str2} at frame {ts.frame}"); found_all_gg = False; ca_atoms[chain2_base] = None
+
+                # Calculate distances if all atoms found for both pairs
+                if ca_atoms.get('A') and ca_atoms.get('C'):
                     dist_ac.append(float(distances.dist(ca_atoms['A'], ca_atoms['C'])[2]))
-                    dist_bd.append(float(distances.dist(ca_atoms['B'], ca_atoms['D'])[2]))
                 else:
                     dist_ac.append(np.nan)
+
+                if ca_atoms.get('B') and ca_atoms.get('D'):
+                    dist_bd.append(float(distances.dist(ca_atoms['B'], ca_atoms['D'])[2]))
+                else:
                     dist_bd.append(np.nan)
 
             except Exception as e_gg:
@@ -196,7 +231,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                 dist_ac.append(np.nan)
                 dist_bd.append(np.nan)
 
-            # COM Calculation (only if toxin exists)
+            # COM Calculation (only if toxin exists - not for control systems)
             if com_analyzed:
                 try:
                     pep = u.select_atoms(pep_sel)
@@ -207,6 +242,9 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                         pep_positions.append(pep_pos.tolist())
                         ch_positions.append(cha_pos.tolist())
                     else:
+                        # Log if selections become empty mid-trajectory
+                        if len(pep) == 0: logger.warning(f"Toxin selection '{pep_sel}' empty at frame {ts.frame}")
+                        if len(cha) == 0: logger.warning(f"Channel selection '{chan_sel}' empty at frame {ts.frame}")
                         pep_positions.append([np.nan, np.nan, np.nan])
                         ch_positions.append([np.nan, np.nan, np.nan])
                 except Exception as e_com:
@@ -216,7 +254,12 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     except Exception as loop_err:
         logger.error(f"Error during trajectory loop: {loop_err}", exc_info=True)
-        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
+        # Return results processed so far, if any, otherwise empty/defaults
+        time_points_err = frames_to_time(frame_indices) if frame_indices else np.array([])
+        dist_ac_err = np.array(dist_ac) if dist_ac else np.array([])
+        dist_bd_err = np.array(dist_bd) if dist_bd else np.array([])
+        com_dist_err = np.linalg.norm(np.array(pep_positions) - np.array(ch_positions), axis=1) if com_analyzed and pep_positions and ch_positions else None
+        return dist_ac_err, dist_bd_err, com_dist_err, time_points_err, system_dir, is_control_system # Pass calculated flag
 
     logger.info(f"Completed trajectory analysis loop. Processed {len(frame_indices)} frames.")
 
@@ -227,22 +270,27 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     com_distances_raw = None
     if com_analyzed:
-        pep_positions_np = np.array(pep_positions)
-        ch_positions_np = np.array(ch_positions)
-        rel_vector = pep_positions_np - ch_positions_np
-        com_distances_raw = np.linalg.norm(rel_vector, axis=1)
+        # Check if positions were actually collected before calculating norm
+        if pep_positions and ch_positions and len(pep_positions) == len(frame_indices):
+            pep_positions_np = np.array(pep_positions)
+            ch_positions_np = np.array(ch_positions)
+            rel_vector = pep_positions_np - ch_positions_np
+            com_distances_raw = np.linalg.norm(rel_vector, axis=1)
 
-        com_df = pd.DataFrame({
-            'Frame': frame_indices,
-            'Time (ns)': time_points,
-            'COM_Distance_Raw': com_distances_raw
-        })
-        com_csv_path = os.path.join(run_dir, "COM_Stability_Raw.csv")
-        try:
-            com_df.to_csv(com_csv_path, index=False, float_format='%.4f', na_rep='NaN')
-            logger.info(f"Saved raw COM data to {com_csv_path}")
-        except Exception as e:
-            logger.error(f"Failed to save raw COM CSV: {e}")
+            com_df = pd.DataFrame({
+                'Frame': frame_indices,
+                'Time (ns)': time_points,
+                'COM_Distance_Raw': com_distances_raw
+            })
+            com_csv_path = os.path.join(run_dir, "COM_Stability_Raw.csv")
+            try:
+                com_df.to_csv(com_csv_path, index=False, float_format='%.4f', na_rep='NaN')
+                logger.info(f"Saved raw COM data to {com_csv_path}")
+            except Exception as e:
+                logger.error(f"Failed to save raw COM CSV: {e}")
+        else:
+             logger.warning("COM analysis was enabled, but no COM positions were collected (check trajectory loop warnings). Setting raw COM distances to None.")
+
 
     gg_df = pd.DataFrame({
         'Frame': frame_indices,
@@ -257,14 +305,28 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     except Exception as e:
         logger.error(f"Failed to save raw G-G CSV: {e}")
 
-    return dist_ac, dist_bd, com_distances_raw, time_points, system_dir
+    # Save system type info to a file for easier access by other modules
+    system_type_path = os.path.join(run_dir, "system_type.txt")
+    try:
+        with open(system_type_path, 'w') as f:
+            f.write(f"IS_CONTROL_SYSTEM={is_control_system}\\n")
+            f.write(f"HAS_TOXIN={com_analyzed}\\n")
+            f.write(f"TOXIN_SELECTION={pep_sel if pep_sel else 'None'}\\n")
+            f.write(f"CHANNEL_SELECTION={chan_sel}\\n")
+        logger.info(f"Saved system type information to {system_type_path}")
+    except Exception as e:
+        logger.warning(f"Failed to save system type information: {e}")
+
+    # Final return with the determined control system status
+    return dist_ac, dist_bd, com_distances_raw, time_points, system_dir, is_control_system
 
 
 # --- Filtering Application and Plotting ---
 
-def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, box_z=None):
+def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, box_z=None, is_control_system=False):
     """
     Apply filtering to the raw distance data (G-G and COM) and save filtered data and plots.
+    Handles both normal and control systems appropriately.
 
     Args:
         run_dir (str): Path to the specific run directory for output.
@@ -274,6 +336,8 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
         time_points (np.ndarray): Time points corresponding to frames (in ns).
         box_z (float, optional): Estimated or known box Z-dimension, passed to
                                  multi-level filter if used for COM distance.
+        is_control_system (bool, optional): Flag indicating if this is a control system (no toxin).
+                                            Defaults to False.
 
     Returns:
         tuple: Contains:
@@ -298,12 +362,30 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
     raw_stats['GG_BD_Mean_Raw'] = np.nanmean(dist_bd) if dist_bd is not None else np.nan
     raw_stats['COM_Mean_Raw'] = np.nanmean(com_distances) if com_distances is not None else np.nan
 
-    # --- Filter G-G Distances ---
+    # --- Filter G-G Distances --- (Always perform for both system types)
     filtered_ac, filter_info_ac = auto_select_filter(dist_ac, data_type='gg_distance')
     filtered_bd, filter_info_bd = auto_select_filter(dist_bd, data_type='gg_distance')
+    filter_info_gg = {'AC': filter_info_ac, 'BD': filter_info_bd}
 
-    # --- Filter COM Distances ---
-    if com_distances is not None and len(com_distances) > 1:
+    # --- Filter COM Distances --- (Skip for control systems)
+    filtered_com = None
+    filter_info_com = {}
+
+    if is_control_system:
+        logger.info("Control system detected - skipping COM distance filtering.")
+        filter_info_com = {
+            'Method': 'None',
+            'Threshold': None,
+            'Window': None,
+            'Polyorder': None,
+            'Level': None,
+            'Threshold_Factor': None,
+            'Z_Threshold_Factor': None,
+            'is_control_system': True
+        }
+        # Ensure filtered_com remains None
+        filtered_com = None
+    elif com_distances is not None and len(com_distances) > 1:
         try:
             kwargs = {'box_size': box_z} if box_z is not None else {}
             filtered_com, filter_info_com = auto_select_filter(
@@ -311,10 +393,13 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
                 data_type='com_distance',
                 **kwargs
             )
+            filter_info_com['is_control_system'] = False
         except Exception as e:
             logger.error(f"Error filtering COM data: {e}", exc_info=True)
-            filter_info_com = {'error': str(e)}
-            filtered_com = np.array(com_distances)
+            filter_info_com = {'error': str(e), 'is_control_system': False}
+            filtered_com = np.array(com_distances) # Use raw if filter fails
+
+        # Save filtered COM CSV only if filtering was attempted
         com_filtered_df = pd.DataFrame({
             'Time (ns)': time_points,
             'COM_Distance_Raw': com_distances,
@@ -326,13 +411,14 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
             logger.info(f"Saved filtered COM data to {com_filtered_path}")
         except Exception as e:
             logger.error(f"Failed to save filtered COM CSV: {e}")
-    elif com_distances is not None:
-        logger.info(f"COM distance filtering not applicable (no COM data).")
+    elif com_distances is not None: # Case where COM data exists but too short to filter
+        logger.info(f"COM distance data too short to filter ({len(com_distances)} points). Skipping filtering.")
+        filter_info_com = {'reason': 'Insufficient data length', 'is_control_system': False}
+        filtered_com = np.array(com_distances) # Return raw as filtered
+    else: # Case where com_distances was None initially (should be caught by is_control_system=True now)
+        logger.info("No COM data provided.")
+        filter_info_com = {'reason': 'No COM data provided', 'is_control_system': is_control_system}
         filtered_com = None
-        filter_info_com = {'Method': 'None', 'Threshold': np.nan, 'Window': np.nan, 'Polyorder': np.nan, 'Level': np.nan, 'Threshold_Factor': np.nan, 'Z_Threshold_Factor': np.nan}
-    else:
-        filtered_com = None
-        filter_info_com = {'reason': 'No COM data provided'}
 
     # --- Calculate Percentiles ---
     percentile_stats = {}
@@ -356,18 +442,28 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
                 stats[keys[0]] = np.nan
                 stats[keys[1]] = np.nan
         else:
-            stats[keys[0]] = np.nan
+            stats[keys[0]] = np.nan # Use NaN if input data is None or empty
             stats[keys[1]] = np.nan
         return stats
 
+    # Always calculate G-G percentiles
     percentile_stats.update(_calculate_percentiles(dist_ac, 'GG_AC', 'Raw'))
     percentile_stats.update(_calculate_percentiles(dist_bd, 'GG_BD', 'Raw'))
-    percentile_stats.update(_calculate_percentiles(com_distances, 'COM', 'Raw'))
     percentile_stats.update(_calculate_percentiles(filtered_ac, 'GG_AC', 'Filt'))
     percentile_stats.update(_calculate_percentiles(filtered_bd, 'GG_BD', 'Filt'))
-    percentile_stats.update(_calculate_percentiles(filtered_com, 'COM', 'Filt'))
 
-    # --- Save Filtered Data ---
+    # Only calculate COM percentiles for non-control systems
+    if not is_control_system:
+        percentile_stats.update(_calculate_percentiles(com_distances, 'COM', 'Raw'))
+        percentile_stats.update(_calculate_percentiles(filtered_com, 'COM', 'Filt'))
+    else:
+        # For control systems, explicitly set COM percentiles to None (not NaN)
+        percentile_stats['COM_Pctl10_Raw'] = None
+        percentile_stats['COM_Pctl90_Raw'] = None
+        percentile_stats['COM_Pctl10_Filt'] = None
+        percentile_stats['COM_Pctl90_Filt'] = None
+
+    # --- Save Filtered G-G Data --- (Always perform)
     if filtered_ac is not None or filtered_bd is not None:
         gg_df_filt = pd.DataFrame({
             'Time (ns)': time_points,
@@ -383,16 +479,12 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
         except Exception as e:
             logger.error(f"Failed to save filtered G-G CSV: {e}")
 
-    filter_info_gg = {'AC': filter_info_ac, 'BD': filter_info_bd}
-
-    logger.info(f"Finished filtering and saving data for {run_dir}.")
-    # Return filtered data, filter info, and the newly calculated stats
-    # --- Generate and Save Plots --- # MOVED PLOTTING HERE
+    # --- Generate and Save Plots --- #
     run_name = os.path.basename(run_dir) # Get run name for titles
     try:
         logger.info("Generating comparison and final plots...")
 
-        # G-G Plots
+        # G-G Plots (Always generate)
         fig_gg_ac = plot_filtering_comparison(time_points, dist_ac, filtered_ac, filter_info_gg.get('AC', {}), f"{run_name} - A:C", data_type='gg')
         fig_gg_bd = plot_filtering_comparison(time_points, dist_bd, filtered_bd, filter_info_gg.get('BD', {}), f"{run_name} - B:D", data_type='gg')
         fig_gg_raw = plot_pore_diameter(time_points, dist_ac, dist_bd, run_name, filtered=False)
@@ -406,8 +498,8 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
         plt.close(fig_gg_ac); plt.close(fig_gg_bd); plt.close(fig_gg_raw); plt.close(fig_gg_filtered)
         logger.debug("G-G plots saved.")
 
-        # COM Plots (only if COM was analyzed)
-        if com_distances is not None:
+        # COM Plots (only for non-control systems with COM data)
+        if not is_control_system and com_distances is not None:
             if filtered_com is not None:
                 fig_com = plot_filtering_comparison(time_points, com_distances, filtered_com, filter_info_com, run_name, data_type='com')
                 fig_com.savefig(os.path.join(run_dir, "COM_Stability_Comparison.png"), bbox_inches='tight')
@@ -428,12 +520,18 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
             fig_com_kde.savefig(os.path.join(run_dir, "COM_Stability_KDE_Analysis.png"), bbox_inches='tight')
             plt.close(fig_com_kde)
             logger.debug("COM plots saved.")
-        else:
+        elif is_control_system:
+            logger.info("Skipping COM plot generation (control system without toxin).")
+        else: # Case where com_distances was None
             logger.info("Skipping COM plot generation (no raw COM data).")
 
     except Exception as e:
         logger.error(f"Error generating plots: {e}", exc_info=True)
 
+    # Add is_control_system to the raw_stats dictionary for downstream use
+    raw_stats['is_control_system'] = is_control_system
+
+    logger.info(f"Finished filtering, saving, and plotting for {run_dir}.")
     return filtered_ac, filtered_bd, filtered_com, filter_info_gg, filter_info_com, raw_stats, percentile_stats
 
 

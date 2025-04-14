@@ -10,6 +10,7 @@ import traceback
 from datetime import datetime
 import numpy as np
 import pandas as pd
+import json # <<< Add json import
 import jinja2 # For HTML templating
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -60,6 +61,7 @@ HTML_TEMPLATE = """
         .warning-box h4 { color: #856404; margin-top: 0; }
         .error-box { background-color: #f8d7da; border-left: 5px solid #dc3545; padding: 15px; margin: 15px 0; border-radius: 4px; font-size: 0.9em;}
         .error-box h4 { color: #721c24; margin-top: 0; }
+        .control-system-banner { background-color: #17a2b8; color: white; text-align: center; padding: 10px; margin: 15px 0; border-radius: 4px; font-weight: bold; font-size: 1.1em; }
         pre { background-color: #f8f9fa; padding: 10px; border: 1px solid #ddd; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 0.9em; max-height: 300px; overflow-y: auto;}
         .footer { text-align: center; margin-top: 30px; font-size: 0.8em; color: #666; }
         td, th { word-wrap: break-word; } /* Prevent table cell overflow */
@@ -68,6 +70,9 @@ HTML_TEMPLATE = """
 <body>
     <div class="container">
         <h1>MD Analysis Report</h1>
+        {% if run_summary.IsControlSystem %}
+        <div class="control-system-banner">CONTROL SYSTEM (NO TOXIN)</div>
+        {% endif %}
         <p class="footer">Generated: {{ generation_timestamp }} | Analysis Version: {{ run_summary.AnalysisScriptVersion }}</p>
 
         <div class="section">
@@ -76,6 +81,7 @@ HTML_TEMPLATE = """
                 <tr><th>System</th><td>{{ run_summary.SystemName }}</td></tr>
                 <tr><th>Run</th><td>{{ run_summary.RunName }}</td></tr>
                 <tr><th>Path</th><td>{{ run_summary.RunPath }}</td></tr>
+                <tr><th>System Type</th><td>{% if run_summary.IsControlSystem %}Control (No Toxin){% else %}Toxin-Channel Complex{% endif %}</td></tr>
                 <tr><th>Analysis Status</th><td>{{ run_summary.AnalysisStatus }}</td></tr>
                 <tr><th>Analysis Timestamp</th><td>{{ run_summary.AnalysisTimestamp }}</td></tr>
             </table>
@@ -115,7 +121,7 @@ HTML_TEMPLATE = """
             {% endif %}
         </div>
 
-        {% if run_summary.COM_Mean_Filt is not none %} {# Check if COM stats exist #}
+        {% if not run_summary.IsControlSystem and run_summary.COM_Mean_Filt is not none %} {# Only show for non-control systems with COM data #}
         <div class="section">
             <h2>COM Distance Analysis (Toxin-Channel Stability)</h2>
             <div class="info-box">
@@ -154,11 +160,18 @@ HTML_TEMPLATE = """
             </div>
             {% endif %}
         </div>
+        {% elif run_summary.IsControlSystem %}
+        <div class="section">
+            <h2>COM Distance Analysis</h2>
+            <div class="info-box">
+                This is a control system without toxin. COM distance analysis is not applicable.
+            </div>
+        </div>
         {% else %}
         <div class="section"><p><i>COM distance analysis not performed or data unavailable.</i></p></div>
         {% endif %}
 
-        {% if run_summary.COM_Mean_Filt is not none %} {# Only show if not control #}
+        {% if not run_summary.IsControlSystem and run_summary.COM_Mean_Filt is not none %} {# Only show for non-control systems #}
         <div class="section">
             <h2>Toxin Orientation & Interface Analysis</h2>
              <table class="stats-table">
@@ -192,6 +205,13 @@ HTML_TEMPLATE = """
                  <h3>Full Residue Contact Map</h3>
                  {% if img_data.Toxin_Channel_Residue_Contact_Map_Full %} <img src="data:image/png;base64,{{ img_data.Toxin_Channel_Residue_Contact_Map_Full }}" alt="Full Contact Map"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
              </div>
+        </div>
+        {% elif run_summary.IsControlSystem %}
+        <div class="section">
+            <h2>Toxin Orientation & Interface Analysis</h2>
+            <div class="info-box">
+                This is a control system without toxin. Orientation and interface analysis is not applicable.
+            </div>
         </div>
         {% endif %}
 
@@ -407,6 +427,7 @@ def Create_PPT(unique_dirs, com_averages):
     """
     Creates a PowerPoint presentation summarizing results from multiple runs.
     Includes raw/filtered distance plots, orientation plots, and a COM summary table.
+    Clearly identifies control systems vs toxin-channel systems.
 
     Args:
         unique_dirs (list): List of paths to the run directories to include.
@@ -418,10 +439,43 @@ def Create_PPT(unique_dirs, com_averages):
 
     # Group runs by system (assuming the system name is the parent folder)
     systems = defaultdict(list)
+    # Track control status for each run
+    control_status = {}
+
     for d in unique_dirs:
         sys_name = os.path.basename(os.path.dirname(d)) if os.path.dirname(d) else os.path.basename(d)
         run_name = os.path.basename(d)
-        systems[sys_name].append((run_name, d)) # Store (run_name, run_dir)
+
+        # Try to determine if this is a control system by checking summary file
+        is_control = False
+        summary_path = os.path.join(d, 'analysis_summary.json')
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path, 'r') as f:
+                    summary_data = json.load(f)
+                    is_control = summary_data.get('IsControlSystem', False)
+            except Exception as e:
+                logger.warning(f"Could not read summary file {summary_path} to check control status: {e}")
+                # If we can't read the file or determine control status, assume not control
+                pass
+
+        # Alternative method: check system_type.txt if summary file not available
+        if not os.path.exists(summary_path):
+            system_type_path = os.path.join(d, 'system_type.txt')
+            if os.path.exists(system_type_path):
+                try:
+                    with open(system_type_path, 'r') as f:
+                        lines = f.readlines()
+                        for line in lines:
+                            if line.strip().startswith('IS_CONTROL_SYSTEM='):
+                                is_control = line.strip().split('=')[1].lower() == 'true'
+                                break
+                except Exception as e:
+                    logger.warning(f"Could not read system_type.txt file {system_type_path} to check control status: {e}")
+                    pass
+
+        control_status[(sys_name, run_name)] = is_control
+        systems[sys_name].append((run_name, d, is_control))  # Store (run_name, run_dir, is_control)
 
     # Sort systems alphabetically, then runs within each system
     sorted_system_names = sorted(systems.keys())
@@ -440,9 +494,9 @@ def Create_PPT(unique_dirs, com_averages):
     plot_types = [
         {"title_suffix": "(Raw Data)", "com_file": "COM_Stability_Plot_raw.png", "gg_file": "GG_Distance_Plot_raw.png"},
         {"title_suffix": "(Filtered Data)", "com_file": "COM_Stability_Plot.png", "gg_file": "GG_Distance_Plot.png"},
-        {"title_suffix": "(Toxin Orientation)", "plot1_file": "Toxin_Orientation_Angle.png", "plot2_file": "Toxin_Channel_Contacts.png"},
-        {"title_suffix": "(Toxin Rotation)", "plot1_file": "Toxin_Rotation_Components.png", "plot2_file": None}, # Only one plot for rotation usually
-        {"title_suffix": "(Focused Contacts)", "plot1_file": "Toxin_Channel_Residue_Contact_Map_Focused.png", "plot2_file": None},
+        {"title_suffix": "(Toxin Orientation)", "plot1_file": "Toxin_Orientation_Angle.png", "plot2_file": "Toxin_Channel_Contacts.png", "skip_control": True},
+        {"title_suffix": "(Toxin Rotation)", "plot1_file": "Toxin_Rotation_Components.png", "plot2_file": None, "skip_control": True}, # Only one plot for rotation usually
+        {"title_suffix": "(Focused Contacts)", "plot1_file": "Toxin_Channel_Residue_Contact_Map_Focused.png", "plot2_file": None, "skip_control": True},
         {"title_suffix": "(Ion Positions)", "plot1_file": "K_Ion_Combined_Plot.png", "plot2_file": None},
         {"title_suffix": "(Ion Occupancy)", "plot1_file": "K_Ion_Occupancy_Heatmap.png", "plot2_file": "K_Ion_Average_Occupancy.png"},
         {"title_suffix": "(Cavity Water)", "plot1_file": "Cavity_Water_Count_Plot.png", "plot2_file": "Cavity_Water_Residence_Hist.png"}
@@ -453,17 +507,30 @@ def Create_PPT(unique_dirs, com_averages):
         plots_on_current_slide = 0
         plot_idx_on_slide = 0
         plots_per_slide = max_cols * max_rows
+        skip_control = plot_info.get('skip_control', False)
 
         for sys_name in sorted_system_names:
             runs = sorted(systems[sys_name], key=lambda x: x[0]) # Sort runs (R1, R2...)
 
-            for i, (run_name, run_dir) in enumerate(runs):
+            for i, (run_name, run_dir, is_control) in enumerate(runs):
+                # Skip control systems for toxin-specific plots
+                if skip_control and is_control:
+                    continue
+
                 # --- Create new slide if needed ---
                 if plot_idx_on_slide % plots_per_slide == 0:
                      slide_layout = prs.slide_layouts[5] # Title only layout
                      current_slide = prs.slides.add_slide(slide_layout)
                      title = current_slide.shapes.title
-                     title.text = f"{sys_name} - {run_name} ... {plot_info['title_suffix']}" # Indicate start run
+                     # Try to find the first non-control run name for the title if skipping controls
+                     first_run_name_for_title = run_name
+                     if skip_control:
+                         for rn, rd, ic in runs[i:]:
+                             if not ic:
+                                 first_run_name_for_title = rn
+                                 break
+
+                     title.text = f"{sys_name} - {first_run_name_for_title} ... {plot_info['title_suffix']}" # Indicate start run
                      # Reset plot index for the new slide
                      plot_idx_on_slide = 0
 
@@ -495,15 +562,18 @@ def Create_PPT(unique_dirs, com_averages):
                          logger.warning(f"Could not add picture {plot2_path} to PPT: {e}")
 
                 if added_plot:
-                     # Add run name label below plots
+                     # Add run name label with control system indicator if applicable
+                     label_text = f"{sys_name}/{run_name}"
+                     if is_control:
+                         label_text += " (Control)" # Indicate control system
                      text_box = current_slide.shapes.add_textbox(left, top + (plot_height * 2 if plot2_path and os.path.exists(plot2_path) else plot_height) + Inches(0.05), plot_width, Inches(0.2))
                      tf = text_box.text_frame
-                     tf.text = f"{sys_name}/{run_name}"
+                     tf.text = label_text
                      tf.paragraphs[0].font.size = Pt(7)
                      tf.word_wrap = False
                      plot_idx_on_slide += 1 # Increment position index only if plot(s) were added
 
-    # --- SUMMARY TABLE SLIDE ---
+    # --- SUMMARY TABLE SLIDE --- (Add control indicator here too)
     if com_averages:
         slide_layout = prs.slide_layouts[5]
         slide = prs.slides.add_slide(slide_layout)
@@ -511,9 +581,12 @@ def Create_PPT(unique_dirs, com_averages):
         title.text = "COM Distance Summary (Filtered Avg)"
 
         # Determine table dimensions
-        max_runs_per_system = max(len(v) for v in com_averages.values()) if com_averages else 0
+        max_runs_per_system = 0
+        for sys_name in sorted_system_names:
+            max_runs_per_system = max(max_runs_per_system, len(systems[sys_name]))
+
         cols = 2 + max_runs_per_system # System, Avg, R1, R2...
-        rows = len(com_averages) + 1 # Header + one row per system
+        rows = len(sorted_system_names) + 1 # Header + one row per system
 
         # Adjust table size/position
         left = Inches(0.5); top = Inches(1.5)
@@ -530,19 +603,58 @@ def Create_PPT(unique_dirs, com_averages):
 
             # Data rows
             row_idx = 1
-            for sys_name in sorted_system_names: # Use sorted names
-                avg_list = com_averages.get(sys_name, [])
-                table.cell(row_idx, 0).text = sys_name
-                overall_avg = np.mean(avg_list) if avg_list else np.nan
-                table.cell(row_idx, 1).text = f"{overall_avg:.3f}" if not np.isnan(overall_avg) else "N/A"
+            for sys_name in sorted_system_names:
+                system_runs = sorted(systems[sys_name], key=lambda x: x[0]) # Get sorted runs for this system
+                avg_list = []
+                control_in_system = False # Flag if any run in this system is control
+                for run_name, run_dir, is_control in system_runs:
+                    # Look up the specific run's COM average
+                    run_key = (sys_name, run_name)
+                    # Find the index of this run in the original com_averages dict list if needed
+                    # This assumes com_averages[sys_name] is ordered same as system_runs - simplified here
+                    com_val = com_averages.get(sys_name, {}).get(run_name, None)
+                    avg_list.append(com_val)
+                    if is_control:
+                        control_in_system = True
+
+                # System Name and Control Indicator
+                system_label = sys_name
+                if control_in_system:
+                    # Could check if *all* are control vs mixed
+                    all_control = all(run[2] for run in system_runs)
+                    if all_control:
+                         system_label += " (Control System)"
+                    else:
+                         system_label += " (Mixed Runs)" # Indicate mix of control/non-control
+                table.cell(row_idx, 0).text = system_label
+
+                # Calculate Overall Average COM (excluding None/NaN and potentially excluding control runs)
+                valid_coms = [val for val, run_info in zip(avg_list, system_runs) if val is not None and not np.isnan(val) and not run_info[2]] # Exclude controls from avg
+                overall_avg = np.mean(valid_coms) if valid_coms else np.nan
+                table.cell(row_idx, 1).text = f"{overall_avg:.3f}" if not np.isnan(overall_avg) else "N/A (or Control Only)"
+
+                # Fill in individual run COM values
                 for j in range(max_runs_per_system):
-                    table.cell(row_idx, j + 2).text = f"{avg_list[j]:.3f}" if j < len(avg_list) and avg_list[j] is not None else ""
+                    if j < len(system_runs):
+                        run_name, run_dir, is_control = system_runs[j]
+                        com_val = avg_list[j]
+                        cell_text = f"{com_val:.3f}" if com_val is not None and not np.isnan(com_val) else ("N/A" if is_control else "")
+                        if is_control:
+                            cell_text += " (C)" # Indicator for control run
+                        table.cell(row_idx, j + 2).text = cell_text
+                    else:
+                        table.cell(row_idx, j + 2).text = ""
                 row_idx += 1
 
              # --- Optional: Apply basic table styling ---
             for col_idx in range(cols): table.columns[col_idx].width = Inches(1.1) # Adjust column width
             for row in table.rows: row.height = Inches(0.25)
             # Add more styling as needed (font size, alignment...)
+            # e.g., Set font size for the whole table
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.text_frame.paragraphs:
+                        paragraph.font.size = Pt(8)
 
         except Exception as e:
             logger.error(f"Failed to create summary table in PowerPoint: {e}", exc_info=True)
@@ -551,11 +663,12 @@ def Create_PPT(unique_dirs, com_averages):
             tf = txBox.text_frame
             tf.text = f"Error creating summary table:\n{e}"
 
-
     # --- Save Presentation ---
     out_ppt = "MD_Analysis_Summary.pptx" # Consistent name
     try:
         prs.save(out_ppt)
         logger.info(f"PowerPoint presentation saved as '{out_ppt}'.")
+    except PermissionError as e:
+        logger.error(f"Failed to save PowerPoint '{out_ppt}'. Check if the file is open or permissions are correct: {e}")
     except Exception as e:
         logger.error(f"Failed to save PowerPoint presentation '{out_ppt}': {e}", exc_info=True)

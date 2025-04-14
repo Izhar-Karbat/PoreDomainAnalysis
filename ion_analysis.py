@@ -931,7 +931,8 @@ def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_in
         fig, ax = plt.subplots(figsize=(8, 5)) # Adjusted size
         if occupancy.size > 0:
             avg_occupancy = np.mean(occupancy, axis=0)
-            sns.barplot(x=site_names_plot, y=avg_occupancy, ax=ax, palette='viridis', order=site_names_plot)
+            sns.barplot(x=site_names_plot, y=avg_occupancy, hue=site_names_plot,
+                        ax=ax, palette='viridis', order=site_names_plot, legend=False)
 
             # Add exact values above bars
             for i, v in enumerate(avg_occupancy):
@@ -1064,7 +1065,8 @@ def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_in
         fig, ax = plt.subplots(figsize=(8, 5)) # Adjusted size
         if occupancy.size > 0:
             avg_occupancy = np.mean(occupancy, axis=0)
-            sns.barplot(x=site_names_plot, y=avg_occupancy, ax=ax, palette='viridis', order=site_names_plot)
+            sns.barplot(x=site_names_plot, y=avg_occupancy, hue=site_names_plot,
+                        ax=ax, palette='viridis', order=site_names_plot, legend=False)
 
             # Add exact values above bars
             for i, v in enumerate(avg_occupancy):
