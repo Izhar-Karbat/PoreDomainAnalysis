@@ -2,7 +2,7 @@ Markdown
 
 # Molecular Dynamics Simulation Analysis Suite (v1.5.0)
 
-**Version:** 1.4.0 (April 14, 2025)
+**Version:** 1.5.0 (April 14, 2025)
 
 ## Overview
 

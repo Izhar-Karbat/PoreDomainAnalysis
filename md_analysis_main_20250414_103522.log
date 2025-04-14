@@ -1,0 +1,36 @@
+2025-04-14 10:35:22,077 - INFO - [root:setup_root_logger] - Root logger configured. Console Level: 20, File Level: 20
+2025-04-14 10:35:22,077 - INFO - [root:setup_root_logger] - Main execution log file: /home/labs/bmeitan/karbati/MD_Analysis/md_analysis_main_20250414_103522.log
+2025-04-14 10:35:22,077 - INFO - [root:setup_root_logger] - Python version: 3.9.21 | packaged by conda-forge | (main, Dec  5 2024, 13:51:40) 
+[GCC 13.3.0]
+2025-04-14 10:35:22,077 - INFO - [root:setup_root_logger] - Current working directory: /home/labs/bmeitan/karbati/MD_Analysis
+2025-04-14 10:35:22,077 - INFO - [root:main] - --- MD Analysis Script v1.5.0 Started ---
+2025-04-14 10:35:22,078 - INFO - [root:main] - Command: main_analyzer.py --folder /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2 --orientation
+2025-04-14 10:35:22,078 - INFO - [root:main] - Main log file: /home/labs/bmeitan/karbati/MD_Analysis/md_analysis_main_20250414_103522.log
+2025-04-14 10:35:22,078 - INFO - [root:main] - Log level set to: INFO
+2025-04-14 10:35:22,078 - INFO - [root:main] - Base directory set to: /home/labs/bmeitan/karbati/MD_Analysis
+2025-04-14 10:35:22,078 - INFO - [root:main] - Running SPECIFIC analyses (HTML report generation will be skipped).
+2025-04-14 10:35:22,078 - INFO - [root:main] - Analysis execution plan: GG=False, COM=False, Orientation=True, IonTracking=False, IonCoordination=False, Water=False
+2025-04-14 10:35:22,080 - INFO - [root:main] - --- Processing Single Folder ---
+2025-04-14 10:35:22,080 - INFO - [root:main] -   System: toxin
+2025-04-14 10:35:22,080 - INFO - [root:main] -   Run: R2
+2025-04-14 10:35:22,080 - INFO - [root:main] -   Folder: /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2
+2025-04-14 10:35:22,083 - INFO - [root:_run_analysis_workflow] - Running Core Trajectory Analysis...
+2025-04-14 10:35:22,090 - INFO - [root:setup_system_logger] - --- Starting analysis for toxin/R2 (Log: /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2/R2_analysis.log) ---
+2025-04-14 10:35:22,208 - WARNING - [MDAnalysis.topology.PSF:_parseatoms] - Guessing that this is actually a NAMD-type PSF file... continuing with fingers crossed!
+2025-04-14 10:35:58,194 - INFO - [root:_run_analysis_workflow] - Running Toxin Orientation Analysis...
+2025-04-14 10:35:58,194 - INFO - [orientation_contacts:analyze_toxin_orientation] - Starting toxin orientation and contact analysis for: /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2/MD_Aligned.dcd
+2025-04-14 10:35:58,198 - WARNING - [MDAnalysis.topology.PSF:_parseatoms] - Guessing that this is actually a NAMD-type PSF file... continuing with fingers crossed!
+2025-04-14 10:35:58,846 - INFO - [orientation_contacts:analyze_toxin_orientation] - Using Toxin: 'segid PROE', Channel: 'segid PROA or segid PROB or segid PROC or segid PROD'
+2025-04-14 10:35:58,846 - INFO - [orientation_contacts:analyze_toxin_orientation] - Initializing residue contact map (59 toxin x 436 channel residues).
+2025-04-14 10:35:58,847 - INFO - [orientation_contacts:analyze_toxin_orientation] - Using stride: 8 (Analyzing ~505 frames)
+2025-04-14 10:37:27,612 - INFO - [orientation_contacts:analyze_toxin_orientation] - Saved orientation and total contacts data to /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2/Toxin_Orientation.csv
+2025-04-14 10:37:27,615 - ERROR - [root:_run_analysis_workflow] - Workflow failed for /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2: name 'avg_contact_map' is not defined
+Traceback (most recent call last):
+  File "/home/labs/bmeitan/karbati/MD_Analysis/main_analyzer.py", line 486, in _run_analysis_workflow
+    analyze_toxin_orientation(dcd_file, psf_file, run_dir)
+  File "/home/labs/bmeitan/karbati/MD_Analysis/orientation_contacts.py", line 575, in analyze_toxin_orientation
+    if len(toxin_res_labels_internal) != avg_contact_map.shape[0]:
+NameError: name 'avg_contact_map' is not defined
+2025-04-14 10:37:27,617 - INFO - [root:_save_error_summary] - Saved error status to /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2/analysis_summary.json
+2025-04-14 10:37:27,618 - ERROR - [root:main] - --- Processing failed for folder: /home/labs/bmeitan/karbati/rCs1/toxin/toxin/R2 ---
+2025-04-14 10:37:27,618 - INFO - [root:<module>] - --- MD Analysis Script v1.5.0 Finished ---

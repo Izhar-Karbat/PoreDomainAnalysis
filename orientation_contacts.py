@@ -357,7 +357,8 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
     start frame, and average residue contact frequencies over a trajectory.
 
     Saves orientation data (including total atom contacts) and residue contact
-    frequency map to CSV files. Optionally generates contact map visualizations.
+    frequency map (using descriptive labels) to CSV files. Generates contact
+    map visualizations with improved labels.
 
     Args:
         traj_file (str): Path to the DCD trajectory file.
@@ -371,8 +372,8 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
             - orientation_angles (list): List of angles between principal axes.
             - rotation_euler_angles (list): List of (x, y, z) Euler angles for toxin rotation.
             - total_contact_counts_list (list): List of total atom contacts per analyzed frame.
-            - residue_contact_df (pd.DataFrame | None): DataFrame of average residue contact frequencies,
-                                                       or None if analysis failed.
+            - residue_contact_df_display (pd.DataFrame | None): DataFrame of average residue
+              contact frequencies with display labels, or None if analysis failed.
             Returns ([], [], [], None) on critical error.
     """
     logger.info(f"Starting toxin orientation and contact analysis for: {traj_file}")
@@ -382,8 +383,8 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
         u = mda.Universe(psf_file, traj_file)
         n_frames = len(u.trajectory)
         if n_frames < 2:
-             logger.warning("Trajectory has < 2 frames. Orientation/contact analysis requires at least 2 frames.")
-             return [], [], [], None
+            logger.warning("Trajectory has < 2 frames. Orientation/contact analysis requires at least 2 frames.")
+            return [], [], [], None
     except Exception as e:
         logger.error(f"Failed to load Universe: {e}", exc_info=True)
         return [], [], [], None
@@ -422,7 +423,7 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
         residue_contact_accumulator = np.zeros((n_toxin_res, n_channel_res), dtype=int)
         logger.info(f"Initializing residue contact map ({n_toxin_res} toxin x {n_channel_res} channel residues).")
     else:
-         logger.warning("Toxin or Channel selection has zero residues. Skipping residue contact analysis.")
+        logger.warning("Toxin or Channel selection has zero residues. Skipping residue contact analysis.")
 
     # Get reference structure (first frame) for rotation calculation
     try:
@@ -449,12 +450,15 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
     prev_channel_axis_state = None
 
     # Loop through trajectory with progress tracking
-    # Use enumerate on the sliced trajectory
     frame_iter = u.trajectory[::stride]
     for i, ts in enumerate(frame_iter):
         frame_idx = ts.frame # Actual frame index
         processed_frames_indices.append(frame_idx)
         analyzed_frame_count += 1
+
+        # Periodically log progress
+        if analyzed_frame_count % 100 == 0:
+             logger.debug(f"Processing frame {frame_idx} ({analyzed_frame_count} analyzed)...")
 
         # 1. Calculate Orientation Angle
         try:
@@ -469,15 +473,20 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
         except Exception as e:
             logger.warning(f"Error calculating orientation vectors at frame {frame_idx}: {e}", exc_info=False)
             orientation_angles.append(np.nan)
-            prev_toxin_axis_state = None # Reset state on error? Or keep last valid? Let's reset.
+            prev_toxin_axis_state = None # Reset state on error
             prev_channel_axis_state = None
 
         # 2. Calculate Rotation Relative to Reference
         try:
             toxin_current = u.select_atoms(toxin_sel)
-            current_coords_centered = toxin_current.positions - toxin_current.center_of_mass()
-            _, euler = calculate_rotation_matrix(reference_coords_centered, current_coords_centered)
-            rotation_euler_angles.append(euler)
+            # Ensure same number of atoms as reference for rotation calculation
+            if len(toxin_current) != len(ref_toxin_atoms):
+                logger.warning(f"Atom count mismatch for rotation at frame {frame_idx}. Skipping rotation calc.")
+                rotation_euler_angles.append((np.nan, np.nan, np.nan))
+            else:
+                current_coords_centered = toxin_current.positions - toxin_current.center_of_mass()
+                _, euler = calculate_rotation_matrix(reference_coords_centered, current_coords_centered)
+                rotation_euler_angles.append(euler)
         except Exception as e:
             logger.warning(f"Error calculating rotation matrix at frame {frame_idx}: {e}", exc_info=False)
             rotation_euler_angles.append((np.nan, np.nan, np.nan))
@@ -485,6 +494,7 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
         # 3. Calculate Contacts (Atom and Residue)
         try:
             # analyze_interface_contacts returns: total_atoms, res_set, toxin_res_group, channel_res_group
+            # We only need the first two outputs here, groups are already defined outside loop
             total_atom_contacts, residue_contacts_frame, _, _ = analyze_interface_contacts(
                 u, toxin_sel, channel_sel
             )
@@ -493,10 +503,11 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
             # Accumulate residue contacts
             if residue_contact_accumulator is not None:
                 for t_res_idx, c_res_idx in residue_contacts_frame:
+                    # Check bounds strictly
                     if 0 <= t_res_idx < n_toxin_res and 0 <= c_res_idx < n_channel_res:
                         residue_contact_accumulator[t_res_idx, c_res_idx] += 1
                     else: # Should not happen if mapping is correct
-                         logger.warning(f"Residue index out of bounds at frame {frame_idx}: T{t_res_idx}, C{c_res_idx}")
+                        logger.warning(f"Residue index out of bounds at frame {frame_idx}: T{t_res_idx} (max {n_toxin_res-1}), C{c_res_idx} (max {n_channel_res-1})")
 
         except Exception as e:
             logger.warning(f"Error analyzing contacts at frame {frame_idx}: {e}", exc_info=False)
@@ -507,7 +518,7 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
         logger.error("No frames were analyzed in orientation/contact analysis.")
         return [], [], [], None
 
-    time_points_analysis = frames_to_time(processed_frames_indices)
+    time_points_analysis = frames_to_time(processed_frames_indices) # Use utility function
 
     # Save Orientation Data CSV
     orientation_df = pd.DataFrame({
@@ -526,69 +537,136 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
     except Exception as e:
         logger.error(f"Failed to save {orientation_csv_path}: {e}")
 
-    # Save Residue Contact Frequency Data & Plots
-    residue_contact_df = None
-    if residue_contact_accumulator is not None:
+    # --- Save Residue Contact Frequency Data & Plots ---
+    residue_contact_df_display = None # Initialize return variable
+    if residue_contact_accumulator is not None and analyzed_frame_count > 0:
         avg_residue_contact_map = residue_contact_accumulator / analyzed_frame_count
-        # Create labels using segid[0]_resid format
-        toxin_res_labels = [f"{res.segid[0]}_{res.resid}" for res in toxin_residues]
-        channel_res_labels = [f"{res.segid[0]}_{res.resid}" for res in channel_residues] # Use first char of segid
 
-        # Check for label uniqueness (important!)
-        if len(toxin_res_labels) != len(set(toxin_res_labels)): logger.warning("Duplicate toxin residue labels generated!")
-        if len(channel_res_labels) != len(set(channel_res_labels)): logger.warning("Duplicate channel residue labels generated!")
+        # --- Generate consistent labels for internal use (matching get_residue_info keys) ---
+        # Define the mapping here, consistent with get_residue_info
+        segid_to_subunit = {
+            'PROA': 'A', 'PROB': 'B', 'PROC': 'C', 'PROD': 'D',
+            'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D'
+            # Add other mappings if necessary based on your PSF
+        }
+        logger.debug(f"Using segid->subunit mapping: {segid_to_subunit}")
 
-        residue_contact_df = pd.DataFrame(avg_residue_contact_map,
-                                          index=toxin_res_labels,
-                                          columns=channel_res_labels)
+        # Generate Toxin Labels (e.g., "E_77") - Internal Keys
+        toxin_res_labels_internal = []
+        unique_toxin_segids = np.unique(toxin_residues.segids) if len(toxin_residues.segids) > 0 else ["E"] # Default E
+        toxin_segid_base = unique_toxin_segids[0] if unique_toxin_segids else "E"
+        toxin_seg_char = toxin_segid_base[0] if toxin_segid_base else "E" # First char of first segid
+        logger.debug(f"Using '{toxin_seg_char}' as base for toxin internal labels.")
+        for i, res in enumerate(toxin_residues):
+             key = f"{toxin_seg_char}_{res.resid}"
+             if key in toxin_res_labels_internal: # Check for duplicates based on resid+segchar
+                 logger.warning(f"Duplicate internal toxin label generated: {key} for residue index {i}. Check selection/PSF.")
+             toxin_res_labels_internal.append(key)
 
-        contact_map_csv_path = os.path.join(output_dir, "Toxin_Channel_Residue_Contacts.csv")
+        # Generate Channel Labels (e.g., "A_68", "B_68") - Internal Keys
+        channel_res_labels_internal = []
+        for i, res in enumerate(channel_residues):
+             subunit_char = segid_to_subunit.get(res.segid, res.segid[0] if res.segid else 'X')
+             key = f"{subunit_char}_{res.resid}"
+             # Note: Duplicates like A_68, B_68 are expected here and handled by order.
+             channel_res_labels_internal.append(key)
+
+        # Basic sanity check: Ensure label count matches matrix dimensions
+        if len(toxin_res_labels_internal) != avg_residue_contact_map.shape[0]: # CORRECTED VARIABLE NAME
+             logger.error(f"FATAL: Toxin label count ({len(toxin_res_labels_internal)}) mismatch with contact map rows ({avg_residue_contact_map.shape[0]})") # CORRECTED VARIABLE NAME
+             return orientation_angles, rotation_euler_angles, total_contact_counts_list, None # Return early
+        if len(channel_res_labels_internal) != avg_residue_contact_map.shape[1]: # CORRECTED VARIABLE NAME
+             logger.error(f"FATAL: Channel label count ({len(channel_res_labels_internal)}) mismatch with contact map columns ({avg_residue_contact_map.shape[1]})") # CORRECTED VARIABLE NAME
+             return orientation_angles, rotation_euler_angles, total_contact_counts_list, None # Return early
+
+        # --- Get the Display Labels from get_residue_info ---
+        # Make sure the Universe `u` is at a state where selections work (e.g., first frame)
         try:
-            residue_contact_df.to_csv(contact_map_csv_path, float_format='%.4f')
-            logger.info(f"Saved residue contact frequency map to {contact_map_csv_path}")
+            u.trajectory[0] # Go to first frame to ensure selections are valid for get_residue_info
+            channel_label_map, toxin_label_map = get_residue_info(u, toxin_sel, channel_sel)
+        except Exception as e_labelmap:
+            logger.error(f"Error calling get_residue_info: {e_labelmap}. Proceeding with basic labels.", exc_info=True)
+            channel_label_map, toxin_label_map = {}, {} # Ensure maps are empty dicts
 
-            # --- Generate Contact Map Visualizations ---
-            logger.info("Generating contact map visualizations...")
-            # 1. Full Map
-            try:
-                 create_contact_map_visualization(avg_residue_contact_map, toxin_res_labels,
-                                                  channel_res_labels, output_dir)
-            except Exception as e_vis:
-                 logger.error(f"Error generating full contact map visualization: {e_vis}", exc_info=True)
+        if not channel_label_map or not toxin_label_map:
+             logger.warning("Failed to generate residue label maps via get_residue_info. Plot labels and CSV will use basic internal keys.")
+             # Create fallback maps using internal labels
+             toxin_label_map = {lbl: lbl for lbl in toxin_res_labels_internal}
+             channel_label_map = {lbl: lbl for lbl in channel_res_labels_internal}
 
-            # 2. Focused Map
-            try:
-                 channel_label_map, toxin_label_map = get_residue_info(u, toxin_sel, channel_sel)
-                 if channel_label_map or toxin_label_map:
-                     create_enhanced_focused_heatmap(
-                         avg_residue_contact_map, toxin_res_labels, channel_res_labels,
-                         toxin_label_map, channel_label_map, output_dir
-                     )
-                 else:
-                      logger.warning("Skipping focused contact map: Failed to generate residue label maps.")
-            except Exception as e_foc:
-                 logger.error(f"Error generating focused contact map: {e_foc}", exc_info=True)
 
-        except Exception as e_csv:
-            logger.error(f"Failed to save {contact_map_csv_path}: {e_csv}")
+        # --- Save CSV with Human-Readable Display Labels ---
+        try:
+            # Generate display labels using the maps (or fallback maps)
+            display_toxin_labels = [toxin_label_map.get(lbl, lbl) for lbl in toxin_res_labels_internal]
+            display_channel_labels = [channel_label_map.get(lbl, lbl) for lbl in channel_res_labels_internal]
+
+            # Check if display labels became non-unique where they shouldn't have
+            # (e.g., if mapping failed and produced identical fallback labels for different residues)
+            if len(toxin_res_labels_internal) == len(set(toxin_res_labels_internal)) and len(display_toxin_labels) != len(set(display_toxin_labels)):
+                 logger.warning("Duplicate DISPLAY toxin labels detected after mapping potentially due to map errors. CSV rows might overwrite.")
+            # Channel display labels *can* be duplicates (e.g., ASP68(A), ASP68(B)), this is fine as long as internal keys were unique where needed.
+
+            residue_contact_df_display = pd.DataFrame(avg_residue_contact_map,
+                                                     index=display_toxin_labels,    # e.g., GLY77
+                                                     columns=display_channel_labels) # e.g., ASP68(A), ASP68(B)...
+
+            contact_map_csv_path_display = os.path.join(output_dir, "Toxin_Channel_Residue_Contacts.csv") # Main CSV
+            residue_contact_df_display.to_csv(contact_map_csv_path_display, float_format='%.4f')
+            logger.info(f"Saved residue contact frequency map (display labels) to {contact_map_csv_path_display}")
+
+        except Exception as e_csv_disp:
+            logger.error(f"Failed to save display label CSV {contact_map_csv_path_display}: {e_csv_disp}")
+            residue_contact_df_display = None # Nullify on save error
+
+
+        # --- Generate Contact Map Visualizations ---
+        logger.info("Generating contact map visualizations...")
+
+        # 1. Full Map - Pass internal labels AND the maps
+        try:
+            create_contact_map_visualization(avg_residue_contact_map,
+                                             toxin_res_labels_internal,     # Pass internal labels
+                                             channel_res_labels_internal,   # Pass internal labels
+                                             output_dir,
+                                             toxin_label_map,    # Pass the map
+                                             channel_label_map)  # Pass the map
+        except Exception as e_vis:
+            logger.error(f"Error generating full contact map visualization: {e_vis}", exc_info=True)
+
+        # 2. Focused Map - Pass internal labels AND the maps
+        try:
+            # Pass internal labels for lookup, maps for display generation inside function
+             create_enhanced_focused_heatmap(
+                 avg_residue_contact_map,       # The raw data
+                 toxin_res_labels_internal,     # Internal labels for lookup
+                 channel_res_labels_internal,   # Internal labels for lookup
+                 toxin_label_map,               # Map for display labels
+                 channel_label_map,             # Map for display labels
+                 output_dir
+             )
+        except Exception as e_foc:
+            logger.error(f"Error generating focused contact map: {e_foc}", exc_info=True)
+
     else:
-         logger.warning("Residue contact analysis skipped or failed. No map saved.")
+        logger.warning("Residue contact analysis skipped or failed. No map saved.")
 
-    # Generate standard plots for orientation/rotation/total contacts
+    # --- Generate standard plots for orientation/rotation/total contacts ---
     try:
-         logger.info("Generating orientation plots...")
-         plot_orientation_data(
-             time_points_analysis, # Use time points corresponding to analyzed frames
-             orientation_angles,
-             rotation_euler_angles,
-             total_contact_counts_list,
-             output_dir
-         )
+        logger.info("Generating orientation plots...")
+        plot_orientation_data(
+            time_points_analysis, # Use time points corresponding to analyzed frames
+            orientation_angles,
+            rotation_euler_angles,
+            total_contact_counts_list,
+            output_dir
+        )
     except Exception as e:
         logger.error(f"Error generating orientation plots: {e}", exc_info=True)
 
     logger.info("Orientation and contact analysis complete.")
-    return orientation_angles, rotation_euler_angles, total_contact_counts_list, residue_contact_df
+    # Return the display dataframe (or None if it failed)
+    return orientation_angles, rotation_euler_angles, total_contact_counts_list, residue_contact_df_display
 
 
 # --- Plotting Functions for this Module ---
@@ -661,127 +739,218 @@ def plot_orientation_data(time_points, orientation_angles, rotation_euler_angles
     except Exception as e:
          logger.error(f"Failed to create contact count plot: {e}", exc_info=True)
 
-
-def create_contact_map_visualization(avg_contact_map, toxin_res_labels, channel_res_labels, output_dir):
+def create_contact_map_visualization(avg_contact_map, toxin_res_labels_internal, channel_res_labels_internal, output_dir,
+                                     toxin_label_map, channel_label_map):
     """
     Create heatmap visualization for average toxin-channel residue contacts.
-    (Copied from original script)
+    Uses label maps to create descriptive tick labels from internal keys.
+
+    Args:
+        avg_contact_map (np.ndarray): Matrix of average contact frequencies.
+        toxin_res_labels_internal (list): List of internal keys for toxin residues (e.g., E_77).
+        channel_res_labels_internal (list): List of internal keys for channel residues (e.g., A_68).
+        output_dir (str): Directory to save the plot.
+        toxin_label_map (dict): Map from internal toxin key to display label (e.g., E_77 -> GLY77).
+        channel_label_map (dict): Map from internal channel key to display label (e.g., A_68 -> ASP68(A)).
     """
-    # (Implementation copied from the original script's create_contact_map_visualization)
-    # ... (ensure logging uses logger = logging.getLogger(__name__)) ...
-    func_logger = logging.getLogger(__name__) # Use logger defined at module level
+    func_logger = logging.getLogger(__name__)
     if avg_contact_map is None or avg_contact_map.size == 0:
         func_logger.warning("Contact map data is empty. Skipping full map visualization.")
         return
+    if not toxin_label_map or not channel_label_map:
+         func_logger.warning("Label maps are empty/missing. Full map visualization will use basic internal labels.")
+         # Fallback: Use internal labels as display labels if maps are missing/empty
+         display_toxin_labels = list(toxin_res_labels_internal) # Ensure list copy
+         display_channel_labels = list(channel_res_labels_internal)
+    else:
+        # --- Generate Display Labels using the maps ---
+        # Use the map, fall back to the original internal label if a key is somehow missing
+        try:
+            display_toxin_labels = [toxin_label_map.get(lbl, str(lbl)) for lbl in toxin_res_labels_internal] # Ensure fallback is string
+            display_channel_labels = [channel_label_map.get(lbl, str(lbl)) for lbl in channel_res_labels_internal]
+            func_logger.debug(f"Generated {len(display_toxin_labels)} toxin and {len(display_channel_labels)} channel display labels for full map.")
+        except Exception as e_map:
+             func_logger.error(f"Error applying label maps: {e_map}. Falling back to internal labels.", exc_info=True)
+             display_toxin_labels = list(toxin_res_labels_internal)
+             display_channel_labels = list(channel_res_labels_internal)
 
-    height = max(6, len(toxin_res_labels) * 0.18) # Adjusted scaling
-    width = max(8, len(channel_res_labels) * 0.12)
+    # --- Dynamic Figure Sizing ---
+    # Adjust multiplier and base size as needed for your typical data
+    height = max(6, len(toxin_res_labels_internal) * 0.15 + 1) # Base size + scaling
+    width = max(8, len(channel_res_labels_internal) * 0.10 + 1)
+    # Clamp max size to prevent excessively large images
+    max_dim = 40 # Inches
+    height = min(height, max_dim)
+    width = min(width, max_dim)
+    func_logger.debug(f"Full contact map figure size: {width:.1f} x {height:.1f} inches")
+
     fig, ax = plt.subplots(figsize=(width, height))
-    cmap = "viridis"
+    cmap = "viridis" # Or "magma", "plasma", "hot", etc.
 
-    sns.heatmap(avg_contact_map, cmap=cmap, ax=ax, linewidths=0.1, linecolor='lightgrey',
-                cbar_kws={'label': 'Average Contact Frequency'})
+    # Create the heatmap - still uses the raw data (avg_contact_map)
+    # Set xticklabels/yticklabels explicitly below, so turn off defaults here.
+    try:
+        sns.heatmap(avg_contact_map, cmap=cmap, ax=ax, linewidths=0.1, linecolor='lightgrey',
+                    cbar_kws={'label': 'Average Contact Frequency', 'shrink': 0.7}, # Adjust colorbar size
+                    xticklabels=False, yticklabels=False) # Turn off default labels
+    except Exception as e_heat:
+         func_logger.error(f"Error during sns.heatmap call: {e_heat}", exc_info=True)
+         plt.close(fig)
+         return # Cannot proceed if heatmap fails
 
-    ax.set_ylabel('Toxin Residues', fontsize=11) # Smaller font
+    ax.set_ylabel('Toxin Residues', fontsize=11)
     ax.set_xlabel('Channel Residues', fontsize=11)
     ax.set_title('Average Toxin-Channel Residue Contacts (Full Map)', fontsize=13)
 
-    xtick_step = max(1, len(channel_res_labels) // 25) # Show max ~25 labels
-    ytick_step = max(1, len(toxin_res_labels) // 40)  # Show max ~40 labels
+    # --- Set Ticks using Display Labels ---
+    # Adjust divisor to control label density (higher number = fewer labels)
+    xtick_divisor = 45 if width > 20 else 30 # Fewer labels on very wide plots
+    ytick_divisor = 60 if height > 25 else 40
+    xtick_step = max(1, len(channel_res_labels_internal) // xtick_divisor)
+    ytick_step = max(1, len(toxin_res_labels_internal) // ytick_divisor)
+    func_logger.debug(f"Full map tick steps: x={xtick_step}, y={ytick_step}")
 
-    ax.set_xticks(np.arange(len(channel_res_labels))[::xtick_step] + 0.5)
-    ax.set_xticklabels(channel_res_labels[::xtick_step], rotation=90, fontsize=7) # Smaller font
-    ax.set_yticks(np.arange(len(toxin_res_labels))[::ytick_step] + 0.5)
-    ax.set_yticklabels(toxin_res_labels[::ytick_step], rotation=0, fontsize=7)
 
-    plt.tight_layout(pad=1.2)
-    plot_path = os.path.join(output_dir, "Toxin_Channel_Residue_Contact_Map_Full.png") # Explicitly Full
+    # Get the indices for ticks based on original labels list length
+    xtick_indices = np.arange(len(channel_res_labels_internal))[::xtick_step]
+    ytick_indices = np.arange(len(toxin_res_labels_internal))[::ytick_step]
+
+    # Apply the indices to the DISPLAY labels list
+    # Ensure indices are within bounds of display labels (should be if generated correctly)
+    if len(xtick_indices) > 0 and xtick_indices[-1] < len(display_channel_labels) and \
+       len(ytick_indices) > 0 and ytick_indices[-1] < len(display_toxin_labels):
+        ax.set_xticks(xtick_indices + 0.5) # Position ticks in the middle of cells
+        ax.set_xticklabels([display_channel_labels[i] for i in xtick_indices], rotation=90, fontsize=7) # Use generated display labels
+        ax.set_yticks(ytick_indices + 0.5)
+        ax.set_yticklabels([display_toxin_labels[i] for i in ytick_indices], rotation=0, fontsize=7) # Use generated display labels
+    else:
+        func_logger.warning("Could not set tick labels due to index mismatch or empty ticks.")
+
+
+    plt.tight_layout(pad=1.2) # Adjust padding if labels overlap title
+    plot_path = os.path.join(output_dir, "Toxin_Channel_Residue_Contact_Map_Full.png")
     try:
-        fig.savefig(plot_path, dpi=150)
-        func_logger.debug(f"Saved full contact map visualization to {plot_path}")
+        fig.savefig(plot_path, dpi=150, bbox_inches='tight') # Use bbox_inches for potentially long labels
+        func_logger.info(f"Saved full contact map visualization to {plot_path}")
     except Exception as e:
-        func_logger.error(f"Failed to save full contact map plot: {e}")
+        func_logger.error(f"Failed to save full contact map plot: {e}", exc_info=True)
     finally:
-        plt.close(fig)
+        # Ensure the figure is closed even if saving fails
+        if 'fig' in locals() and plt.fignum_exists(fig.number):
+             plt.close(fig)
+             
 
-
-def create_enhanced_focused_heatmap(avg_contact_map, toxin_res_labels, channel_res_labels,
-                                    toxin_label_map, channel_label_map, output_dir,
-                                    top_n_toxin=10, top_n_channel=15, # Adjusted defaults
-                                    title="Focused Toxin-Channel Contact Map"):
+def create_enhanced_focused_heatmap(avg_contact_map, toxin_res_labels_internal, channel_res_labels_internal,
+                                     toxin_label_map, channel_label_map, output_dir,
+                                     top_n_toxin=10, top_n_channel=15, # Adjusted defaults
+                                     title="Focused Toxin-Channel Contact Map"):
     """
     Create and save an enhanced heatmap focusing only on top interacting residues,
     using specific label formats provided by maps.
-    (Copied from original script)
-    """
-    # (Implementation copied from the original script's create_enhanced_focused_heatmap)
-    # ... (ensure logging uses logger = logging.getLogger(__name__)) ...
-    # ... (Includes input validation, interaction sum calculation, matrix focusing, label mapping, plotting) ...
-    func_logger = logging.getLogger(__name__) # Use logger defined at module level
 
+    Args:
+        avg_contact_map (np.ndarray): Full matrix of average contact frequencies.
+        toxin_res_labels_internal (list): List of internal keys for toxin residues (e.g., E_77).
+        channel_res_labels_internal (list): List of internal keys for channel residues (e.g., A_68).
+        toxin_label_map (dict): Map from internal toxin key to display label (e.g., E_77 -> GLY77).
+        channel_label_map (dict): Map from internal channel key to display label (e.g., A_68 -> ASP68(A)).
+        output_dir (str): Directory to save the plot.
+        top_n_toxin (int): Number of top interacting toxin residues to show.
+        top_n_channel (int): Number of top interacting channel residues to show.
+        title (str): Title for the plot.
+
+    Returns:
+        pd.DataFrame or None: DataFrame of the focused contact map data with display labels,
+                              or None on error.
+    """
     # --- Input validation ---
     if avg_contact_map is None or avg_contact_map.size == 0:
-        func_logger.error("Contact map data is empty. Cannot create focused heatmap.")
+        logger.error("Contact map data is empty. Cannot create focused heatmap.") # Use logger
         return None
-    if not toxin_res_labels or not channel_res_labels:
-        func_logger.error("Residue labels are missing. Cannot create focused heatmap.")
+    if not toxin_res_labels_internal or not channel_res_labels_internal:
+        logger.error("Internal residue labels are missing. Cannot create focused heatmap.") # Use logger
         return None
-    if avg_contact_map.shape[0] != len(toxin_res_labels) or avg_contact_map.shape[1] != len(channel_res_labels):
-        func_logger.error(f"Shape mismatch: Map {avg_contact_map.shape}, Toxin Labels {len(toxin_res_labels)}, Channel Labels {len(channel_res_labels)}. Cannot create focused heatmap.")
+    # Check shape match between map and internal labels passed
+    if avg_contact_map.shape[0] != len(toxin_res_labels_internal):
+        logger.error(f"Shape mismatch: Map rows ({avg_contact_map.shape[0]}) != Toxin Labels ({len(toxin_res_labels_internal)}). Cannot create focused heatmap.") # Use logger
         return None
+    if avg_contact_map.shape[1] != len(channel_res_labels_internal):
+        logger.error(f"Shape mismatch: Map columns ({avg_contact_map.shape[1]}) != Channel Labels ({len(channel_res_labels_internal)}). Cannot create focused heatmap.") # Use logger
+        return None
+    if not toxin_label_map or not channel_label_map:
+         logger.warning("Label maps are empty/missing. Focused map plot labels might be basic.") # Use logger
+         # Create fallback maps using internal labels if they are missing
+         toxin_label_map = {lbl: lbl for lbl in toxin_res_labels_internal}
+         channel_label_map = {lbl: lbl for lbl in channel_res_labels_internal}
+
 
     try:
-        func_logger.debug("Generating focused contact map...")
-        # --- Calculate interaction sums ---
-        toxin_sums = {label: np.sum(avg_contact_map[i, :]) for i, label in enumerate(toxin_res_labels)}
-        channel_sums = {label: np.sum(avg_contact_map[:, j]) for j, label in enumerate(channel_res_labels)}
+        logger.debug("Generating focused contact map...") # Use logger
+        # --- Calculate interaction sums using the full map and internal labels ---
+        # Need temporary DataFrame with internal keys for easier summation by label
+        full_map_df_internal = pd.DataFrame(avg_contact_map, index=toxin_res_labels_internal, columns=channel_res_labels_internal)
+        toxin_sums = full_map_df_internal.sum(axis=1) # Sum across columns for each toxin row
+        channel_sums = full_map_df_internal.sum(axis=0) # Sum across rows for each channel column
 
         # --- Select top residues by interaction sum ---
-        # Filter out residues with zero interaction before sorting
         sorted_toxin = sorted([item for item in toxin_sums.items() if item[1] > 1e-6], key=lambda x: x[1], reverse=True)
         sorted_channel = sorted([item for item in channel_sums.items() if item[1] > 1e-6], key=lambda x: x[1], reverse=True)
 
-        # Adjust top_n based on available interacting residues
         actual_top_n_toxin = min(top_n_toxin, len(sorted_toxin))
         actual_top_n_channel = min(top_n_channel, len(sorted_channel))
 
         if actual_top_n_toxin == 0 or actual_top_n_channel == 0:
-             func_logger.warning("No interacting residues found for focused heatmap.")
-             return None
+            logger.warning("No significantly interacting residues found for focused heatmap.") # Use logger
+            return None
 
-        top_toxin_labels = [item[0] for item in sorted_toxin[:actual_top_n_toxin]]
-        top_channel_labels = [item[0] for item in sorted_channel[:actual_top_n_channel]]
+        top_toxin_labels_internal = [item[0] for item in sorted_toxin[:actual_top_n_toxin]]
+        top_channel_labels_internal = [item[0] for item in sorted_channel[:actual_top_n_channel]]
+        logger.debug(f"Top Toxin Internal Keys: {top_toxin_labels_internal}") # Use logger
+        logger.debug(f"Top Channel Internal Keys: {top_channel_labels_internal}") # Use logger
+
 
         # --- Create the focused matrix ---
-        # Get indices in the original matrix corresponding to the top labels
-        top_toxin_indices = [toxin_res_labels.index(lbl) for lbl in top_toxin_labels]
-        top_channel_indices = [channel_res_labels.index(lbl) for lbl in top_channel_labels]
+        try:
+             toxin_idx_map = {label: i for i, label in enumerate(toxin_res_labels_internal)}
+             channel_idx_map = {label: i for i, label in enumerate(channel_res_labels_internal)}
+             top_toxin_indices = [toxin_idx_map[lbl] for lbl in top_toxin_labels_internal]
+             top_channel_indices = [channel_idx_map[lbl] for lbl in top_channel_labels_internal]
+        except ValueError as e_idx:
+            logger.error(f"Error finding index for top residue label: {e_idx}. Inconsistency between labels and map.", exc_info=True) # Use logger
+            return None
 
-        # Slice the original matrix
         focused_matrix = avg_contact_map[np.ix_(top_toxin_indices, top_channel_indices)]
 
-        # --- Create descriptive labels using the label maps ---
-        display_toxin_labels = [toxin_label_map.get(label, label) for label in top_toxin_labels]
-        display_channel_labels = [channel_label_map.get(label, label) for label in top_channel_labels] # Simplified - assumes get_residue_info handles chain mapping
+        # --- Create descriptive labels for the plot using the label maps ---
+        display_toxin_labels = [toxin_label_map.get(label, str(label)) for label in top_toxin_labels_internal]
+        display_channel_labels = [channel_label_map.get(label, str(label)) for label in top_channel_labels_internal]
+        logger.debug(f"Display Toxin Labels: {display_toxin_labels}") # Use logger
+        logger.debug(f"Display Channel Labels: {display_channel_labels}") # Use logger
+
 
         # --- Create and save the heatmap ---
-        height = max(6, actual_top_n_toxin * 0.5) # Scale with actual number shown
-        width = max(7, actual_top_n_channel * 0.5)
+        height = max(6, actual_top_n_toxin * 0.4 + 1)
+        width = max(7, actual_top_n_channel * 0.4 + 1)
+        max_dim = 30
+        height = min(height, max_dim)
+        width = min(width, max_dim)
+        logger.debug(f"Focused map figure size: {width:.1f} x {height:.1f} inches") # Use logger
+
         fig, ax = plt.subplots(figsize=(width, height))
 
         sns.heatmap(focused_matrix, cmap="viridis", ax=ax,
                     linewidths=0.5, linecolor='lightgrey',
-                    cbar_kws={'label': 'Average Contact Frequency'},
-                    annot=True, fmt=".2f", annot_kws={"size": 8}, # Smaller annotation font
+                    cbar_kws={'label': 'Average Contact Frequency', 'shrink': 0.8},
+                    annot=True, fmt=".2f", annot_kws={"size": 8},
                     xticklabels=display_channel_labels,
                     yticklabels=display_toxin_labels)
 
-        ax.set_title(f'{title}\n(Top {actual_top_n_toxin} Toxin × Top {actual_top_n_channel} Channel Residues)',
-                     fontsize=12) # Smaller title font
+        ax.set_title(f'{title}\n(Top {actual_top_n_toxin} Toxin × Top {actual_top_n_channel} Channel Residues by Summed Contact Freq.)',
+                     fontsize=12)
         plt.xlabel('Channel Residues', fontsize=10)
         plt.ylabel('Toxin Residues', fontsize=10)
 
-        plt.xticks(rotation=45, ha='right', fontsize=8) # Smaller tick labels
+        plt.xticks(rotation=45, ha='right', fontsize=8)
         plt.yticks(rotation=0, fontsize=8)
 
         plt.tight_layout(pad=1.5)
@@ -791,11 +960,12 @@ def create_enhanced_focused_heatmap(avg_contact_map, toxin_res_labels, channel_r
         fig.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
 
-        func_logger.info(f"Saved focused contact map ({actual_top_n_toxin}x{actual_top_n_channel}) visualization to {plot_path}")
-        # Return a dataframe representation of the focused map
+        logger.info(f"Saved focused contact map ({actual_top_n_toxin}x{actual_top_n_channel}) visualization to {plot_path}") # Use logger
+
+        # --- Return a DataFrame representation of the focused map ---
         return pd.DataFrame(focused_matrix, index=display_toxin_labels, columns=display_channel_labels)
 
     except Exception as e:
-        func_logger.error(f"Error generating focused contact map: {e}", exc_info=True)
+        logger.error(f"Error generating focused contact map: {e}", exc_info=True) # Use logger
         if 'fig' in locals() and plt.fignum_exists(fig.number): plt.close(fig)
-        return None
+        return None         
