@@ -91,7 +91,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     except Exception as e:
         logger.error(f"Failed to load MDAnalysis Universe: {e}", exc_info=True)
-        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown'
+        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
 
     # --- Setup Selections ---
     dist_ac = []
@@ -131,7 +131,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     except Exception as e:
         logger.error(f"Error finding reference Glycine for G-G distance: {e}", exc_info=True)
-        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown'
+        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
 
     # COM Selection (Toxin vs Channel)
     toxin_segids = ['PROE', 'E', 'PEP', 'TOX']
@@ -154,7 +154,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     if len(u.select_atoms(chan_sel)) == 0:
         logger.error(f"Could not find channel atoms using standard selections.")
-        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown'
+        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
 
     # Determine if COM analysis is possible (if toxin was found)
     com_analyzed = pep_sel is not None
@@ -216,7 +216,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     except Exception as loop_err:
         logger.error(f"Error during trajectory loop: {loop_err}", exc_info=True)
-        return np.array([0]), np.array([0]), None, np.array([0]), 'Unknown'
+        return np.array([]), np.array([]), None, np.array([]), 'Unknown'
 
     logger.info(f"Completed trajectory analysis loop. Processed {len(frame_indices)} frames.")
 
@@ -277,55 +277,32 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
 
     Returns:
         tuple: Contains:
-            - filtered_ac (np.ndarray): Filtered A-C G-G distances.
-            - filtered_bd (np.ndarray): Filtered B-D G-G distances.
-            - filtered_com (np.ndarray | None): Filtered COM distances, or None.
-            - filter_info_gg (dict): Filtering info for G-G distances ({'AC': info, 'BD': info}).
-            - filter_info_com (dict): Filtering info for COM distances.
-            Returns input data and empty info dicts on error or insufficient data.
+            - filtered_ac (np.ndarray | None): Filtered A-C G-G distances or None.
+            - filtered_bd (np.ndarray | None): Filtered B-D G-G distances or None.
+            - filtered_com (np.ndarray | None): Filtered COM distances or None.
+            - filter_info_gg (dict): Information about G-G filtering.
+            - filter_info_com (dict): Information about COM filtering.
+            - raw_stats (dict): Statistics calculated on the raw, unfiltered data.
+            - percentile_stats (dict): 10th and 90th percentiles for raw and filtered data.
     """
-    logger_name = f"{os.path.basename(os.path.dirname(run_dir))}_{os.path.basename(run_dir)}"
-    logger = logging.getLogger(logger_name)
-    run_name = os.path.basename(run_dir)
-    logger.info(f"Applying filtering to G-G and COM data for {run_name}")
+    logger.info("Starting data filtering and saving process.")
+    os.makedirs(run_dir, exist_ok=True)
 
-    filter_info_gg = {'AC': {}, 'BD': {}}
-    filter_info_com = {}
-    filtered_ac = np.array(dist_ac)
-    filtered_bd = np.array(dist_bd)
-    filtered_com = np.array(com_distances) if com_distances is not None else None
+    # --- Calculate Raw Stats ---
+    # Before filtering, calculate the standard deviation and mean for the raw input arrays:
+    raw_stats = {}
+    raw_stats['GG_AC_Std_Raw'] = np.nanstd(dist_ac) if dist_ac is not None else np.nan
+    raw_stats['GG_BD_Std_Raw'] = np.nanstd(dist_bd) if dist_bd is not None else np.nan
+    raw_stats['COM_Std_Raw'] = np.nanstd(com_distances) if com_distances is not None else np.nan
+    raw_stats['GG_AC_Mean_Raw'] = np.nanmean(dist_ac) if dist_ac is not None else np.nan
+    raw_stats['GG_BD_Mean_Raw'] = np.nanmean(dist_bd) if dist_bd is not None else np.nan
+    raw_stats['COM_Mean_Raw'] = np.nanmean(com_distances) if com_distances is not None else np.nan
 
-    # --- Filter G-G Data ---
-    if dist_ac is not None and len(dist_ac) > 1:
-        try:
-            filtered_ac, filter_info_ac = auto_select_filter(dist_ac, data_type='gg_distance')
-            filter_info_gg['AC'] = filter_info_ac
-        except Exception as e:
-            logger.error(f"Error filtering G-G A:C data: {e}", exc_info=True)
-            filter_info_gg['AC'] = {'error': str(e)}
-    if dist_bd is not None and len(dist_bd) > 1:
-        try:
-            filtered_bd, filter_info_bd = auto_select_filter(dist_bd, data_type='gg_distance')
-            filter_info_gg['BD'] = filter_info_bd
-        except Exception as e:
-            logger.error(f"Error filtering G-G B:D data: {e}", exc_info=True)
-            filter_info_gg['BD'] = {'error': str(e)}
+    # --- Filter G-G Distances ---
+    filtered_ac, filter_info_ac = auto_select_filter(dist_ac, data_type='gg_distance')
+    filtered_bd, filter_info_bd = auto_select_filter(dist_bd, data_type='gg_distance')
 
-    gg_filtered_df = pd.DataFrame({
-        'Time (ns)': time_points,
-        'A_C_Distance_Raw': dist_ac if dist_ac is not None else np.nan,
-        'B_D_Distance_Raw': dist_bd if dist_bd is not None else np.nan,
-        'A_C_Distance_Filtered': filtered_ac if filtered_ac is not None else np.nan,
-        'B_D_Distance_Filtered': filtered_bd if filtered_bd is not None else np.nan
-    })
-    gg_filtered_path = os.path.join(run_dir, "G_G_Distance_Filtered.csv")
-    try:
-        gg_filtered_df.to_csv(gg_filtered_path, index=False, float_format='%.4f', na_rep='NaN')
-        logger.info(f"Saved filtered G-G data to {gg_filtered_path}")
-    except Exception as e:
-        logger.error(f"Failed to save filtered G-G CSV: {e}")
-
-    # --- Filter COM Data ---
+    # --- Filter COM Distances ---
     if com_distances is not None and len(com_distances) > 1:
         try:
             kwargs = {'box_size': box_z} if box_z is not None else {}
@@ -350,55 +327,67 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
         except Exception as e:
             logger.error(f"Failed to save filtered COM CSV: {e}")
     elif com_distances is not None:
-        logger.info("COM distance analysis skipped or data insufficient for filtering.")
+        logger.info(f"COM distance filtering not applicable (no COM data).")
         filtered_com = None
-        filter_info_com = {'reason': 'Insufficient data or skipped'}
+        filter_info_com = {'Method': 'None', 'Threshold': np.nan, 'Window': np.nan, 'Polyorder': np.nan, 'Level': np.nan, 'Threshold_Factor': np.nan, 'Z_Threshold_Factor': np.nan}
     else:
         filtered_com = None
         filter_info_com = {'reason': 'No COM data provided'}
 
-    # --- Generate Plots ---
-    try:
-        logger.info("Generating comparison and final plots...")
-        fig_gg_ac = plot_filtering_comparison(time_points, dist_ac, filtered_ac, filter_info_gg.get('AC', {}), f"{run_name} - A:C", data_type='gg')
-        fig_gg_bd = plot_filtering_comparison(time_points, dist_bd, filtered_bd, filter_info_gg.get('BD', {}), f"{run_name} - B:D", data_type='gg')
-        fig_gg_raw = plot_pore_diameter(time_points, dist_ac, dist_bd, run_name, filtered=False)
-        fig_gg_filtered = plot_pore_diameter(time_points, filtered_ac, filtered_bd, run_name, filtered=True)
+    # --- Calculate Percentiles ---
+    percentile_stats = {}
 
-        fig_gg_ac.savefig(os.path.join(run_dir, "G_G_Distance_AC_Comparison.png"), bbox_inches='tight')
-        fig_gg_bd.savefig(os.path.join(run_dir, "G_G_Distance_BD_Comparison.png"), bbox_inches='tight')
-        fig_gg_raw.savefig(os.path.join(run_dir, "GG_Distance_Plot_raw.png"), bbox_inches='tight')
-        fig_gg_filtered.savefig(os.path.join(run_dir, "GG_Distance_Plot.png"), bbox_inches='tight')
-
-        plt.close(fig_gg_ac)
-        plt.close(fig_gg_bd)
-        plt.close(fig_gg_raw)
-        plt.close(fig_gg_filtered)
-        logger.debug("G-G plots saved.")
-
-        if com_distances is not None and filtered_com is not None:
-            fig_com = plot_filtering_comparison(time_points, com_distances, filtered_com, filter_info_com, run_name, data_type='com')
-            fig_com_raw = plot_com_positions(time_points, com_distances, run_name, filtered=False)
-            fig_com_filtered = plot_com_positions(time_points, filtered_com, run_name, filtered=True)
-            fig_com_kde = plot_kde_analysis(time_points, com_distances, run_name, data_type='com')
-
-            fig_com.savefig(os.path.join(run_dir, "COM_Stability_Comparison.png"), bbox_inches='tight')
-            fig_com_raw.savefig(os.path.join(run_dir, "COM_Stability_Plot_raw.png"), bbox_inches='tight')
-            fig_com_filtered.savefig(os.path.join(run_dir, "COM_Stability_Plot.png"), bbox_inches='tight')
-            fig_com_kde.savefig(os.path.join(run_dir, "COM_Stability_KDE_Analysis.png"), bbox_inches='tight')
-
-            plt.close(fig_com)
-            plt.close(fig_com_raw)
-            plt.close(fig_com_filtered)
-            plt.close(fig_com_kde)
-            logger.debug("COM plots saved.")
+    def _calculate_percentiles(data, prefix, suffix):
+        stats = {}
+        keys = [f'{prefix}_Pctl10_{suffix}', f'{prefix}_Pctl90_{suffix}']
+        if data is not None and len(data) > 0:
+            finite_data = data[np.isfinite(data)]
+            if len(finite_data) >= 1: # np.percentile needs at least one element
+                try:
+                    pctl = np.nanpercentile(finite_data, [10, 90])
+                    stats[keys[0]] = float(pctl[0])
+                    stats[keys[1]] = float(pctl[1])
+                except ValueError: # Catch potential issues with percentile calculation
+                    logger.warning(f"Could not calculate percentiles for {prefix}_{suffix} due to ValueError.", exc_info=False)
+                    stats[keys[0]] = np.nan
+                    stats[keys[1]] = np.nan
+            else:
+                logger.warning(f"Insufficient finite data points ({len(finite_data)}) to calculate percentiles for {prefix}_{suffix}.")
+                stats[keys[0]] = np.nan
+                stats[keys[1]] = np.nan
         else:
-            logger.info("Skipping COM plot generation.")
+            stats[keys[0]] = np.nan
+            stats[keys[1]] = np.nan
+        return stats
 
-    except Exception as e:
-        logger.error(f"Error generating plots: {e}", exc_info=True)
+    percentile_stats.update(_calculate_percentiles(dist_ac, 'GG_AC', 'Raw'))
+    percentile_stats.update(_calculate_percentiles(dist_bd, 'GG_BD', 'Raw'))
+    percentile_stats.update(_calculate_percentiles(com_distances, 'COM', 'Raw'))
+    percentile_stats.update(_calculate_percentiles(filtered_ac, 'GG_AC', 'Filt'))
+    percentile_stats.update(_calculate_percentiles(filtered_bd, 'GG_BD', 'Filt'))
+    percentile_stats.update(_calculate_percentiles(filtered_com, 'COM', 'Filt'))
 
-    return filtered_ac, filtered_bd, filtered_com, filter_info_gg, filter_info_com
+    # --- Save Filtered Data ---
+    if filtered_ac is not None or filtered_bd is not None:
+        gg_df_filt = pd.DataFrame({
+            'Time (ns)': time_points,
+            'A_C_Distance_Raw': dist_ac if dist_ac is not None else np.nan,
+            'B_D_Distance_Raw': dist_bd if dist_bd is not None else np.nan,
+            'A_C_Distance_Filtered': filtered_ac if filtered_ac is not None else np.nan,
+            'B_D_Distance_Filtered': filtered_bd if filtered_bd is not None else np.nan
+        })
+        gg_filtered_path = os.path.join(run_dir, "G_G_Distance_Filtered.csv")
+        try:
+            gg_df_filt.to_csv(gg_filtered_path, index=False, float_format='%.4f', na_rep='NaN')
+            logger.info(f"Saved filtered G-G data to {gg_filtered_path}")
+        except Exception as e:
+            logger.error(f"Failed to save filtered G-G CSV: {e}")
+
+    filter_info_gg = {'AC': filter_info_ac, 'BD': filter_info_bd}
+
+    logger.info(f"Finished filtering and saving data for {run_dir}.")
+    # Return filtered data, filter info, and the newly calculated stats
+    return filtered_ac, filtered_bd, filtered_com, filter_info_gg, filter_info_com, raw_stats, percentile_stats
 
 
 # --- Plotting Helper Functions ---

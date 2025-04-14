@@ -597,76 +597,75 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
 
         # --- Save CSV with Human-Readable Display Labels ---
         try:
-            # Generate display labels using the maps (or fallback maps)
-            display_toxin_labels = [toxin_label_map.get(lbl, lbl) for lbl in toxin_res_labels_internal]
-            display_channel_labels = [channel_label_map.get(lbl, lbl) for lbl in channel_res_labels_internal]
-
-            # Check if display labels became non-unique where they shouldn't have
-            # (e.g., if mapping failed and produced identical fallback labels for different residues)
-            if len(toxin_res_labels_internal) == len(set(toxin_res_labels_internal)) and len(display_toxin_labels) != len(set(display_toxin_labels)):
-                 logger.warning("Duplicate DISPLAY toxin labels detected after mapping potentially due to map errors. CSV rows might overwrite.")
-            # Channel display labels *can* be duplicates (e.g., ASP68(A), ASP68(B)), this is fine as long as internal keys were unique where needed.
+            # Map internal indices/labels to display labels for the DataFrame
+            # Use the maps obtained from get_residue_info or the fallback
+            display_toxin_labels = [toxin_label_map.get(k, k) for k in toxin_res_labels_internal]
+            display_channel_labels = [channel_label_map.get(k, k) for k in channel_res_labels_internal]
 
             residue_contact_df_display = pd.DataFrame(avg_residue_contact_map,
-                                                     index=display_toxin_labels,    # e.g., GLY77
-                                                     columns=display_channel_labels) # e.g., ASP68(A), ASP68(B)...
+                                                    index=display_toxin_labels,
+                                                    columns=display_channel_labels)
+            # Round for readability
+            residue_contact_df_display = residue_contact_df_display.round(4)
 
-            contact_map_csv_path_display = os.path.join(output_dir, "Toxin_Channel_Residue_Contacts.csv") # Main CSV
-            residue_contact_df_display.to_csv(contact_map_csv_path_display, float_format='%.4f')
-            logger.info(f"Saved residue contact frequency map (display labels) to {contact_map_csv_path_display}")
+            # Save the DataFrame with display labels
+            contacts_csv_path = os.path.join(output_dir, "Residue_Contact_Frequency.csv")
+            residue_contact_df_display.to_csv(contacts_csv_path, index=True, index_label="Toxin_Residue", float_format='%.4f')
+            logger.info(f"Saved average residue contact frequency map to {contacts_csv_path}")
 
-        except Exception as e_csv_disp:
-            logger.error(f"Failed to save display label CSV {contact_map_csv_path_display}: {e_csv_disp}")
-            residue_contact_df_display = None # Nullify on save error
+        except Exception as e_csv:
+            logger.error(f"Error saving residue contact frequency CSV: {e_csv}", exc_info=True)
+            residue_contact_df_display = None # Ensure it's None if save failed
 
-
-        # --- Generate Contact Map Visualizations ---
-        logger.info("Generating contact map visualizations...")
-
-        # 1. Full Map - Pass internal labels AND the maps
+        # --- Generate Plots ---
         try:
+            # Generate the full heatmap
             create_contact_map_visualization(avg_residue_contact_map,
-                                             toxin_res_labels_internal,     # Pass internal labels
-                                             channel_res_labels_internal,   # Pass internal labels
-                                             output_dir,
-                                             toxin_label_map,    # Pass the map
-                                             channel_label_map)  # Pass the map
-        except Exception as e_vis:
-            logger.error(f"Error generating full contact map visualization: {e_vis}", exc_info=True)
+                                         toxin_res_labels_internal,
+                                         channel_res_labels_internal,
+                                         output_dir,
+                                         toxin_label_map, channel_label_map) # Pass the maps
 
-        # 2. Focused Map - Pass internal labels AND the maps
-        try:
-            # Pass internal labels for lookup, maps for display generation inside function
-             create_enhanced_focused_heatmap(
-                 avg_residue_contact_map,       # The raw data
-                 toxin_res_labels_internal,     # Internal labels for lookup
-                 channel_res_labels_internal,   # Internal labels for lookup
-                 toxin_label_map,               # Map for display labels
-                 channel_label_map,             # Map for display labels
-                 output_dir
-             )
-        except Exception as e_foc:
-            logger.error(f"Error generating focused contact map: {e_foc}", exc_info=True)
+            # Generate the focused heatmap
+            create_enhanced_focused_heatmap(avg_residue_contact_map,
+                                          toxin_res_labels_internal,
+                                          channel_res_labels_internal,
+                                          toxin_label_map, channel_label_map, # Pass the maps
+                                          output_dir)
+
+            # Generate time-series plots for orientation, rotation, and contacts
+            plot_orientation_data(time_points_analysis,
+                                  orientation_angles,
+                                  rotation_euler_angles,
+                                  total_contact_counts_list,
+                                  output_dir)
+            logger.info(f"Generated and saved contact maps and orientation plots in {output_dir}")
+        except Exception as e_plot:
+            logger.error(f"Error generating contact maps or orientation plots: {e_plot}", exc_info=True)
 
     else:
-        logger.warning("Residue contact analysis skipped or failed. No map saved.")
+        logger.info("Residue contact analysis was skipped or produced no results.")
 
-    # --- Generate standard plots for orientation/rotation/total contacts ---
-    try:
-        logger.info("Generating orientation plots...")
-        plot_orientation_data(
-            time_points_analysis, # Use time points corresponding to analyzed frames
-            orientation_angles,
-            rotation_euler_angles,
-            total_contact_counts_list,
-            output_dir
-        )
-    except Exception as e:
-        logger.error(f"Error generating orientation plots: {e}", exc_info=True)
+    # After the main loop:
+    rotation_stats = {}
+    if rotation_euler_angles: # Check if list is not empty
+        # Separate components, handling potential NaNs
+        rot_x = np.array([r[0] for r in rotation_euler_angles])
+        rot_y = np.array([r[1] for r in rotation_euler_angles])
+        rot_z = np.array([r[2] for r in rotation_euler_angles])
 
-    logger.info("Orientation and contact analysis complete.")
-    # Return the display dataframe (or None if it failed)
-    return orientation_angles, rotation_euler_angles, total_contact_counts_list, residue_contact_df_display
+        rotation_stats['Orient_RotX_Mean'] = np.nanmean(rot_x)
+        rotation_stats['Orient_RotX_Std'] = np.nanstd(rot_x)
+        rotation_stats['Orient_RotY_Mean'] = np.nanmean(rot_y)
+        rotation_stats['Orient_RotY_Std'] = np.nanstd(rot_y)
+        rotation_stats['Orient_RotZ_Mean'] = np.nanmean(rot_z)
+        rotation_stats['Orient_RotZ_Std'] = np.nanstd(rot_z)
+    else: # Handle empty list case
+        keys = ['Orient_RotX_Mean', 'Orient_RotX_Std', 'Orient_RotY_Mean', 'Orient_RotY_Std', 'Orient_RotZ_Mean', 'Orient_RotZ_Std']
+        for k in keys: rotation_stats[k] = np.nan
+
+    logger.info("Finished toxin orientation and contact analysis.")
+    return orientation_angles, rotation_euler_angles, total_contact_counts_list, residue_contact_df_display, rotation_stats
 
 
 # --- Plotting Functions for this Module ---

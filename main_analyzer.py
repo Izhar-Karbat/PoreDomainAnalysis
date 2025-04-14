@@ -452,13 +452,16 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         if run_gg or run_com:
             logging.info(f"Running Filtering and Saving (GG={run_gg}, COM={run_com})...")
             results['filtered_ac'], results['filtered_bd'], results['filtered_com'], \
-            results['filter_info_gg'], results['filter_info_com'] = \
+            results['filter_info_gg'], results['filter_info_com'], \
+            results['raw_dist_stats'], results['percentile_stats'] = \
                 filter_and_save_data(
                     run_dir, results['dist_ac'], results['dist_bd'],
                     results['com_distances'], results['time_points'], box_z=box_z
                 )
-            # Update com_analyzed based on filtered result too, in case raw was None but filtering created array
-            if results['filtered_com'] is not None: results['com_analyzed'] = True
+
+            # Update com_analyzed based on filtered result too
+            results['com_analyzed'] = results['com_distances'] is not None
+            #if results['filtered_com'] is not None: results['com_analyzed'] = True # Redundant if raw check is done
 
         # 3. Ion Tracking (if requested or needed by water)
         if run_ion_tracking:
@@ -481,9 +484,10 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         if run_orientation:
             logging.info("Running Toxin Orientation Analysis...")
             if results['com_analyzed']:
-                # This saves its own files, we don't strictly need the return values here
-                # unless we want to add more stats to the main summary JSON later.
-                analyze_toxin_orientation(dcd_file, psf_file, run_dir)
+                # This saves its own files and now returns rotation stats
+                # Unpack the results including the new rotation_stats
+                _, _, _, _, results['orientation_rotation_stats'] = \
+                    analyze_toxin_orientation(dcd_file, psf_file, run_dir)
             else:
                 logging.warning("Skipping Toxin Orientation analysis (no COM data).")
 
@@ -519,7 +523,10 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         calculate_and_save_run_summary(
             run_dir, system_name, run_name,
             results['com_analyzed'], results['filter_info_com'], results['ion_indices'],
-            results['cavity_water_stats']
+            results['cavity_water_stats'],
+            raw_dist_stats=results.get('raw_dist_stats', {}),  # Pass new stats
+            percentile_stats=results.get('percentile_stats', {}), # Pass new stats
+            orientation_rotation_stats=results.get('orientation_rotation_stats', {}) # Pass new stats
         )
 
         # 8. Generate HTML Report (only if all analyses were run)
