@@ -29,7 +29,8 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                                    com_analyzed, filter_info_com, ion_indices,
                                    cavity_water_stats={}, raw_dist_stats={},
                                    percentile_stats={}, orientation_rotation_stats={},
-                                   ion_transit_stats={}, is_control_system=False):
+                                   ion_transit_stats={}, gyration_stats={},
+                                   is_control_system=False):
     """
     Calculates summary stats by reading analysis output files from a specific run
     (including ion, water, raw distance, percentile, orientation, and ion transit stats passed as arguments)
@@ -47,6 +48,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
         percentile_stats (dict, optional): Dictionary with 10th/90th percentiles for raw/filtered GG and COM. Defaults to {}.
         orientation_rotation_stats (dict, optional): Dictionary with mean/std for toxin Euler rotation angles. Defaults to {}.
         ion_transit_stats (dict, optional): Dictionary with ion transit time statistics. Defaults to {}.
+        gyration_stats (dict, optional): Dictionary with carbonyl gyration statistics. Defaults to {}.
         is_control_system (bool, optional): Flag indicating if this is a control system (no toxin). Defaults to False.
     """
     logger.info(f"Calculating final summary statistics for {system_name}/{run_name}...")
@@ -83,7 +85,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
 
     try:
         # --- G-G Stats (Filtered) --- (Always calculated)
-        gg_filt_path = os.path.join(run_dir, "G_G_Distance_Filtered.csv")
+        gg_filt_path = os.path.join(run_dir, "core_analysis", "G_G_Distance_Filtered.csv")
         gg_ac_series = None
         gg_bd_series = None
         if os.path.exists(gg_filt_path):
@@ -113,7 +115,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                 run_summary[metric] = None
         else:
             # Normal system with potential toxin
-            com_filt_path = os.path.join(run_dir, "COM_Stability_Filtered.csv")
+            com_filt_path = os.path.join(run_dir, "core_analysis", "COM_Stability_Filtered.csv")
             com_series = None
             if com_analyzed: # Check if COM analysis was *intended* (toxin present)
                 if os.path.exists(com_filt_path):
@@ -145,7 +147,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                            'Orient_Contacts_Mean', 'Orient_Contacts_Std']:
                 run_summary[metric] = None
         else:
-            orient_path = os.path.join(run_dir, "Toxin_Orientation.csv")
+            orient_path = os.path.join(run_dir, "orientation_contacts", "Toxin_Orientation.csv")
             orient_angle_series = None
             orient_contacts_series = None
             if com_analyzed: # Orientation/Contacts only relevant if toxin was analyzed
@@ -177,7 +179,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
 
         # --- Ion Stats --- (Always calculated)
         run_summary['Ion_Count'] = len(ion_indices) if ion_indices is not None else 0
-        ion_stats_path = os.path.join(run_dir, 'K_Ion_Site_Statistics.csv')
+        ion_stats_path = os.path.join(run_dir, "ion_analysis", "K_Ion_Site_Statistics.csv")
         ion_site_keys = ['S0', 'S1', 'S2', 'S3', 'S4', 'Cavity']  # Expected sites
         ion_stats_found = False
         if os.path.exists(ion_stats_path):
@@ -281,6 +283,27 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             run_summary[f'IonTransit_{key}'] = ion_transit_stats.get(key, default_val)
         logger.debug(f"Incorporated ion transit stats: {ion_transit_stats}")
 
+        # --- Add Gyration Stats ---
+        # Only includes G1 stats now
+        gyration_stat_keys = [
+            'mean_gyration_g1', 'std_gyration_g1',
+            'flips_detected', 'max_gyration_change'
+        ]
+
+        if gyration_stats and isinstance(gyration_stats, dict) and gyration_stats:
+            logger.debug("Incorporating G1 gyration stats into summary.")
+            run_summary['Gyration_G1_Mean'] = gyration_stats.get('mean_gyration_g1', np.nan)
+            run_summary['Gyration_G1_Std'] = gyration_stats.get('std_gyration_g1', np.nan)
+            # G2 stats removed
+            run_summary['Gyration_Flips'] = gyration_stats.get('flips_detected', 0)
+            run_summary['Gyration_MaxChange'] = gyration_stats.get('max_gyration_change', np.nan)
+        else:
+            logger.debug("No gyration stats provided, adding NaN placeholders for G1.")
+            run_summary['Gyration_G1_Mean'] = np.nan
+            run_summary['Gyration_G1_Std'] = np.nan
+            # G2 stats removed
+            run_summary['Gyration_Flips'] = 0
+            run_summary['Gyration_MaxChange'] = np.nan
 
         # --- Finalize Status ---
         # More granular status based on errors

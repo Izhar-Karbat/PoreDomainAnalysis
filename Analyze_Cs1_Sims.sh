@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Base directory where the R1, R2, ... R10 folders are located
-BASE_DIR="~/rCs1/toxin/toxin"
+BASE_DIR="/home/labs/bmeitan/karbati/Cs1_AF3v/control/control"
 # Path to your analysis script
 ANALYSIS_SCRIPT="main_analyzer.py" 
 # Python interpreter command
@@ -9,8 +9,8 @@ PYTHON_CMD="python3"
 
 echo "Starting batch analysis..."
 
-# Loop through numbers 1 to 10
-for i in {1..10}
+# Loop through numbers 1 to 5
+for i in {1..5}
 do
   # Construct the full path to the current run folder
   RUN_FOLDER="${BASE_DIR}/R${i}"

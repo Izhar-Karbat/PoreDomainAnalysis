@@ -362,7 +362,9 @@ def visualize_binding_sites_g1_centric(sites_g1_centric, g1_ca_z_ref, output_dir
     ax.grid(axis='y', linestyle=':', alpha=0.3, zorder=0)
 
     # Save the figure
-    figure_path = os.path.join(output_dir, 'binding_sites_g1_centric_visualization.png')
+    base_output_dir = os.path.join(output_dir, "ion_analysis")
+    os.makedirs(base_output_dir, exist_ok=True)
+    figure_path = os.path.join(base_output_dir, 'binding_sites_g1_centric_visualization.png')
     try:
         fig.savefig(figure_path, dpi=200, bbox_inches='tight')
         log.info(f"Binding site visualization saved to {figure_path}")
@@ -373,7 +375,7 @@ def visualize_binding_sites_g1_centric(sites_g1_centric, g1_ca_z_ref, output_dir
         plt.close(fig)
 
     # Also save numerical data to a file
-    data_path = os.path.join(output_dir, 'binding_site_positions_g1_centric.txt')
+    data_path = os.path.join(base_output_dir, 'binding_site_positions_g1_centric.txt')
     try:
         with open(data_path, 'w') as f:
             f.write(f"# K+ channel binding site positions\n")
@@ -612,13 +614,13 @@ def track_potassium_ions(run_dir, psf_file=None, dcd_file=None, exit_buffer_fram
 
 # --- Ion Data Saving & Plotting ---
 
-def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indices, g1_reference):
+def save_ion_position_data(output_dir, time_points, ions_z_positions_abs, ion_indices, g1_reference):
     """
     Save K+ ion Z-position data (absolute and G1-centric) to CSV files.
     Properly handles NaN values for frames where ions are not in the filter.
 
     Args:
-        run_dir (str): Directory to save the CSV files.
+        output_dir (str): Directory to save the CSV files.
         time_points (np.ndarray): Array of time points in ns.
         ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)} with NaN when ion not in filter
         ion_indices (list): List of ion indices included in the dict.
@@ -628,6 +630,10 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
         module_logger.info("No tracked ion indices provided. Skipping ion position data saving.")
         return
 
+    # Create ion_analysis subdirectory
+    ion_dir = os.path.join(output_dir, "ion_analysis")
+    os.makedirs(ion_dir, exist_ok=True)
+
     # --- Absolute Coordinates ---
     data_abs = {'Time (ns)': time_points}
     for ion_idx in ion_indices:
@@ -636,7 +642,7 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
         else: # Should not happen if ion_indices matches dict keys
              data_abs[f'Ion_{ion_idx}_Z_Abs'] = np.full(len(time_points), np.nan)
     df_abs = pd.DataFrame(data_abs)
-    csv_path_abs = os.path.join(run_dir, 'K_Ion_Z_Positions_Absolute.csv')
+    csv_path_abs = os.path.join(ion_dir, 'K_Ion_Z_Positions_Absolute.csv')
     try:
         df_abs.to_csv(csv_path_abs, index=False, float_format='%.4f', na_rep='NaN')
         module_logger.info(f"Saved ion absolute Z positions to {csv_path_abs}")
@@ -652,7 +658,7 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
         else:
             data_g1[f'Ion_{ion_idx}_Z_G1Centric'] = np.full(len(time_points), np.nan)
     df_g1 = pd.DataFrame(data_g1)
-    csv_path_g1 = os.path.join(run_dir, 'K_Ion_Z_Positions_G1Centric.csv') # Explicit name
+    csv_path_g1 = os.path.join(ion_dir, 'K_Ion_Z_Positions_G1Centric.csv')
     try:
         df_g1.to_csv(csv_path_g1, index=False, float_format='%.4f', na_rep='NaN')
         module_logger.info(f"Saved ion G1-centric Z positions to {csv_path_g1}")
@@ -668,7 +674,7 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
             is_present = ~np.isnan(ions_z_positions_abs[ion_idx])
             data_meta[f'Ion_{ion_idx}_InFilter'] = is_present
     df_meta = pd.DataFrame(data_meta)
-    csv_path_meta = os.path.join(run_dir, 'K_Ion_Filter_Presence.csv')
+    csv_path_meta = os.path.join(ion_dir, 'K_Ion_Filter_Presence.csv')
     try:
         df_meta.to_csv(csv_path_meta, index=False)
         module_logger.info(f"Saved ion filter presence data to {csv_path_meta}")
@@ -676,7 +682,7 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
         module_logger.error(f"Failed to save ion presence CSV: {e}")
 
     # Save metadata about the reference frame
-    meta_path = os.path.join(run_dir, 'K_Ion_Coordinate_Reference.txt')
+    meta_path = os.path.join(ion_dir, 'K_Ion_Coordinate_Reference.txt')
     try:
         with open(meta_path, 'w') as f:
             f.write(f"# K+ ion position coordinate reference information\n")
@@ -688,13 +694,13 @@ def save_ion_position_data(run_dir, time_points, ions_z_positions_abs, ion_indic
     except Exception as e:
          module_logger.error(f"Failed to save coordinate reference file: {e}")
 
-def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, filter_sites, g1_reference, logger=None):
+def plot_ion_positions(output_dir, time_points, ions_z_positions_abs, ion_indices, filter_sites, g1_reference, logger=None):
     """
     Plot K+ ion Z positions (G1-centric) over time and their density distribution.
     Properly handles NaN values for frames where ions are not in the filter.
 
     Args:
-        run_dir (str): Directory to save the plots.
+        output_dir (str): Directory to save the plots.
         time_points (np.ndarray): Time points in ns.
         ions_z_positions_abs (dict): {ion_idx: np.array(abs_z_positions)} with NaN when ion not in filter
         ion_indices (list): Indices of ions to plot.
@@ -709,6 +715,10 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
     if filter_sites is None:
          log.warning("Filter sites data missing, plots will lack site lines.")
          filter_sites = {} # Use empty dict to avoid errors
+
+    # Ensure we have the ion_analysis subdirectory
+    ion_dir = os.path.join(output_dir, "ion_analysis")
+    os.makedirs(ion_dir, exist_ok=True)
 
     log.info("Generating K+ ion position plots...")
 
@@ -757,9 +767,6 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
                     for segment in segments:
                         t_seg, z_seg = zip(*segment)
                         ax1.plot(t_seg, z_seg, color=plot_colors[i], linewidth=1.0, alpha=0.8)
-                    
-                    # Optionally, add scatter points to show discrete positions
-                    # ax1.scatter(t_points, z_values, color=plot_colors[i], s=2, alpha=0.6)
                     
                     # Add label if few ions
                     if len(ion_indices) <= 10:
@@ -812,9 +819,9 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
         ax1.set_ylim(y_min, y_max)
         ax2.set_ylim(y_min, y_max) # Ensure shared ylim
 
-        plt.suptitle(f'K+ Ion Positions & Density ({os.path.basename(run_dir)})', fontsize=16, y=0.99)
+        plt.suptitle(f'K+ Ion Positions & Density ({os.path.basename(output_dir)})', fontsize=16, y=0.99)
         plt.tight_layout(rect=[0, 0.03, 1, 0.96]) # Adjust layout for suptitle
-        combined_plot_path = os.path.join(run_dir, 'K_Ion_Combined_Plot.png')
+        combined_plot_path = os.path.join(ion_dir, 'K_Ion_Combined_Plot.png')
         fig.savefig(combined_plot_path, dpi=200, bbox_inches='tight')
         plt.close(fig)
         log.debug(f"Saved combined ion plot to {combined_plot_path}")
@@ -825,19 +832,19 @@ def plot_ion_positions(run_dir, time_points, ions_z_positions_abs, ion_indices, 
 
     # --- Occupancy Heatmap/Bar Plot (using dedicated function) ---
     try:
-        _ = create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1, ion_indices, filter_sites, logger=log)
+        _ = create_ion_occupancy_heatmap(ion_dir, time_points, ions_z_g1, ion_indices, filter_sites, logger=log)
     except Exception as e:
         log.error(f"Failed to create ion occupancy heatmap/plots: {e}", exc_info=True)
 
 
-def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_indices, filter_sites, logger=None):
+def create_ion_occupancy_heatmap(output_dir, time_points, ions_z_g1_centric, ion_indices, filter_sites, logger=None):
     """
     Create heatmap and bar chart showing K+ ion occupancy in binding sites.
     Properly handles NaN values for frames where ions are not in the filter.
     Saves plots and occupancy data CSV.
 
     Args:
-        run_dir (str): Directory to save the plot and CSV.
+        output_dir (str): Directory to save the plot and CSV (should be .../ion_analysis/).
         time_points (np.ndarray): Time points in ns.
         ions_z_g1_centric (dict): {ion_idx: np.array(g1_centric_z_pos)} with NaN when ion not in filter
         ion_indices (list): List of tracked ion indices.
@@ -853,8 +860,10 @@ def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_in
         return None
     if not ion_indices:
         log.info("No ion indices provided for occupancy heatmap.")
-        # Create empty CSV for consistency? Or just return None? Let's return None.
         return None
+
+    # Ensure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
 
     log.info("Creating K+ ion occupancy plots...")
 
@@ -915,9 +924,9 @@ def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_in
 
         ax.set_xlabel('Time (ns)', fontsize=14)
         ax.set_ylabel('Binding Site', fontsize=14)
-        ax.set_title(f'K+ Ion Occupancy Heatmap ({os.path.basename(run_dir)})', fontsize=16)
+        ax.set_title(f'K+ Ion Occupancy Heatmap ({os.path.basename(os.path.dirname(output_dir))})', fontsize=16)
         plt.tight_layout()
-        heatmap_path = os.path.join(run_dir, 'K_Ion_Occupancy_Heatmap.png')
+        heatmap_path = os.path.join(output_dir, 'K_Ion_Occupancy_Heatmap.png')
         fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
         log.debug(f"Saved occupancy heatmap to {heatmap_path}")
@@ -942,10 +951,10 @@ def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_in
 
         ax.set_xlabel('Binding Site', fontsize=12)
         ax.set_ylabel('Average K+ Ion Occupancy', fontsize=12)
-        ax.set_title(f'Average Site Occupancy ({os.path.basename(run_dir)})', fontsize=14)
+        ax.set_title(f'Average Site Occupancy ({os.path.basename(os.path.dirname(output_dir))})', fontsize=14)
         ax.tick_params(axis='x', rotation=45)
         plt.tight_layout()
-        avg_path = os.path.join(run_dir, 'K_Ion_Average_Occupancy.png')
+        avg_path = os.path.join(output_dir, 'K_Ion_Average_Occupancy.png')
         fig.savefig(avg_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
         log.debug(f"Saved average occupancy bar chart to {avg_path}")
@@ -957,141 +966,8 @@ def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_in
     try:
         df = pd.DataFrame(occupancy, columns=site_names_plot)
         df.insert(0, 'Time (ns)', time_points)
-        csv_path = os.path.join(run_dir, 'K_Ion_Occupancy_Per_Frame.csv') # More descriptive name
-        df.to_csv(csv_path, index=False, float_format='%.4f')
-        log.info(f"Saved frame-by-frame ion occupancy to {csv_path}")
-    except Exception as e:
-        log.error(f"Failed to save occupancy per frame CSV: {e}")
-
-    return heatmap_path
-
-def create_ion_occupancy_heatmap(run_dir, time_points, ions_z_g1_centric, ion_indices, filter_sites, logger=None):
-    """
-    Create heatmap and bar chart showing K+ ion occupancy in binding sites.
-    Saves plots and occupancy data CSV.
-
-    Args:
-        run_dir (str): Directory to save the plot and CSV.
-        time_points (np.ndarray): Time points in ns.
-        ions_z_g1_centric (dict): {ion_idx: np.array(g1_centric_z_pos)}
-        ion_indices (list): List of tracked ion indices.
-        filter_sites (dict): Site positions relative to G1 C-alpha=0.
-        logger (logging.Logger, optional): Logger instance. Defaults to module logger.
-
-    Returns:
-        str | None: Path to the saved heatmap PNG, or None on error.
-    """
-    log = logger if logger else module_logger
-    if not filter_sites:
-        log.warning("Filter sites data missing, cannot create occupancy heatmap.")
-        return None
-    if not ion_indices:
-        log.info("No ion indices provided for occupancy heatmap.")
-        # Create empty CSV for consistency? Or just return None? Let's return None.
-        return None
-
-    log.info("Creating K+ ion occupancy plots...")
-
-    # Define binding site boundaries (midway between ordered sites)
-    site_names_ordered = ['S0', 'S1', 'S2', 'S3', 'S4', 'Cavity'] # Extracellular to Intracellular
-    # Filter sites present in the input dict and sort them by Z-position (descending)
-    available_sites = {site: pos for site, pos in filter_sites.items() if site in site_names_ordered}
-    if not available_sites:
-         log.error("No standard sites (S0-S4, Cavity) found in filter_sites dict.")
-         return None
-
-    sorted_sites = sorted(available_sites.items(), key=lambda item: item[1], reverse=True)
-    site_names_plot = [item[0] for item in sorted_sites]
-    site_pos_plot = [item[1] for item in sorted_sites]
-
-    # Calculate boundaries: midway points + outer bounds
-    boundaries = []
-    boundaries.append(site_pos_plot[0] + 1.5 if site_pos_plot else np.inf) # Top boundary
-    for i in range(len(site_pos_plot) - 1):
-        boundaries.append((site_pos_plot[i] + site_pos_plot[i+1]) / 2)
-    boundaries.append(site_pos_plot[-1] - 1.5 if site_pos_plot else -np.inf) # Bottom boundary
-    n_sites = len(site_names_plot)
-
-    # Create occupancy matrix (frames x sites)
-    n_frames = len(time_points)
-    occupancy = np.zeros((n_frames, n_sites), dtype=int) # Use int for counts
-
-    for frame_idx in range(n_frames):
-        for ion_idx in ion_indices:
-            if ion_idx in ions_z_g1_centric:
-                z_pos = ions_z_g1_centric[ion_idx][frame_idx]
-                if np.isfinite(z_pos):
-                    # Assign to site based on boundaries (upper_bound > z >= lower_bound)
-                    for site_idx in range(n_sites):
-                        upper_bound = boundaries[site_idx]
-                        lower_bound = boundaries[site_idx + 1]
-                        if lower_bound <= z_pos < upper_bound:
-                            occupancy[frame_idx, site_idx] += 1
-                            break # Ion assigned to one site
-
-    # --- Create Heatmap ---
-    try:
-        fig, ax = plt.subplots(figsize=(12, 6)) # Adjusted size
-        max_occ = np.max(occupancy) if occupancy.size > 0 else 1
-        cmap = plt.cm.get_cmap("viridis", max_occ + 1) # Discrete colormap based on max occupancy
-
-        im = ax.imshow(occupancy.T, aspect='auto', cmap=cmap,
-                       interpolation='nearest', origin='upper', # Origin upper to match site order S0->Cavity
-                       extent=[time_points[0], time_points[-1], n_sites, 0], # Adjust extent for origin='upper'
-                       vmin=-0.5, vmax=max_occ + 0.5) # Center ticks for discrete colors
-
-        # Add colorbar with integer ticks
-        cbar = plt.colorbar(im, ax=ax, ticks=np.arange(max_occ + 1))
-        cbar.set_label('Number of K+ Ions', fontsize=12)
-
-        ax.set_yticks(np.arange(n_sites) + 0.5) # Center ticks between site boundaries
-        ax.set_yticklabels(site_names_plot) # Use the ordered site names
-
-        ax.set_xlabel('Time (ns)', fontsize=14)
-        ax.set_ylabel('Binding Site', fontsize=14)
-        ax.set_title(f'K+ Ion Occupancy Heatmap ({os.path.basename(run_dir)})', fontsize=16)
-        plt.tight_layout()
-        heatmap_path = os.path.join(run_dir, 'K_Ion_Occupancy_Heatmap.png')
-        fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        log.debug(f"Saved occupancy heatmap to {heatmap_path}")
-    except Exception as e:
-         log.error(f"Failed to generate occupancy heatmap: {e}", exc_info=True)
-         heatmap_path = None # Indicate failure
-         if 'fig' in locals() and plt.fignum_exists(fig.number): plt.close(fig)
-
-    # --- Create Average Occupancy Bar Chart ---
-    try:
-        fig, ax = plt.subplots(figsize=(8, 5)) # Adjusted size
-        if occupancy.size > 0:
-            avg_occupancy = np.mean(occupancy, axis=0)
-            sns.barplot(x=site_names_plot, y=avg_occupancy, hue=site_names_plot,
-                        ax=ax, palette='viridis', order=site_names_plot, legend=False)
-
-            # Add exact values above bars
-            for i, v in enumerate(avg_occupancy):
-                ax.text(i, v + 0.01 * np.max(avg_occupancy), f"{v:.2f}", ha='center', va='bottom', fontsize=9)
-        else:
-             ax.text(0.5, 0.5, 'No occupancy data', ha='center', va='center')
-
-        ax.set_xlabel('Binding Site', fontsize=12)
-        ax.set_ylabel('Average K+ Ion Occupancy', fontsize=12)
-        ax.set_title(f'Average Site Occupancy ({os.path.basename(run_dir)})', fontsize=14)
-        ax.tick_params(axis='x', rotation=45)
-        plt.tight_layout()
-        avg_path = os.path.join(run_dir, 'K_Ion_Average_Occupancy.png')
-        fig.savefig(avg_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        log.debug(f"Saved average occupancy bar chart to {avg_path}")
-    except Exception as e:
-        log.error(f"Failed to generate average occupancy plot: {e}", exc_info=True)
-        if 'fig' in locals() and plt.fignum_exists(fig.number): plt.close(fig)
-
-    # --- Save the raw occupancy data per frame ---
-    try:
-        df = pd.DataFrame(occupancy, columns=site_names_plot)
-        df.insert(0, 'Time (ns)', time_points)
-        csv_path = os.path.join(run_dir, 'K_Ion_Occupancy_Per_Frame.csv') # More descriptive name
+        
+        csv_path = os.path.join(output_dir, 'K_Ion_Occupancy_Per_Frame.csv')
         df.to_csv(csv_path, index=False, float_format='%.4f')
         log.info(f"Saved frame-by-frame ion occupancy to {csv_path}")
     except Exception as e:
@@ -1130,7 +1006,9 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
         coord_log.warning("No ion indices provided for coordination analysis.")
         # Create and save empty DataFrame for consistency?
         empty_df = pd.DataFrame(columns=['Site', 'Mean Occupancy', 'Max Occupancy', 'Occupancy > 0 (%)', 'Occupancy > 1 (%)'])
-        stats_path = os.path.join(run_dir, 'K_Ion_Site_Statistics.csv')
+        output_dir = os.path.join(run_dir, "ion_analysis")
+        os.makedirs(output_dir, exist_ok=True)
+        stats_path = os.path.join(output_dir, 'K_Ion_Site_Statistics.csv')
         try: empty_df.to_csv(stats_path, index=False); coord_log.info(f"Saved empty ion stats file to {stats_path}")
         except: pass
         return empty_df
@@ -1210,7 +1088,9 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
     # Save statistics to CSV
     stats_df = pd.DataFrame(stats_data)
     stats_df = stats_df[['Site', 'Mean Occupancy', 'Max Occupancy', 'Occupancy > 0 (%)', 'Occupancy > 1 (%)']] # Ensure order
-    stats_path = os.path.join(run_dir, 'K_Ion_Site_Statistics.csv')
+    output_dir = os.path.join(run_dir, "ion_analysis")
+    os.makedirs(output_dir, exist_ok=True)
+    stats_path = os.path.join(output_dir, 'K_Ion_Site_Statistics.csv')
     try:
         stats_df.to_csv(stats_path, index=False, float_format='%.4f', na_rep='NaN')
         coord_log.info(f"Saved K+ Ion site statistics to {stats_path}")

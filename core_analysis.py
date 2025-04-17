@@ -68,6 +68,11 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     system_dir = os.path.basename(os.path.dirname(run_dir)) if os.path.dirname(run_dir) else run_name
     logger.info(f"Starting raw trajectory analysis for system: {system_dir} (Folder: {run_dir})")
 
+    # --- Define Output Directory for Core Analysis ---
+    output_dir = os.path.join(run_dir, "core_analysis")
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Core analysis outputs will be saved to: {output_dir}")
+
     # --- File Handling ---
     if psf_file is None:
         psf_file = os.path.join(run_dir, "step5_input.psf")
@@ -263,11 +268,10 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
 
     logger.info(f"Completed trajectory analysis loop. Processed {len(frame_indices)} frames.")
 
-    # --- Process Results ---
-    time_points = frames_to_time(frame_indices)
+    # --- Post-Processing ---
+    time_points = frames_to_time(np.array(frame_indices))
     dist_ac = np.array(dist_ac)
     dist_bd = np.array(dist_bd)
-
     com_distances_raw = None
     if com_analyzed:
         # Check if positions were actually collected before calculating norm
@@ -282,7 +286,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                 'Time (ns)': time_points,
                 'COM_Distance_Raw': com_distances_raw
             })
-            com_csv_path = os.path.join(run_dir, "COM_Stability_Raw.csv")
+            com_csv_path = os.path.join(output_dir, "COM_Stability_Raw.csv")
             try:
                 com_df.to_csv(com_csv_path, index=False, float_format='%.4f', na_rep='NaN')
                 logger.info(f"Saved raw COM data to {com_csv_path}")
@@ -291,14 +295,13 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
         else:
              logger.warning("COM analysis was enabled, but no COM positions were collected (check trajectory loop warnings). Setting raw COM distances to None.")
 
-
     gg_df = pd.DataFrame({
         'Frame': frame_indices,
         'Time (ns)': time_points,
         'A_C_Distance_Raw': dist_ac,
         'B_D_Distance_Raw': dist_bd
     })
-    gg_csv_path = os.path.join(run_dir, "G_G_Distance_Raw.csv")
+    gg_csv_path = os.path.join(output_dir, "G_G_Distance_Raw.csv")
     try:
         gg_df.to_csv(gg_csv_path, index=False, float_format='%.4f', na_rep='NaN')
         logger.info(f"Saved raw G-G distance data to {gg_csv_path}")
@@ -316,6 +319,14 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
         logger.info(f"Saved system type information to {system_type_path}")
     except Exception as e:
         logger.warning(f"Failed to save system type information: {e}")
+
+    # Generate raw plots and save to the subdirectory
+    try:
+        plot_pore_diameter(gg_df, output_dir, suffix='_raw')
+        if com_distances_raw is not None:
+            plot_com_positions(com_df, output_dir, suffix='_raw')
+    except Exception as e:
+        logger.error(f"Error generating raw plots: {e}", exc_info=True)
 
     # Final return with the determined control system status
     return dist_ac, dist_bd, com_distances_raw, time_points, system_dir, is_control_system
@@ -349,257 +360,271 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
             - raw_stats (dict): Statistics calculated on the raw, unfiltered data.
             - percentile_stats (dict): 10th and 90th percentiles for raw and filtered data.
     """
-    logger.info("Starting data filtering and saving process.")
-    os.makedirs(run_dir, exist_ok=True)
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting filtering and saving data for {os.path.basename(run_dir)}")
 
-    # --- Calculate Raw Stats ---
-    # Before filtering, calculate the standard deviation and mean for the raw input arrays:
-    raw_stats = {}
-    raw_stats['GG_AC_Std_Raw'] = np.nanstd(dist_ac) if dist_ac is not None else np.nan
-    raw_stats['GG_BD_Std_Raw'] = np.nanstd(dist_bd) if dist_bd is not None else np.nan
-    raw_stats['COM_Std_Raw'] = np.nanstd(com_distances) if com_distances is not None else np.nan
-    raw_stats['GG_AC_Mean_Raw'] = np.nanmean(dist_ac) if dist_ac is not None else np.nan
-    raw_stats['GG_BD_Mean_Raw'] = np.nanmean(dist_bd) if dist_bd is not None else np.nan
-    raw_stats['COM_Mean_Raw'] = np.nanmean(com_distances) if com_distances is not None else np.nan
+    # --- Define Output Directory for Core Analysis ---
+    output_dir = os.path.join(run_dir, "core_analysis")
+    os.makedirs(output_dir, exist_ok=True)
 
-    # --- Filter G-G Distances --- (Always perform for both system types)
-    filtered_ac, filter_info_ac = auto_select_filter(dist_ac, data_type='gg_distance')
-    filtered_bd, filter_info_bd = auto_select_filter(dist_bd, data_type='gg_distance')
-    filter_info_gg = {'AC': filter_info_ac, 'BD': filter_info_bd}
+    # --- Filtering Logic ---
+    logger.info("Filtering A-C G-G distance...")
+    filtered_ac, info_gg_ac = auto_select_filter(dist_ac, data_type='gg_distance')
 
-    # --- Filter COM Distances --- (Skip for control systems)
+    logger.info("Filtering B-D G-G distance...")
+    filtered_bd, info_gg_bd = auto_select_filter(dist_bd, data_type='gg_distance')
+
+    # Combine G-G info (simple merge, potentially overwrite keys if same name)
+    info_gg = {**info_gg_ac, **info_gg_bd} # Basic merge, could refine if needed
+
     filtered_com = None
-    filter_info_com = {}
+    info_com = {'method_applied': 'none', 'reason': 'Control system or COM data missing'}
+    if com_distances is not None and not is_control_system:
+        logger.info("Filtering COM distance...")
+        # Check std_dev and range of COM distances to determine if we need multi-level filtering
+        # which would require the box_z parameter
+        finite_com = com_distances[np.isfinite(com_distances)]
+        if len(finite_com) > 1:
+            std_dev = np.std(finite_com)
+            data_range = np.max(finite_com) - np.min(finite_com)
+            # Use same thresholds as in auto_select_filter
+            std_threshold = 1.5
+            range_threshold = 5.0
+            
+            if std_dev > std_threshold or data_range > range_threshold:
+                # High std_dev or range - likely needs multi-level filtering, pass box_z
+                logger.info(f"COM data has high std dev ({std_dev:.3f}) or range ({data_range:.3f}), passing box_z parameter.")
+                filtered_com, info_com = auto_select_filter(com_distances, data_type='com_distance', box_z=box_z)
+            else:
+                # Low std_dev and range - standard filtering is sufficient, don't pass box_z
+                logger.info(f"COM data has low std dev ({std_dev:.3f}) and range ({data_range:.3f}), using standard filtering.")
+                filtered_com, info_com = auto_select_filter(com_distances, data_type='com_distance')
+        else:
+            # Not enough finite data points
+            logger.warning("Insufficient finite COM distance data for filtering.")
+            filtered_com, info_com = auto_select_filter(com_distances, data_type='com_distance')
+    elif is_control_system:
+         logger.info("Skipping COM filtering for control system.")
+    else: # com_distances is None
+         logger.info("Skipping COM filtering as raw COM data is missing.")
 
-    if is_control_system:
-        logger.info("Control system detected - skipping COM distance filtering.")
-        filter_info_com = {
-            'Method': 'None',
-            'Threshold': None,
-            'Window': None,
-            'Polyorder': None,
-            'Level': None,
-            'Threshold_Factor': None,
-            'Z_Threshold_Factor': None,
-            'is_control_system': True
-        }
-        # Ensure filtered_com remains None
-        filtered_com = None
-    elif com_distances is not None and len(com_distances) > 1:
-        try:
-            kwargs = {'box_size': box_z} if box_z is not None else {}
-            filtered_com, filter_info_com = auto_select_filter(
-                com_distances,
-                data_type='com_distance',
-                **kwargs
-            )
-            filter_info_com['is_control_system'] = False
-        except Exception as e:
-            logger.error(f"Error filtering COM data: {e}", exc_info=True)
-            filter_info_com = {'error': str(e), 'is_control_system': False}
-            filtered_com = np.array(com_distances) # Use raw if filter fails
+    # --- Calculate Raw Statistics ---
+    # Calculate mean and std dev for raw data, handling potential NaNs
+    raw_stats = {
+        'GG_AC_Mean_Raw': np.nanmean(dist_ac) if dist_ac is not None else np.nan,
+        'GG_AC_Std_Raw': np.nanstd(dist_ac) if dist_ac is not None else np.nan,
+        'GG_BD_Mean_Raw': np.nanmean(dist_bd) if dist_bd is not None else np.nan,
+        'GG_BD_Std_Raw': np.nanstd(dist_bd) if dist_bd is not None else np.nan,
+        'COM_Mean_Raw': np.nanmean(com_distances) if com_distances is not None else np.nan,
+        'COM_Std_Raw': np.nanstd(com_distances) if com_distances is not None else np.nan,
+    }
+    logger.info(f"Calculated raw data stats: {raw_stats}")
 
-        # Save filtered COM CSV only if filtering was attempted
-        com_filtered_df = pd.DataFrame({
+    # --- Calculate Percentile Statistics ---
+    percentile_stats = {}
+    try:
+        if dist_ac is not None:
+            finite_ac_raw = dist_ac[np.isfinite(dist_ac)]
+            if len(finite_ac_raw) > 0:
+                percentile_stats['GG_AC_Pctl10_Raw'] = np.percentile(finite_ac_raw, 10)
+                percentile_stats['GG_AC_Pctl90_Raw'] = np.percentile(finite_ac_raw, 90)
+            if filtered_ac is not None:
+                finite_ac_filt = filtered_ac[np.isfinite(filtered_ac)]
+                if len(finite_ac_filt) > 0:
+                    percentile_stats['GG_AC_Pctl10_Filt'] = np.percentile(finite_ac_filt, 10)
+                    percentile_stats['GG_AC_Pctl90_Filt'] = np.percentile(finite_ac_filt, 90)
+
+        if dist_bd is not None:
+            finite_bd_raw = dist_bd[np.isfinite(dist_bd)]
+            if len(finite_bd_raw) > 0:
+                percentile_stats['GG_BD_Pctl10_Raw'] = np.percentile(finite_bd_raw, 10)
+                percentile_stats['GG_BD_Pctl90_Raw'] = np.percentile(finite_bd_raw, 90)
+            if filtered_bd is not None:
+                finite_bd_filt = filtered_bd[np.isfinite(filtered_bd)]
+                if len(finite_bd_filt) > 0:
+                    percentile_stats['GG_BD_Pctl10_Filt'] = np.percentile(finite_bd_filt, 10)
+                    percentile_stats['GG_BD_Pctl90_Filt'] = np.percentile(finite_bd_filt, 90)
+
+        if com_distances is not None and not is_control_system:
+            finite_com_raw = com_distances[np.isfinite(com_distances)]
+            if len(finite_com_raw) > 0:
+                percentile_stats['COM_Pctl10_Raw'] = np.percentile(finite_com_raw, 10)
+                percentile_stats['COM_Pctl90_Raw'] = np.percentile(finite_com_raw, 90)
+            if filtered_com is not None:
+                finite_com_filt = filtered_com[np.isfinite(filtered_com)]
+                if len(finite_com_filt) > 0:
+                    percentile_stats['COM_Pctl10_Filt'] = np.percentile(finite_com_filt, 10)
+                    percentile_stats['COM_Pctl90_Filt'] = np.percentile(finite_com_filt, 90)
+        logger.debug(f"Calculated percentile stats: {percentile_stats}")
+    except Exception as e_pctl:
+        logger.warning(f"Error calculating percentile statistics: {e_pctl}", exc_info=True)
+        # Ensure dict exists even if empty
+        if not percentile_stats: percentile_stats = {}
+
+    # --- Save Filtered Data to Subdirectory ---
+    df_filt = pd.DataFrame({
+        'Time (ns)': time_points,
+        'A_C_Distance_Filtered': filtered_ac,
+        'B_D_Distance_Filtered': filtered_bd,
+        'COM_Distance_Filtered': filtered_com if filtered_com is not None else np.nan
+    })
+    filt_csv_path = os.path.join(output_dir, 'Distances_Filtered.csv')
+    try:
+        df_filt.to_csv(filt_csv_path, index=False, float_format='%.4f', na_rep='NaN')
+        logger.info(f"Saved filtered distances to {filt_csv_path}")
+    except Exception as e:
+        logger.error(f"Failed to save filtered distances CSV: {e}")
+
+    # --- Save Individual Filtered CSVs to Subdirectory ---
+    # Save COM filtered CSV separately if analyzed
+    if filtered_com is not None:
+        df_com_filt = pd.DataFrame({
             'Time (ns)': time_points,
-            'COM_Distance_Raw': com_distances,
-            'COM_Distance_Filtered': filtered_com if filtered_com is not None else np.nan
+            'COM_Distance_Filtered': filtered_com
         })
-        com_filtered_path = os.path.join(run_dir, "COM_Stability_Filtered.csv")
+        com_filt_csv_path = os.path.join(output_dir, 'COM_Stability_Filtered.csv')
         try:
-            com_filtered_df.to_csv(com_filtered_path, index=False, float_format='%.4f', na_rep='NaN')
-            logger.info(f"Saved filtered COM data to {com_filtered_path}")
+            df_com_filt.to_csv(com_filt_csv_path, index=False, float_format='%.4f', na_rep='NaN')
+            logger.info(f"Saved filtered COM stability to {com_filt_csv_path}")
         except Exception as e:
             logger.error(f"Failed to save filtered COM CSV: {e}")
-    elif com_distances is not None: # Case where COM data exists but too short to filter
-        logger.info(f"COM distance data too short to filter ({len(com_distances)} points). Skipping filtering.")
-        filter_info_com = {'reason': 'Insufficient data length', 'is_control_system': False}
-        filtered_com = np.array(com_distances) # Return raw as filtered
-    else: # Case where com_distances was None initially (should be caught by is_control_system=True now)
-        logger.info("No COM data provided.")
-        filter_info_com = {'reason': 'No COM data provided', 'is_control_system': is_control_system}
-        filtered_com = None
 
-    # --- Calculate Percentiles ---
-    percentile_stats = {}
-
-    def _calculate_percentiles(data, prefix, suffix):
-        stats = {}
-        keys = [f'{prefix}_Pctl10_{suffix}', f'{prefix}_Pctl90_{suffix}']
-        if data is not None and len(data) > 0:
-            finite_data = data[np.isfinite(data)]
-            if len(finite_data) >= 1: # np.percentile needs at least one element
-                try:
-                    pctl = np.nanpercentile(finite_data, [10, 90])
-                    stats[keys[0]] = float(pctl[0])
-                    stats[keys[1]] = float(pctl[1])
-                except ValueError: # Catch potential issues with percentile calculation
-                    logger.warning(f"Could not calculate percentiles for {prefix}_{suffix} due to ValueError.", exc_info=False)
-                    stats[keys[0]] = np.nan
-                    stats[keys[1]] = np.nan
-            else:
-                logger.warning(f"Insufficient finite data points ({len(finite_data)}) to calculate percentiles for {prefix}_{suffix}.")
-                stats[keys[0]] = np.nan
-                stats[keys[1]] = np.nan
-        else:
-            stats[keys[0]] = np.nan # Use NaN if input data is None or empty
-            stats[keys[1]] = np.nan
-        return stats
-
-    # Always calculate G-G percentiles
-    percentile_stats.update(_calculate_percentiles(dist_ac, 'GG_AC', 'Raw'))
-    percentile_stats.update(_calculate_percentiles(dist_bd, 'GG_BD', 'Raw'))
-    percentile_stats.update(_calculate_percentiles(filtered_ac, 'GG_AC', 'Filt'))
-    percentile_stats.update(_calculate_percentiles(filtered_bd, 'GG_BD', 'Filt'))
-
-    # Only calculate COM percentiles for non-control systems
-    if not is_control_system:
-        percentile_stats.update(_calculate_percentiles(com_distances, 'COM', 'Raw'))
-        percentile_stats.update(_calculate_percentiles(filtered_com, 'COM', 'Filt'))
-    else:
-        # For control systems, explicitly set COM percentiles to None (not NaN)
-        percentile_stats['COM_Pctl10_Raw'] = None
-        percentile_stats['COM_Pctl90_Raw'] = None
-        percentile_stats['COM_Pctl10_Filt'] = None
-        percentile_stats['COM_Pctl90_Filt'] = None
-
-    # --- Save Filtered G-G Data --- (Always perform)
-    if filtered_ac is not None or filtered_bd is not None:
-        gg_df_filt = pd.DataFrame({
-            'Time (ns)': time_points,
-            'A_C_Distance_Raw': dist_ac if dist_ac is not None else np.nan,
-            'B_D_Distance_Raw': dist_bd if dist_bd is not None else np.nan,
-            'A_C_Distance_Filtered': filtered_ac if filtered_ac is not None else np.nan,
-            'B_D_Distance_Filtered': filtered_bd if filtered_bd is not None else np.nan
-        })
-        gg_filtered_path = os.path.join(run_dir, "G_G_Distance_Filtered.csv")
-        try:
-            gg_df_filt.to_csv(gg_filtered_path, index=False, float_format='%.4f', na_rep='NaN')
-            logger.info(f"Saved filtered G-G data to {gg_filtered_path}")
-        except Exception as e:
-            logger.error(f"Failed to save filtered G-G CSV: {e}")
-
-    # --- Generate and Save Plots --- #
-    run_name = os.path.basename(run_dir) # Get run name for titles
+    # Save G-G filtered CSV separately
+    df_gg_filt = pd.DataFrame({
+        'Time (ns)': time_points,
+        'A_C_Distance_Filtered': filtered_ac,
+        'B_D_Distance_Filtered': filtered_bd
+    })
+    gg_filt_csv_path = os.path.join(output_dir, 'G_G_Distance_Filtered.csv')
     try:
-        logger.info("Generating comparison and final plots...")
-
-        # G-G Plots (Always generate)
-        fig_gg_ac = plot_filtering_comparison(time_points, dist_ac, filtered_ac, filter_info_gg.get('AC', {}), f"{run_name} - A:C", data_type='gg')
-        fig_gg_bd = plot_filtering_comparison(time_points, dist_bd, filtered_bd, filter_info_gg.get('BD', {}), f"{run_name} - B:D", data_type='gg')
-        fig_gg_raw = plot_pore_diameter(time_points, dist_ac, dist_bd, run_name, filtered=False)
-        fig_gg_filtered = plot_pore_diameter(time_points, filtered_ac, filtered_bd, run_name, filtered=True)
-
-        fig_gg_ac.savefig(os.path.join(run_dir, "G_G_Distance_AC_Comparison.png"), bbox_inches='tight')
-        fig_gg_bd.savefig(os.path.join(run_dir, "G_G_Distance_BD_Comparison.png"), bbox_inches='tight')
-        fig_gg_raw.savefig(os.path.join(run_dir, "GG_Distance_Plot_raw.png"), bbox_inches='tight')
-        fig_gg_filtered.savefig(os.path.join(run_dir, "GG_Distance_Plot.png"), bbox_inches='tight')
-
-        plt.close(fig_gg_ac); plt.close(fig_gg_bd); plt.close(fig_gg_raw); plt.close(fig_gg_filtered)
-        logger.debug("G-G plots saved.")
-
-        # COM Plots (only for non-control systems with COM data)
-        if not is_control_system and com_distances is not None:
-            if filtered_com is not None:
-                fig_com = plot_filtering_comparison(time_points, com_distances, filtered_com, filter_info_com, run_name, data_type='com')
-                fig_com.savefig(os.path.join(run_dir, "COM_Stability_Comparison.png"), bbox_inches='tight')
-                plt.close(fig_com)
-
-                fig_com_filtered = plot_com_positions(time_points, filtered_com, run_name, filtered=True)
-                fig_com_filtered.savefig(os.path.join(run_dir, "COM_Stability_Plot.png"), bbox_inches='tight')
-                plt.close(fig_com_filtered)
-            else:
-                 logger.warning("Filtered COM data is None, skipping comparison and filtered plots.")
-
-            fig_com_raw = plot_com_positions(time_points, com_distances, run_name, filtered=False)
-            fig_com_raw.savefig(os.path.join(run_dir, "COM_Stability_Plot_raw.png"), bbox_inches='tight')
-            plt.close(fig_com_raw)
-
-            # Generate KDE plot if raw data exists
-            fig_com_kde = plot_kde_analysis(time_points, com_distances, run_name, data_type='com')
-            fig_com_kde.savefig(os.path.join(run_dir, "COM_Stability_KDE_Analysis.png"), bbox_inches='tight')
-            plt.close(fig_com_kde)
-            logger.debug("COM plots saved.")
-        elif is_control_system:
-            logger.info("Skipping COM plot generation (control system without toxin).")
-        else: # Case where com_distances was None
-            logger.info("Skipping COM plot generation (no raw COM data).")
-
+        df_gg_filt.to_csv(gg_filt_csv_path, index=False, float_format='%.4f', na_rep='NaN')
+        logger.info(f"Saved filtered G-G distances to {gg_filt_csv_path}")
     except Exception as e:
-        logger.error(f"Error generating plots: {e}", exc_info=True)
+        logger.error(f"Failed to save filtered G-G CSV: {e}")
 
-    # Add is_control_system to the raw_stats dictionary for downstream use
-    raw_stats['is_control_system'] = is_control_system
+    # --- Generate Filtered Plots and Save to Subdirectory ---
+    try:
+        plot_pore_diameter(df_filt, output_dir, suffix='')
+        if filtered_com is not None:
+            plot_com_positions(df_filt, output_dir, suffix='')
+            # Also create comparison plots
+            plot_filtering_comparison(time_points, com_distances, filtered_com, output_dir, 'COM_Stability', info_com)
+            # And KDE plot - pass time_points now
+            plot_kde_analysis(time_points, com_distances, box_z, output_dir)
 
-    logger.info(f"Finished filtering, saving, and plotting for {run_dir}.")
-    return filtered_ac, filtered_bd, filtered_com, filter_info_gg, filter_info_com, raw_stats, percentile_stats
+        plot_filtering_comparison(time_points, dist_ac, filtered_ac, output_dir, 'G_G_Distance_AC', info_gg)
+        plot_filtering_comparison(time_points, dist_bd, filtered_bd, output_dir, 'G_G_Distance_BD', info_gg)
+    except Exception as e:
+        logger.error(f"Error generating filtered plots: {e}", exc_info=True)
+
+    # --- Return Results ---
+    return filtered_ac, filtered_bd, filtered_com, info_gg, info_com, raw_stats, percentile_stats
 
 
 # --- Plotting Helper Functions ---
 
-def plot_pore_diameter(time_points, dist_ac, dist_bd, title, filtered=False):
+def plot_pore_diameter(df, output_dir, suffix=""):
     """Plot G–G distance with A:C and B:D distances overlaid."""
     fig, ax = plt.subplots(figsize=(10, 6))
-    if dist_ac is not None:
-        sns.lineplot(x=time_points, y=dist_ac, label='A:C Distance', ax=ax, legend=False)
-    if dist_bd is not None:
-        sns.lineplot(x=time_points, y=dist_bd, label='B:D Distance', ax=ax, legend=False)
+    
+    # Determine if we're working with raw or filtered data based on columns
+    if 'A_C_Distance_Raw' in df.columns and 'B_D_Distance_Raw' in df.columns:
+        # Raw data
+        ac_col = 'A_C_Distance_Raw'
+        bd_col = 'B_D_Distance_Raw'
+    elif 'A_C_Distance_Filtered' in df.columns and 'B_D_Distance_Filtered' in df.columns:
+        # Filtered data
+        ac_col = 'A_C_Distance_Filtered'
+        bd_col = 'B_D_Distance_Filtered'
+    else:
+        logger.warning("DataFrame doesn't contain expected GG distance columns. Cannot create plot.")
+        plt.close(fig)
+        return
+    
+    if df[ac_col].notna().any():
+        sns.lineplot(x=df['Time (ns)'], y=df[ac_col], label='A:C Distance', ax=ax, legend=False)
+    if df[bd_col].notna().any():
+        sns.lineplot(x=df['Time (ns)'], y=df[bd_col], label='B:D Distance', ax=ax, legend=False)
 
     ax.set_xlabel('Time (ns)', fontsize=14)
     ax.set_ylabel('G–G Distance (Å)', fontsize=14)
-    plot_type = "(Filtered)" if filtered else "(Raw)"
-    ax.set_title(f"Pore G-G Distance: {title} {plot_type}", fontsize=16)
+    plot_type = "(Filtered)" if suffix != "_raw" else "(Raw)"
+    ax.set_title(f"Pore G-G Distance: {df['Time (ns)'].iloc[0]:.2f} ns {plot_type}", fontsize=16)
     ax.tick_params(axis='both', labelsize=12)
     ax.legend(fontsize='medium')
 
-    all_dists = np.concatenate([d for d in [dist_ac, dist_bd] if d is not None])
-    finite_dists = all_dists[np.isfinite(all_dists)]
-    if len(finite_dists) > 0:
-        y_min = np.nanmin(finite_dists) - 1.0
-        y_max = np.nanmax(finite_dists) + 1.0
-        ax.set_ylim(max(0, y_min), y_max)
+    # Fixed: properly handle pandas Series with empty check instead of np.isnan
+    series_list = [df[ac_col].dropna(), df[bd_col].dropna()]
+    valid_series = [s.values for s in series_list if not s.empty]
+    
+    if valid_series:
+        all_dists = np.concatenate(valid_series)
+        finite_dists = all_dists[np.isfinite(all_dists)]
+        if len(finite_dists) > 0:
+            y_min = np.nanmin(finite_dists) - 1.0
+            y_max = np.nanmax(finite_dists) + 1.0
+            ax.set_ylim(max(0, y_min), y_max)
+        else:
+            ax.set_ylim(0, 15)
     else:
         ax.set_ylim(0, 15)
 
-    return fig
+    plot_filename = f"GG_Distance_Plot{suffix}.png"
+    save_path = os.path.join(output_dir, plot_filename)
+    fig.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
 
-def plot_com_positions(time_points, com_dist, title, filtered=False):
+def plot_com_positions(df, output_dir, suffix=""):
     """Plot COM distance."""
     fig, ax = plt.subplots(figsize=(10, 6))
-    if com_dist is not None:
-        sns.lineplot(x=time_points, y=com_dist, ax=ax)
+    
+    # Determine if we're working with raw or filtered data
+    if 'COM_Distance_Raw' in df.columns:
+        com_col = 'COM_Distance_Raw'
+    elif 'COM_Distance_Filtered' in df.columns:
+        com_col = 'COM_Distance_Filtered'
+    else:
+        logger.warning("DataFrame doesn't contain expected COM distance column. Cannot create plot.")
+        plt.close(fig)
+        return
+    
+    if df[com_col].notna().any():
+        sns.lineplot(x=df['Time (ns)'], y=df[com_col], ax=ax)
     ax.set_xlabel('Time (ns)', fontsize=14)
     ax.set_ylabel('Toxin-Channel COM Distance (Å)', fontsize=14)
-    plot_type = "(Filtered)" if filtered else "(Raw)"
-    ax.set_title(f"Toxin-Channel Stability: {title} {plot_type}", fontsize=16)
+    plot_type = "(Filtered)" if suffix != "_raw" else "(Raw)"
+    ax.set_title(f"Toxin-Channel Stability: {df['Time (ns)'].iloc[0]:.2f} ns {plot_type}", fontsize=16)
     ax.tick_params(axis='both', labelsize=12)
 
-    if com_dist is not None:
-        finite_dists = com_dist[np.isfinite(com_dist)]
-        if len(finite_dists) > 0:
-            y_min = np.nanmin(finite_dists) - 2.0
-            y_max = np.nanmax(finite_dists) + 2.0
+    if df[com_col].notna().any():
+        finite_dists = df[com_col].dropna()
+        if not finite_dists.empty:
+            y_min = np.nanmin(finite_dists.values) - 2.0
+            y_max = np.nanmax(finite_dists.values) + 2.0
             ax.set_ylim(max(0, y_min), y_max)
         else:
             ax.set_ylim(0, 50)
     else:
         ax.set_ylim(0, 50)
 
-    return fig
+    plot_filename = f"COM_Stability_Plot{suffix}.png"
+    save_path = os.path.join(output_dir, plot_filename)
+    fig.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
 
-def plot_filtering_comparison(time_points, raw_data, filtered_data, filter_info, title, data_type='com'):
+def plot_filtering_comparison(time_points, raw_data, filtered_data, output_dir, base_filename, filter_info):
     """Plot a comparison of raw and filtered data."""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
 
     ylabel = 'Distance (Å)'
-    if data_type == 'com':
+    if base_filename == 'COM_Stability':
         ylabel = 'COM Distance (Å)'
-    elif data_type == 'gg':
+    elif base_filename == 'G_G_Distance_AC' or base_filename == 'G_G_Distance_BD':
         ylabel = 'G-G Distance (Å)'
 
     ax1.plot(time_points, raw_data, color='steelblue', linewidth=1.0, label='Raw Data')
     ax1.set_ylabel(ylabel, fontsize=14)
-    ax1.set_title(f'{title} - Raw Data', fontsize=16)
+    ax1.set_title(f'{base_filename} - Raw Data', fontsize=16)
     ax1.grid(True, alpha=0.3)
     ax1.legend()
 
@@ -640,32 +665,42 @@ def plot_filtering_comparison(time_points, raw_data, filtered_data, filter_info,
 
     ax2.set_title(f"Filtered Data\n({details})", fontsize=14)
     plt.tight_layout(rect=[0, 0.03, 1, 0.97])
-    return fig
 
-def plot_kde_analysis(time_points, data, title, data_type='com'):
+    plot_filename = f"{base_filename}_Comparison.png"
+    save_path = os.path.join(output_dir, plot_filename)
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close()
+
+def plot_kde_analysis(time_points, raw_com_data, box_z, output_dir):
     """Plot kernel density estimation analysis of raw data."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6), gridspec_kw={'width_ratios': [1, 2]})
 
     ylabel = 'Distance (Å)'
     xlabel = 'Distance (Å)'
-    if data_type == 'com':
+    if raw_com_data is not None and len(raw_com_data) > 0:
         xlabel = 'COM Distance (Å)'
-        ylabel = xlabel
-    elif data_type == 'gg':
-        xlabel = 'G-G Distance (Å)'
-        ylabel = xlabel
+        ylabel = xlabel # Keep ylabel as COM Distance
 
-    finite_data = data[np.isfinite(data)]
+    finite_data = raw_com_data[np.isfinite(raw_com_data)]
     peak_values = []  # Initialize peak_values here
 
     if len(finite_data) < 5:
         ax1.text(0.5, 0.5, 'Insufficient finite data for KDE/Histogram', ha='center', va='center')
-        ax2.plot(time_points, data, color='steelblue', linewidth=1)
+        # Plot raw data vs time if available
+        if time_points is not None and len(time_points) == len(raw_com_data):
+             ax2.plot(time_points, raw_com_data, color='steelblue', linewidth=1)
+             ax2.set_xlabel('Time (ns)', fontsize=14)
+        else:
+             ax2.text(0.5, 0.5, 'Time data unavailable', ha='center', va='center')
         ax2.set_title('Raw Time Series Data', fontsize=16)
-        ax2.set_xlabel('Time (ns)', fontsize=14)
         ax2.set_ylabel(ylabel, fontsize=14)
         plt.tight_layout()
-        return fig
+        plot_filename = "COM_Stability_KDE_Analysis.png" # Save even if insufficient data
+        save_path = os.path.join(output_dir, plot_filename)
+        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.close()
+        logger.warning("Insufficient finite data for KDE plot generation.")
+        return
 
     # KDE Plot (Left)
     try:
@@ -691,10 +726,10 @@ def plot_kde_analysis(time_points, data, title, data_type='com'):
 
     # Time Series Plot with Level Coloring (Right)
     if len(peak_values) > 1:
-        assignments = np.zeros_like(data, dtype=int) - 1
-        finite_indices = np.where(np.isfinite(data))[0]
+        assignments = np.zeros_like(raw_com_data, dtype=int) - 1
+        finite_indices = np.where(np.isfinite(raw_com_data))[0]
         if len(finite_indices) > 0:
-            finite_vals = data[finite_indices]
+            finite_vals = raw_com_data[finite_indices]
             distances_to_peaks = np.abs(finite_vals[:, np.newaxis] - peak_values)
             assignments[finite_indices] = np.argmin(distances_to_peaks, axis=1)
 
@@ -705,19 +740,26 @@ def plot_kde_analysis(time_points, data, title, data_type='com'):
         for i in range(n_levels):
             mask = assignments == i
             if np.any(mask):
-                ax2.scatter(time_points[mask], data[mask], color=colors[i], s=5, alpha=0.6)
+                # Plot time vs distance
+                ax2.scatter(time_points[mask], raw_com_data[mask], color=colors[i], s=5, alpha=0.6)
         ax2.set_title('Time Series with Potential Level Assignments', fontsize=16)
     else:
-        ax2.plot(time_points, data, color='steelblue', linewidth=1)
+        # Plot raw time series if no significant peaks found or insufficient data
+        ax2.plot(time_points, raw_com_data, color='steelblue', linewidth=1)
+        ax2.set_title('Raw Time Series Data', fontsize=16)
 
     ax2.set_xlabel('Time (ns)', fontsize=14)
-    ax2.set_ylabel(ylabel, fontsize=14)
+    ax2.set_ylabel(ylabel, fontsize=14) # Y label is COM Distance
     ax2.tick_params(axis='both', labelsize=10)
     ax2.grid(True, alpha=0.3)
 
     if len(peak_values) > 0:
         ax1.set_ylim(ax2.get_ylim())
 
-    fig.suptitle(f'{title} - Raw Data Analysis', fontsize=18, y=1.02)
+    fig.suptitle(f'COM Stability - Raw Data Analysis', fontsize=18, y=1.02)
     plt.tight_layout(rect=[0, 0.03, 1, 0.98])
-    return fig
+
+    plot_filename = "COM_Stability_KDE_Analysis.png"
+    save_path = os.path.join(output_dir, plot_filename)
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close()

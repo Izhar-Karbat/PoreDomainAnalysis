@@ -14,6 +14,7 @@ import seaborn as sns
 import MDAnalysis as mda
 from MDAnalysis.analysis import distances
 import math
+from utils import OneLetter, frames_to_time
 
 # Import from other modules
 try:
@@ -351,7 +352,7 @@ def get_residue_info(universe, toxin_sel, channel_sel):
 
 # --- Main Analysis Function for this Module ---
 
-def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
+def analyze_toxin_orientation(traj_file, psf_file, run_dir, stride=None):
     """
     Analyze toxin orientation relative to channel, toxin rotation relative to
     start frame, and average residue contact frequencies over a trajectory.
@@ -363,7 +364,7 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
     Args:
         traj_file (str): Path to the DCD trajectory file.
         psf_file (str): Path to the PSF topology file.
-        output_dir (str): Directory to save CSV files and plots.
+        run_dir (str): Directory to save outputs.
         stride (int, optional): Frame stride for analysis. If None, analyzes
                                 max ~500 frames for contact map.
 
@@ -377,7 +378,12 @@ def analyze_toxin_orientation(traj_file, psf_file, output_dir, stride=None):
             Returns ([], [], [], None) on critical error.
     """
     logger.info(f"Starting toxin orientation and contact analysis for: {traj_file}")
-    os.makedirs(output_dir, exist_ok=True) # Ensure output dir exists
+    os.makedirs(run_dir, exist_ok=True) # Ensure output dir exists
+
+    # --- Define Output Directory ---
+    output_dir = os.path.join(run_dir, "orientation_contacts")
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Orientation/contact outputs will be saved to: {output_dir}")
 
     try:
         u = mda.Universe(psf_file, traj_file)

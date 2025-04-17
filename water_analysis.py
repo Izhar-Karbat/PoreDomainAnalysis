@@ -15,6 +15,7 @@ import json
 from datetime import datetime
 from collections import defaultdict
 from tqdm import tqdm
+from MDAnalysis.analysis import contacts, distances
 
 # Import from other modules
 try:
@@ -64,6 +65,11 @@ def analyze_cavity_water(run_dir, psf_file, dcd_file, filter_sites, g1_reference
     if logger is None: logger = module_logger # Fallback
 
     logger.info(f"Starting cavity water analysis for {os.path.basename(run_dir)}")
+
+    # --- Define Output Directory ---
+    output_dir = os.path.join(run_dir, "water_analysis")
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Water analysis outputs will be saved to: {output_dir}")
 
     # --- Input Validation ---
     if not isinstance(filter_sites, dict) or 'S4' not in filter_sites:
@@ -289,7 +295,7 @@ def analyze_cavity_water(run_dir, psf_file, dcd_file, filter_sites, g1_reference
             'N_Waters_Cavity': valid_water_counts,
             'Cavity_Water_Indices': indices_str_list
         })
-        occ_csv_path = os.path.join(run_dir, "Cavity_Water_Occupancy.csv")
+        occ_csv_path = os.path.join(output_dir, "Cavity_Water_Occupancy.csv")
         df_occupancy.to_csv(occ_csv_path, index=False, float_format='%.4f')
         logger.info(f"Saved cavity water occupancy data (with indices) to {occ_csv_path}")
     except Exception as e:
@@ -302,7 +308,7 @@ def analyze_cavity_water(run_dir, psf_file, dcd_file, filter_sites, g1_reference
         'residence_times_ns': all_residence_times_ns,
         'exit_buffer_frames': EXIT_BUFFER_FRAMES
     }
-    res_json_path = os.path.join(run_dir, "Cavity_Water_ResidenceTimes.json")
+    res_json_path = os.path.join(output_dir, "Cavity_Water_ResidenceTimes.json")
     try:
         with open(res_json_path, 'w') as f_res:
             json.dump(res_data_to_save, f_res, indent=4)
@@ -327,7 +333,7 @@ def analyze_cavity_water(run_dir, psf_file, dcd_file, filter_sites, g1_reference
     }
     logger.info(f"Calculated cavity water summary stats: {summary_stats}")
 
-    # --- Generate Plots ---
+    # --- Generate Plots and Save to Subdirectory ---
     logger.info("Generating cavity water plots...")
     try:
         # 1. Water count vs time
@@ -341,8 +347,8 @@ def analyze_cavity_water(run_dir, psf_file, dcd_file, filter_sites, g1_reference
         ax1.set_ylim(bottom=0, top=max(1, y_max_occ)) # Ensure ylim >= 1
         ax1.legend()
         plt.tight_layout()
-        plot1_path = os.path.join(run_dir, "Cavity_Water_Count_Plot.png")
-        fig1.savefig(plot1_path, dpi=150)
+        plot1_path = os.path.join(output_dir, "Cavity_Water_Count_Plot.png")
+        fig1.savefig(plot1_path, dpi=150, bbox_inches='tight')
         plt.close(fig1)
         logger.debug(f"Saved water count plot to {plot1_path}")
 
@@ -357,8 +363,8 @@ def analyze_cavity_water(run_dir, psf_file, dcd_file, filter_sites, g1_reference
             ax2.legend()
             ax2.grid(True, linestyle=':', alpha=0.6)
             plt.tight_layout()
-            plot2_path = os.path.join(run_dir, "Cavity_Water_Residence_Hist.png")
-            fig2.savefig(plot2_path, dpi=150)
+            plot2_path = os.path.join(output_dir, "Cavity_Water_Residence_Hist.png")
+            fig2.savefig(plot2_path, dpi=150, bbox_inches='tight')
             plt.close(fig2)
             logger.debug(f"Saved residence time histogram to {plot2_path}")
         else:
@@ -369,7 +375,6 @@ def analyze_cavity_water(run_dir, psf_file, dcd_file, filter_sites, g1_reference
         # Ensure figures are closed if error occurs mid-plotting
         if 'fig1' in locals() and plt.fignum_exists(fig1.number): plt.close(fig1)
         if 'fig2' in locals() and plt.fignum_exists(fig2.number): plt.close(fig2)
-
 
     logger.info(f"Cavity water analysis complete for {os.path.basename(run_dir)}.")
     return summary_stats

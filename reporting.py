@@ -304,6 +304,52 @@ HTML_TEMPLATE = """
              {% endif %}
         </div>
 
+        {# <<< ADDED SECTION for Carbonyl Gyration >>> #}
+        <div class="section">
+            <h2>Carbonyl Gyration Analysis (Selectivity Filter G1)</h2>
+             {% if run_summary.Gyration_G1_Mean is not none %} {# Check if gyration analysis was performed #}
+                 <div class="info-box">
+                    Gyration radius (ρ) measures the distance between the G1 carbonyl oxygen atoms and the pore center.
+                    Changes in this radius can indicate carbonyl flipping events that may affect ion permeation.
+                 </div>
+                 <table class="stats-table">
+                    <thead><tr><th>Metric</th><th>G1 Glycine</th></tr></thead>
+                    <tbody>
+                        <tr><td>Mean Gyration Radius (Å)</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_G1_Mean) }}</td>
+                        </tr>
+                        <tr><td>Std Dev (Å)</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_G1_Std) }}</td>
+                        </tr>
+                        <tr><td>Detected Flips</td>
+                            <td>{{ run_summary.Gyration_Flips }}</td>
+                        </tr>
+                        <tr><td>Maximum Change (Å)</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_MaxChange) if run_summary.Gyration_MaxChange is not none else 'N/A' }}</td>
+                        </tr>
+                    </tbody>
+                 </table>
+                 <div class="plot-container">
+                     <h3>G1 Gyration Radii</h3>
+                     {% if img_data.G1_gyration_radii %} <img src="data:image/png;base64,{{ img_data.G1_gyration_radii }}" alt="G1 Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+                 </div>
+                 <div class="info-box">
+                    <p><strong>Interpretation:</strong> Carbonyl flipping is indicated by sudden changes in gyration radius.
+                    {% if run_summary.Gyration_Flips > 5 %}
+                    A high number of flips ({{ run_summary.Gyration_Flips }}) suggests significant instability in the selectivity filter,
+                    which may disrupt ion coordination and permeation.
+                    {% elif run_summary.Gyration_Flips > 0 %}
+                    {{ run_summary.Gyration_Flips }} flip(s) were detected, which may temporarily affect ion coordination.
+                    {% else %}
+                    No significant flips were detected, suggesting a stable selectivity filter conformation.
+                    {% endif %}
+                    </p>
+                 </div>
+             {% else %}
+                 <p><i>Carbonyl gyration analysis not performed or data unavailable.</i></p>
+             {% endif %}
+        </div>
+
         <div class="footer">End of Report</div>
     </div>
 </body>
@@ -340,30 +386,31 @@ def generate_html_report(run_dir, run_summary):
     # --- Load Base64 Encoded Images ---
     img_data = {}
     plot_files = {
-        # Core distance plots
-        "GG_Distance_Plot_raw": "GG_Distance_Plot_raw.png",
-        "GG_Distance_Plot": "GG_Distance_Plot.png",
-        "G_G_Distance_AC_Comparison": "G_G_Distance_AC_Comparison.png",
-        "G_G_Distance_BD_Comparison": "G_G_Distance_BD_Comparison.png",
-        "COM_Stability_Plot_raw": "COM_Stability_Plot_raw.png",
-        "COM_Stability_Plot": "COM_Stability_Plot.png",
-        "COM_Stability_Comparison": "COM_Stability_Comparison.png",
-        "COM_Stability_KDE_Analysis": "COM_Stability_KDE_Analysis.png",
-        # Orientation/Contact plots
-        "Toxin_Orientation_Angle": "Toxin_Orientation_Angle.png",
-        "Toxin_Rotation_Components": "Toxin_Rotation_Components.png",
-        "Toxin_Channel_Contacts": "Toxin_Channel_Contacts.png",
-        "Toxin_Channel_Residue_Contact_Map_Full": "Toxin_Channel_Residue_Contact_Map_Full.png",
-        "Toxin_Channel_Residue_Contact_Map_Focused": "Toxin_Channel_Residue_Contact_Map_Focused.png",
-        # Ion plots
-        "binding_sites_g1_centric_visualization": "binding_sites_g1_centric_visualization.png",
-        "K_Ion_Combined_Plot": "K_Ion_Combined_Plot.png",
-        # "K_Ion_Z_Density": "K_Ion_Z_Density.png", # Often redundant with combined plot
-        "K_Ion_Occupancy_Heatmap": "K_Ion_Occupancy_Heatmap.png",
-        "K_Ion_Average_Occupancy": "K_Ion_Average_Occupancy.png",
-        # Water plots
-        "Cavity_Water_Count_Plot": "Cavity_Water_Count_Plot.png",
-        "Cavity_Water_Residence_Hist": "Cavity_Water_Residence_Hist.png",
+        # Core distance plots (now in core_analysis/)
+        "GG_Distance_Plot_raw": "core_analysis/GG_Distance_Plot_raw.png",
+        "GG_Distance_Plot": "core_analysis/GG_Distance_Plot.png",
+        "G_G_Distance_AC_Comparison": "core_analysis/G_G_Distance_AC_Comparison.png",
+        "G_G_Distance_BD_Comparison": "core_analysis/G_G_Distance_BD_Comparison.png",
+        "COM_Stability_Plot_raw": "core_analysis/COM_Stability_Plot_raw.png",
+        "COM_Stability_Plot": "core_analysis/COM_Stability_Plot.png",
+        "COM_Stability_Comparison": "core_analysis/COM_Stability_Comparison.png",
+        "COM_Stability_KDE_Analysis": "core_analysis/COM_Stability_KDE_Analysis.png",
+        # Orientation/Contact plots (now in orientation_contacts/)
+        "Toxin_Orientation_Angle": "orientation_contacts/Toxin_Orientation_Angle.png",
+        "Toxin_Rotation_Components": "orientation_contacts/Toxin_Rotation_Components.png",
+        "Toxin_Channel_Contacts": "orientation_contacts/Toxin_Channel_Contacts.png",
+        "Toxin_Channel_Residue_Contact_Map_Full": "orientation_contacts/Toxin_Channel_Residue_Contact_Map_Full.png",
+        "Toxin_Channel_Residue_Contact_Map_Focused": "orientation_contacts/Toxin_Channel_Residue_Contact_Map_Focused.png",
+        # Ion plots (now in ion_analysis/)
+        "binding_sites_g1_centric_visualization": "ion_analysis/binding_sites_g1_centric_visualization.png",
+        "K_Ion_Combined_Plot": "ion_analysis/K_Ion_Combined_Plot.png",
+        "K_Ion_Occupancy_Heatmap": "ion_analysis/K_Ion_Occupancy_Heatmap.png",
+        "K_Ion_Average_Occupancy": "ion_analysis/K_Ion_Average_Occupancy.png",
+        # Water plots (now in water_analysis/)
+        "Cavity_Water_Count_Plot": "water_analysis/Cavity_Water_Count_Plot.png",
+        "Cavity_Water_Residence_Hist": "water_analysis/Cavity_Water_Residence_Hist.png",
+        # Gyration analysis plots (now in gyration_analysis/)
+        "G1_gyration_radii": "gyration_analysis/G1_gyration_radii.png",
     }
 
     logger.debug("Loading images for HTML report...")
@@ -499,7 +546,9 @@ def Create_PPT(unique_dirs, com_averages):
         {"title_suffix": "(Focused Contacts)", "plot1_file": "Toxin_Channel_Residue_Contact_Map_Focused.png", "plot2_file": None, "skip_control": True},
         {"title_suffix": "(Ion Positions)", "plot1_file": "K_Ion_Combined_Plot.png", "plot2_file": None},
         {"title_suffix": "(Ion Occupancy)", "plot1_file": "K_Ion_Occupancy_Heatmap.png", "plot2_file": "K_Ion_Average_Occupancy.png"},
-        {"title_suffix": "(Cavity Water)", "plot1_file": "Cavity_Water_Count_Plot.png", "plot2_file": "Cavity_Water_Residence_Hist.png"}
+        {"title_suffix": "(Cavity Water)", "plot1_file": "Cavity_Water_Count_Plot.png", "plot2_file": "Cavity_Water_Residence_Hist.png"},
+        # Add G1 gyration plot
+        {"title_suffix": "(G1 Gyration Radius)", "plot1_file": "G1_gyration_radii.png", "plot2_file": None}
     ]
 
     for plot_info in plot_types:
