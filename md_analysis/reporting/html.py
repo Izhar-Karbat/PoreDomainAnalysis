@@ -309,44 +309,62 @@ HTML_TEMPLATE = """
 
         {# <<< ADDED SECTION for Carbonyl Gyration >>> #}
         <div class="section">
-            <h2>Carbonyl Gyration Analysis (Selectivity Filter G1)</h2>
-             {% if run_summary.Gyration_G1_Mean is not none %} {# Check if gyration analysis was performed #}
+            <h2>Carbonyl Gyration & State Analysis (Selectivity Filter G1 & Y)</h2>
+             {% if run_summary.Gyration_G1_Mean is not none or run_summary.Gyration_Y_Mean is not none %} {# Check if any gyration analysis was performed #}
                  <div class="info-box">
-                    Gyration radius (ρ) measures the distance between the G1 carbonyl oxygen atoms and the pore center.
-                    Changes in this radius can indicate carbonyl flipping events that may affect ion permeation.
+                    Gyration radius (ρ) measures the distance between the specified carbonyl oxygen atoms and the pore center.
+                    Carbonyls are considered 'flipped' when ρ > {{ run_summary.get('GYRATION_FLIP_THRESHOLD', 'N/A') }} Å.
+                    'On' flips represent transitions into the flipped state, 'Off' flips represent returning to the normal state.
                  </div>
                  <table class="stats-table">
-                    <thead><tr><th>Metric</th><th>G1 Glycine</th></tr></thead>
+                    <thead>
+                        <tr>
+                            <th>Metric</th><th>G1 Glycine</th><th>Y Tyrosine</th>
+                        </tr>
+                    </thead>
                     <tbody>
                         <tr><td>Mean Gyration Radius (Å)</td>
-                            <td>{{ "%.3f"|format(run_summary.Gyration_G1_Mean) }}</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_G1_Mean) if run_summary.Gyration_G1_Mean is not none else 'N/A' }}</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_Y_Mean) if run_summary.Gyration_Y_Mean is not none else 'N/A' }}</td>
                         </tr>
-                        <tr><td>Std Dev (Å)</td>
-                            <td>{{ "%.3f"|format(run_summary.Gyration_G1_Std) }}</td>
+                        <tr><td>Std Dev Gyration Radius (Å)</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_G1_Std) if run_summary.Gyration_G1_Std is not none else 'N/A' }}</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_Y_Std) if run_summary.Gyration_Y_Std is not none else 'N/A' }}</td>
                         </tr>
-                        <tr><td>Detected Flips</td>
-                            <td>{{ run_summary.Gyration_Flips }}</td>
+                        <tr><td>'On' Flips (Normal → Flipped)</td>
+                            <td>{{ run_summary.Gyration_G1_OnFlips if run_summary.Gyration_G1_OnFlips is not none else 'N/A' }}</td>
+                            <td>{{ run_summary.Gyration_Y_OnFlips if run_summary.Gyration_Y_OnFlips is not none else 'N/A' }}</td>
                         </tr>
-                        <tr><td>Maximum Change (Å)</td>
-                            <td>{{ "%.3f"|format(run_summary.Gyration_MaxChange) if run_summary.Gyration_MaxChange is not none else 'N/A' }}</td>
+                        <tr><td>'Off' Flips (Flipped → Normal)</td>
+                            <td>{{ run_summary.Gyration_G1_OffFlips if run_summary.Gyration_G1_OffFlips is not none else 'N/A' }}</td>
+                            <td>{{ run_summary.Gyration_Y_OffFlips if run_summary.Gyration_Y_OffFlips is not none else 'N/A' }}</td>
+                        </tr>
+                         <tr><td>Mean Flipped Duration (ns)</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_G1_MeanDuration_ns) if run_summary.Gyration_G1_MeanDuration_ns is not none else 'N/A' }}</td>
+                            <td>{{ "%.3f"|format(run_summary.Gyration_Y_MeanDuration_ns) if run_summary.Gyration_Y_MeanDuration_ns is not none else 'N/A' }}</td>
+                        </tr>
+                        <tr><td>Std Dev Flipped Duration (ns)</td>
+                             <td>{{ "%.3f"|format(run_summary.Gyration_G1_StdDuration_ns) if run_summary.Gyration_G1_StdDuration_ns is not none else 'N/A' }}</td>
+                             <td>{{ "%.3f"|format(run_summary.Gyration_Y_StdDuration_ns) if run_summary.Gyration_Y_StdDuration_ns is not none else 'N/A' }}</td>
                         </tr>
                     </tbody>
                  </table>
+                 <div class="two-column">
+                     <div class="column plot-container">
+                         <h3>G1 Gyration Radii & State Transitions</h3>
+                         {% if img_data.G1_gyration_radii %} <img src="data:image/png;base64,{{ img_data.G1_gyration_radii }}" alt="G1 Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+                     </div>
+                     <div class="column plot-container">
+                         <h3>Y Gyration Radii & State Transitions</h3>
+                         {% if img_data.Y_gyration_radii %} <img src="data:image/png;base64,{{ img_data.Y_gyration_radii }}" alt="Y Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+                     </div>
+                 </div>
                  <div class="plot-container">
-                     <h3>G1 Gyration Radii</h3>
-                     {% if img_data.G1_gyration_radii %} <img src="data:image/png;base64,{{ img_data.G1_gyration_radii }}" alt="G1 Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+                     <h3>Flip Duration Distribution</h3>
+                     {% if img_data.Flip_Duration_Distribution %} <img src="data:image/png;base64,{{ img_data.Flip_Duration_Distribution }}" alt="Flip Duration Distribution"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
                  </div>
                  <div class="info-box">
-                    <p><strong>Interpretation:</strong> Carbonyl flipping is indicated by sudden changes in gyration radius.
-                    {% if run_summary.Gyration_Flips > 5 %}
-                    A high number of flips ({{ run_summary.Gyration_Flips }}) suggests significant instability in the selectivity filter,
-                    which may disrupt ion coordination and permeation.
-                    {% elif run_summary.Gyration_Flips > 0 %}
-                    {{ run_summary.Gyration_Flips }} flip(s) were detected, which may temporarily affect ion coordination.
-                    {% else %}
-                    No significant flips were detected, suggesting a stable selectivity filter conformation.
-                    {% endif %}
-                    </p>
+                    <p><strong>Interpretation:</strong> Carbonyl flips are confirmed only if the radius remains above the threshold ({{ run_summary.get('GYRATION_FLIP_THRESHOLD', 'N/A') }} Å) or below it for more than {{ run_summary.get('GYRATION_FLIP_TOLERANCE_FRAMES', 'N/A') }} consecutive frames ({{ '%.2f'|format(1.0/run_summary.get('FRAMES_PER_NS', 10) * run_summary.get('GYRATION_FLIP_TOLERANCE_FRAMES', 5)) }} ns). Frequent confirmed transitions or long durations spent in the 'flipped' state can indicate carbonyl orientations less favorable for ion coordination. Compare the number of 'On' and 'Off' flips; imbalance might suggest persistent changes or incomplete transitions. The duration distribution shows how long confirmed flipped states typically last.</p>
                  </div>
              {% else %}
                  <p><i>Carbonyl gyration analysis not performed or data unavailable.</i></p>
@@ -414,6 +432,8 @@ def generate_html_report(run_dir, run_summary):
         "Inner_Vestibule_Residence_Hist": "inner_vestibule_analysis/Inner_Vestibule_Residence_Hist.png",
         # Gyration analysis plots (now in gyration_analysis/)
         "G1_gyration_radii": "gyration_analysis/G1_gyration_radii.png",
+        "Y_gyration_radii": "gyration_analysis/Y_gyration_radii.png",
+        "Flip_Duration_Distribution": "gyration_analysis/Flip_Duration_Distribution.png",
     }
 
     logger.debug("Loading images for HTML report...")

@@ -18,6 +18,12 @@ DEFAULT_CUTOFF = 3.5
 # Default stride factor for reading large trajectories (set to 1 to read all frames)
 DEFAULT_STRIDE = 1
 
+# --- Gyration Analysis Parameters ---
+# Threshold (in Angstroms) to define a carbonyl as 'flipped' based on gyration radius
+GYRATION_FLIP_THRESHOLD = 4.5
+# Minimum consecutive frames in a state to confirm a flip event
+GYRATION_FLIP_TOLERANCE_FRAMES = 5
+
 # --- Water Analysis Parameters ---
 # Number of consecutive frames water must be outside cavity to confirm exit
 EXIT_BUFFER_FRAMES = 5

@@ -286,26 +286,42 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
         logger.debug(f"Incorporated ion transit stats: {ion_transit_stats}")
 
         # --- Add Gyration Stats ---
-        # Only includes G1 stats now
-        gyration_stat_keys = [
-            'mean_gyration_g1', 'std_gyration_g1',
-            'flips_detected', 'max_gyration_change'
-        ]
+        # Extracts gyration radius stats and detailed flip/state stats for G1 and Y
 
         if gyration_stats and isinstance(gyration_stats, dict) and gyration_stats:
-            logger.debug("Incorporating G1 gyration stats into summary.")
+            logger.debug("Incorporating G1 and Y gyration and state stats into summary.")
+            # Mean/Std Gyration Radius
             run_summary['Gyration_G1_Mean'] = gyration_stats.get('mean_gyration_g1', np.nan)
             run_summary['Gyration_G1_Std'] = gyration_stats.get('std_gyration_g1', np.nan)
-            # G2 stats removed
-            run_summary['Gyration_Flips'] = gyration_stats.get('flips_detected', 0)
-            run_summary['Gyration_MaxChange'] = gyration_stats.get('max_gyration_change', np.nan)
+            run_summary['Gyration_Y_Mean'] = gyration_stats.get('mean_gyration_y', np.nan)
+            run_summary['Gyration_Y_Std'] = gyration_stats.get('std_gyration_y', np.nan)
+
+            # Detailed Flip/State Stats (New)
+            for res_key in ['g1', 'y']:
+                prefix = f"Gyration_{res_key.upper()}_"
+                run_summary[prefix + 'OnFlips'] = gyration_stats.get(f'{res_key}_on_flips', 0)
+                run_summary[prefix + 'OffFlips'] = gyration_stats.get(f'{res_key}_off_flips', 0)
+                run_summary[prefix + 'MeanDuration_ns'] = gyration_stats.get(f'{res_key}_mean_flip_duration_ns', np.nan)
+                run_summary[prefix + 'StdDuration_ns'] = gyration_stats.get(f'{res_key}_std_flip_duration_ns', np.nan)
+                # Optionally store the list of durations? Might make JSON large.
+                # run_summary[prefix + 'Durations_ns'] = gyration_stats.get(f'{res_key}_flip_durations_ns', [])
+
+            # Keep simple total flip count for G1 if needed? (Currently uses on_flips)
+            # run_summary['Gyration_Flips'] = run_summary.get('Gyration_G1_OnFlips', 0)
+
         else:
-            logger.debug("No gyration stats provided, adding NaN placeholders for G1.")
+            logger.debug("No gyration stats provided, adding NaN placeholders for G1/Y radius and state stats.")
             run_summary['Gyration_G1_Mean'] = np.nan
             run_summary['Gyration_G1_Std'] = np.nan
-            # G2 stats removed
-            run_summary['Gyration_Flips'] = 0
-            run_summary['Gyration_MaxChange'] = np.nan
+            run_summary['Gyration_Y_Mean'] = np.nan
+            run_summary['Gyration_Y_Std'] = np.nan
+            for res_key in ['g1', 'y']:
+                prefix = f"Gyration_{res_key.upper()}_"
+                run_summary[prefix + 'OnFlips'] = 0
+                run_summary[prefix + 'OffFlips'] = 0
+                run_summary[prefix + 'MeanDuration_ns'] = np.nan
+                run_summary[prefix + 'StdDuration_ns'] = np.nan
+                # run_summary[prefix + 'Durations_ns'] = []
 
         # --- Finalize Status ---
         # More granular status based on errors
