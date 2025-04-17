@@ -60,9 +60,8 @@ try:
     from md_analysis.core.logging import setup_root_logger, setup_system_logger
     from md_analysis.modules.core_analysis.core import analyze_trajectory, filter_and_save_data
     from md_analysis.modules.orientation_contacts.orientation import analyze_toxin_orientation
-    from md_analysis.modules.ion_analysis.ion_core import track_potassium_ions
-    from md_analysis.modules.ion_analysis.coordination import analyze_ion_coordination
-    from md_analysis.modules.water_analysis.water_analysis import analyze_cavity_water
+    from md_analysis.modules.ion_analysis import track_potassium_ions, analyze_ion_coordination
+    from md_analysis.modules.inner_vestibule_analysis import analyze_inner_vestibule as analyze_cavity_water
     from md_analysis.reporting.summary import calculate_and_save_run_summary
     from md_analysis.reporting.html import generate_html_report
     from md_analysis.reporting.presentation import Create_PPT

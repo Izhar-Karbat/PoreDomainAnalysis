@@ -11,7 +11,7 @@ import MDAnalysis as mda
 
 # External imports
 try:
-    from utils import OneLetter
+    from md_analysis.core.utils import OneLetter
 except ImportError as e:
     print(f"Error importing dependency modules in filter_structure.py: {e}")
     raise

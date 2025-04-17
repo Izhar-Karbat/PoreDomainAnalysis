@@ -56,19 +56,20 @@ import MDAnalysis as mda
 # --- Import constants and functions from refactored modules ---
 try:
     from config import Analysis_version
-    from utils import frames_to_time, clean_json_data # Add others if needed directly here
+    from md_analysis.core.utils import frames_to_time, clean_json_data
     from logger_setup import setup_root_logger, setup_system_logger
-    from core_analysis import analyze_trajectory, filter_and_save_data
-    from orientation_contacts import analyze_toxin_orientation
-    from ion_analysis import track_potassium_ions, analyze_ion_coordination
-    from water_analysis import analyze_cavity_water
-    from summary import calculate_and_save_run_summary
-    from reporting import generate_html_report, Create_PPT
-    from gyration_analysis import analyze_carbonyl_gyration
+    from md_analysis.modules.core_analysis.core import analyze_trajectory, filter_and_save_data
+    from md_analysis.modules.orientation_contacts.orientation import analyze_toxin_orientation
+    from md_analysis.modules.ion_analysis import track_potassium_ions, analyze_ion_coordination
+    from md_analysis.modules.inner_vestibule_analysis import analyze_inner_vestibule as analyze_cavity_water
+    from md_analysis.reporting.summary import calculate_and_save_run_summary
+    from md_analysis.reporting.html import generate_html_report
+    from md_analysis.reporting.presentation import Create_PPT
+    from md_analysis.modules.gyration_analysis.gyration_core import analyze_carbonyl_gyration
 
 except ImportError as e:
     print(f"ERROR: Failed to import necessary modules: {e}", file=sys.stderr)
-    print("Please ensure all .py files (config.py, utils.py, etc.) are in the same directory or accessible via PYTHONPATH.", file=sys.stderr)
+    print("Please ensure the md_analysis package and its dependencies are correctly structured and accessible.", file=sys.stderr)
     sys.exit(1)
 
 def main():

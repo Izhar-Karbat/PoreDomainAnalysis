@@ -15,10 +15,10 @@ import math # Keep math for potential future use, clean_json_data uses it too
 
 # Import from other modules
 try:
-    from utils import clean_json_data
-    from config import Analysis_version
+    from md_analysis.core.utils import clean_json_data
+    from md_analysis.core.config import Analysis_version
 except ImportError as e:
-    print(f"Error importing dependency modules in summary.py: {e}")
+    print(f"Error importing dependency modules in reporting/summary.py: {e}")
     raise
 
 # Get a logger for this module
@@ -213,23 +213,25 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                 run_summary[f'Ion_PctTimeOcc_{site_key}'] = np.nan
 
         # --- Cavity Water Stats --- (Always populated)
-        # These are passed directly as a dictionary
-        cavity_stat_keys = ['CavityWater_MeanOcc', 'CavityWater_StdOcc',
-                            'CavityWater_AvgResidenceTime_ns', 'CavityWater_TotalExitEvents',
-                            'CavityWater_ExchangeRatePerNs']
+        # Renamed to Inner Vestibule Stats
+        inner_vestibule_stat_keys = [
+            'InnerVestibule_MeanOcc', 'InnerVestibule_StdOcc',
+            'InnerVestibule_AvgResidenceTime_ns', 'InnerVestibule_TotalExitEvents',
+            'InnerVestibule_ExchangeRatePerNs'
+        ]
 
         # Check if the passed dictionary exists and has content
         if cavity_water_stats and isinstance(cavity_water_stats, dict) and cavity_water_stats:
-            logger.debug("Incorporating provided cavity water stats into summary.")
-            # Populate summary from the dictionary
-            for key in cavity_stat_keys:
+            logger.debug("Incorporating provided inner vestibule stats into summary.")
+            # Populate summary from the dictionary using the correct keys
+            for key in inner_vestibule_stat_keys:
                 run_summary[key] = cavity_water_stats.get(key, np.nan)
         else:
-            logger.debug("Cavity water stats missing or empty, adding NaN placeholders.")
+            logger.debug("Inner vestibule stats missing or empty, adding NaN placeholders.")
             # Only add error if water analysis was *expected* but failed
             # Assuming main analyzer handles this, just put NaN here
-            stats_collection_errors.append("CavityWater_MissingOrEmpty")
-            for key in cavity_stat_keys:
+            stats_collection_errors.append("InnerVestibule_MissingOrEmpty") # Updated error code
+            for key in inner_vestibule_stat_keys:
                 run_summary[key] = np.nan
 
         # --- Add Raw Distance Stats --- (COM depends on control status)
@@ -316,7 +318,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             if not is_control_system:
                 # Only add COM/orientation as critical for non-control systems
                 critical_missing.update({'COM_Filtered_Missing', 'Orientation_Missing'})
-            # NOTE: IonStats_Missing and CavityWater_MissingOrEmpty are NOT currently treated as critical failures by default.
+            # NOTE: IonStats_Missing and InnerVestibule_MissingOrEmpty are NOT currently treated as critical failures by default.
             # Adjust 'critical_missing' set above if they should be treated as critical.
 
             is_critical_failure = any(err in critical_missing for err in stats_collection_errors)

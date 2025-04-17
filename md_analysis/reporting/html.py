@@ -21,11 +21,11 @@ import seaborn as sns # Keep for plot style consistency settings if applied here
 
 # Import from other modules
 try:
-    from utils import fig_to_base64 # Used if we were generating plots here, now used for loading
+    from md_analysis.core.utils import fig_to_base64 # Corrected import path
     # Plotting functions are no longer called directly here for HTML report
     # from core_analysis import plot_pore_diameter, plot_com_positions, plot_filtering_comparison, plot_kde_analysis
 except ImportError as e:
-    print(f"Error importing dependency modules in reporting.py: {e}")
+    print(f"Error importing dependency modules in reporting/html.py: {e}") # Updated filename in error message
     raise
 
 # Get a logger for this module
@@ -277,30 +277,33 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="section">
-            <h2>Cavity Water Analysis</h2>
-             {% if run_summary.CavityWater_MeanOcc is not none %} {# Check if water stats exist #}
-                 <table class="stats-table">
-                    <thead><tr><th>Metric</th><th>Value</th></tr></thead>
-                    <tbody>
-                        <tr><td>Mean Occupancy</td><td>{{ "%.2f"|format(run_summary.CavityWater_MeanOcc) }}</td></tr>
-                        <tr><td>Std Dev Occupancy</td><td>{{ "%.2f"|format(run_summary.CavityWater_StdOcc) }}</td></tr>
-                        <tr><td>Avg Residence Time (ns)</td><td>{{ "%.3f"|format(run_summary.CavityWater_AvgResidenceTime_ns) }}</td></tr>
-                        <tr><td>Total Confirmed Exit Events</td><td>{{ "%d"|format(run_summary.CavityWater_TotalExitEvents) }}</td></tr>
-                        <tr><td>Exchange Rate (/ns)</td><td>{{ "%.4f"|format(run_summary.CavityWater_ExchangeRatePerNs) }}</td></tr>
-                    </tbody>
-                 </table>
+            <h2>Inner Vestibule Analysis</h2>
+             {% if run_summary.InnerVestibule_MeanOcc is defined and run_summary.InnerVestibule_MeanOcc is not none %} {# Check if inner vestibule stats exist #}
+                 <div class="analysis-section">
+                   <h3>Inner Vestibule Water Dynamics</h3>
+                   <table class="stats-table">
+                     <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+                     <tbody>
+                         <tr><td>Mean Occupancy</td><td>{{ "%.2f"|format(run_summary.InnerVestibule_MeanOcc) }}</td></tr>
+                         <tr><td>Std Dev Occupancy</td><td>{{ "%.2f"|format(run_summary.InnerVestibule_StdOcc) if run_summary.InnerVestibule_StdOcc is defined else 'N/A' }}</td></tr>
+                         <tr><td>Avg Residence Time (ns)</td><td>{{ "%.3f"|format(run_summary.InnerVestibule_AvgResidenceTime_ns) if run_summary.InnerVestibule_AvgResidenceTime_ns is defined else 'N/A' }}</td></tr>
+                         <tr><td>Total Confirmed Exit Events</td><td>{{ "%d"|format(run_summary.InnerVestibule_TotalExitEvents) if run_summary.InnerVestibule_TotalExitEvents is defined else 'N/A' }}</td></tr>
+                         <tr><td>Exchange Rate (/ns)</td><td>{{ "%.4f"|format(run_summary.InnerVestibule_ExchangeRatePerNs) if run_summary.InnerVestibule_ExchangeRatePerNs is defined else 'N/A' }}</td></tr>
+                     </tbody>
+                   </table>
+                 </div>
                  <div class="two-column">
                     <div class="column plot-container">
-                        <h3>Cavity Water Count</h3>
-                         {% if img_data.Cavity_Water_Count_Plot %} <img src="data:image/png;base64,{{ img_data.Cavity_Water_Count_Plot }}" alt="Cavity Water Count Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+                        <h3>Inner Vestibule Water Count</h3>
+                         {% if img_data.Inner_Vestibule_Count_Plot %} <img src="data:image/png;base64,{{ img_data.Inner_Vestibule_Count_Plot }}" alt="Inner Vestibule Water Count Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
                     </div>
                     <div class="column plot-container">
                         <h3>Residence Time Distribution</h3>
-                        {% if img_data.Cavity_Water_Residence_Hist %} <img src="data:image/png;base64,{{ img_data.Cavity_Water_Residence_Hist }}" alt="Cavity Water Residence Histogram"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+                        {% if img_data.Inner_Vestibule_Residence_Hist %} <img src="data:image/png;base64,{{ img_data.Inner_Vestibule_Residence_Hist }}" alt="Inner Vestibule Water Residence Histogram"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
                     </div>
                  </div>
              {% else %}
-                 <p><i>Cavity water analysis not performed or data unavailable.</i></p>
+                 <p><i>Inner vestibule analysis not performed or data unavailable.</i></p>
              {% endif %}
         </div>
 
@@ -406,9 +409,9 @@ def generate_html_report(run_dir, run_summary):
         "K_Ion_Combined_Plot": "ion_analysis/K_Ion_Combined_Plot.png",
         "K_Ion_Occupancy_Heatmap": "ion_analysis/K_Ion_Occupancy_Heatmap.png",
         "K_Ion_Average_Occupancy": "ion_analysis/K_Ion_Average_Occupancy.png",
-        # Water plots (now in water_analysis/)
-        "Cavity_Water_Count_Plot": "water_analysis/Cavity_Water_Count_Plot.png",
-        "Cavity_Water_Residence_Hist": "water_analysis/Cavity_Water_Residence_Hist.png",
+        # Water plots (now in inner_vestibule_analysis/)
+        "Inner_Vestibule_Count_Plot": "inner_vestibule_analysis/Inner_Vestibule_Count_Plot.png",
+        "Inner_Vestibule_Residence_Hist": "inner_vestibule_analysis/Inner_Vestibule_Residence_Hist.png",
         # Gyration analysis plots (now in gyration_analysis/)
         "G1_gyration_radii": "gyration_analysis/G1_gyration_radii.png",
     }
