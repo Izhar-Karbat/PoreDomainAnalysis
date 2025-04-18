@@ -16,7 +16,9 @@ import math # Keep math for potential future use, clean_json_data uses it too
 # Import from other modules
 try:
     from md_analysis.core.utils import clean_json_data
-    from md_analysis.core.config import Analysis_version, TYROSINE_ROTAMER_TOLERANCE_FRAMES
+    from md_analysis.core.config import (Analysis_version,
+                                         TYROSINE_ROTAMER_TOLERANCE_FRAMES,
+                                         ION_TRANSITION_TOLERANCE_FRAMES) # Import ion tolerance
 except ImportError as e:
     print(f"Error importing dependency modules in reporting/summary.py: {e}")
     raise
@@ -30,10 +32,11 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                                    cavity_water_stats={}, raw_dist_stats={},
                                    percentile_stats={}, orientation_rotation_stats={},
                                    ion_transit_stats={}, gyration_stats={}, tyrosine_stats={},
+                                   conduction_stats={},
                                    is_control_system=False):
     """
     Calculates summary stats by reading analysis output files from a specific run
-    (including ion, water, raw distance, percentile, orientation, ion transit, gyration, and tyrosine stats passed as arguments)
+    (including ion, water, raw distance, percentile, orientation, ion transit, gyration, tyrosine, and conduction stats)
     and saves the combined summary to 'analysis_summary.json'. Handles control systems.
 
     Args:
@@ -50,6 +53,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
         ion_transit_stats (dict, optional): Dictionary with ion transit time statistics. Defaults to {}.
         gyration_stats (dict, optional): Dictionary with carbonyl gyration statistics. Defaults to {}.
         tyrosine_stats (dict, optional): Dictionary with tyrosine analysis statistics. Defaults to {}.
+        conduction_stats (dict, optional): Dictionary with ion conduction statistics. Defaults to {}.
         is_control_system (bool, optional): Flag indicating if this is a control system (no toxin). Defaults to False.
     """
     logger.info(f"Calculating final summary statistics for {system_name}/{run_name}...")
@@ -358,6 +362,47 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                  else:
                       run_summary[key] = 'N/A'
 
+        # --- Add Ion Conduction/Transition Stats --- (New Section)
+        conduction_stat_keys = [
+            'Ion_ConductionEvents_Total', 'Ion_ConductionEvents_Outward', 'Ion_ConductionEvents_Inward',
+            'Ion_Conduction_MeanTransitTime_ns', 'Ion_Conduction_MedianTransitTime_ns', 'Ion_Conduction_StdTransitTime_ns',
+            'Ion_TransitionEvents_Total', 'Ion_TransitionEvents_Upward', 'Ion_TransitionEvents_Downward',
+            'Ion_Transition_ToleranceFrames', # Add tolerance key
+            # Add keys for adjacent site transitions dynamically if needed, or list explicitly
+            # Example explicit listing (ensure these match output keys from analyze_ion_conduction):
+            'Ion_Transition_Cavity_S4', 'Ion_Transition_S4_S3', 'Ion_Transition_S3_S2',
+            'Ion_Transition_S2_S1', 'Ion_Transition_S1_S0'
+        ]
+        if conduction_stats and isinstance(conduction_stats, dict) and conduction_stats:
+            logger.debug("Incorporating ion conduction/transition stats into summary.")
+            for key in conduction_stat_keys:
+                # Check if key exists in the provided stats, otherwise default
+                if key in conduction_stats:
+                    run_summary[key] = conduction_stats[key]
+                else:
+                    # Default logic for potentially missing keys
+                    if 'TransitTime' in key:
+                        run_summary[key] = np.nan
+                    elif key.endswith('_Total') or key.startswith('Ion_Transition_') or '_transitions' in key:
+                        run_summary[key] = 0 # Default counts to 0
+                    else:
+                        run_summary[key] = np.nan # Default other missing stats to NaN
+                    logger.debug(f"Conduction stat key '{key}' not found, using default.")
+            # Handle potential NaN values for counts that should be 0
+            for key in run_summary:
+                 if (key.startswith('Ion_ConductionEvents') or key.startswith('Ion_Transition')) and pd.isna(run_summary[key]):
+                      run_summary[key] = 0
+
+        else:
+            logger.debug("No ion conduction stats provided, adding placeholders.")
+            for key in conduction_stat_keys:
+                 if 'TransitTime' in key:
+                     run_summary[key] = np.nan
+                 elif key == 'Ion_Transition_ToleranceFrames':
+                      run_summary[key] = ION_TRANSITION_TOLERANCE_FRAMES # Default if missing
+                 else: # All counts default to 0
+                     run_summary[key] = 0
+
         # --- Add Config Constants Used (for report reference) ---
         # Explicitly add specific config values that the report might want to display
         try:
@@ -366,6 +411,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             run_summary['GYRATION_FLIP_TOLERANCE_FRAMES'] = GYRATION_FLIP_TOLERANCE_FRAMES
             run_summary['FRAMES_PER_NS'] = FRAMES_PER_NS
             run_summary['TYROSINE_ROTAMER_TOLERANCE_FRAMES'] = TYROSINE_ROTAMER_TOLERANCE_FRAMES # Also add here
+            run_summary.setdefault('ION_TRANSITION_TOLERANCE_FRAMES', ION_TRANSITION_TOLERANCE_FRAMES) # Add ion tolerance here too
         except ImportError:
             logger.warning("Could not import/add config values to summary.")
             # Ensure keys exist even if import fails, using defaults or None
@@ -373,6 +419,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             run_summary.setdefault('GYRATION_FLIP_TOLERANCE_FRAMES', None)
             run_summary.setdefault('FRAMES_PER_NS', None)
             run_summary.setdefault('TYROSINE_ROTAMER_TOLERANCE_FRAMES', TYROSINE_ROTAMER_TOLERANCE_FRAMES) # Use imported default
+            run_summary.setdefault('ION_TRANSITION_TOLERANCE_FRAMES', ION_TRANSITION_TOLERANCE_FRAMES) # Add ion tolerance here too
 
         # --- Finalize Status ---
         # More granular status based on errors

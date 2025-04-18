@@ -28,6 +28,9 @@ GYRATION_FLIP_TOLERANCE_FRAMES = 5
 # Number of consecutive frames water must be outside cavity to confirm exit
 EXIT_BUFFER_FRAMES = 5
 
+# Tolerance: Minimum consecutive frames an ion must occupy a new adjacent site to confirm a transition
+ION_TRANSITION_TOLERANCE_FRAMES = 10
+
 # Add any other system-wide constants or default thresholds here
 # Example:
 # MIN_LEVEL_SIZE_PBC = 30 # Could move from detect_and_correct_multilevel_pbc if desired
