@@ -17,6 +17,7 @@ from collections import defaultdict
 from .filter_structure import find_filter_residues, calculate_tvgyg_sites
 from .binding_sites import visualize_binding_sites_g1_centric
 from .ion_position import save_ion_position_data, plot_ion_positions
+from .ion_occupancy import create_ion_occupancy_heatmap
 
 # External imports
 try:
@@ -60,6 +61,11 @@ def track_potassium_ions(run_dir, psf_file=None, dcd_file=None, exit_buffer_fram
     run_name = os.path.basename(run_dir)
     logger.info(f"Starting K+ ion tracking for {run_name}")
 
+    # --- Setup Output Directory --- #
+    output_dir = os.path.join(run_dir, "ion_analysis")
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Ion analysis outputs will be saved to: {output_dir}")
+
     # --- File Handling & Universe Loading ---
     if psf_file is None:
         psf_file = os.path.join(run_dir, "step5_input.psf")
@@ -92,7 +98,7 @@ def track_potassium_ions(run_dir, psf_file=None, dcd_file=None, exit_buffer_fram
         return {}, frames_to_time(np.arange(n_frames)), [], None, None, filter_residues
 
     # Create binding site visualization (using G1-centric coordinates)
-    _ = visualize_binding_sites_g1_centric(filter_sites, g1_reference, run_dir, logger)
+    _ = visualize_binding_sites_g1_centric(filter_sites, g1_reference, output_dir, logger)
 
     # --- Setup Ion Selection & Tracking ---
     k_selection_strings = ['name K', 'name POT', 'resname K', 'resname POT', 'type K', 'element K']
@@ -241,9 +247,31 @@ def track_potassium_ions(run_dir, psf_file=None, dcd_file=None, exit_buffer_fram
     ions_z_tracked_abs = {idx: ions_z_positions_abs[idx] for idx in final_tracked_indices}
 
     # Save position data (Absolute and G1-centric)
-    save_ion_position_data(run_dir, time_points, ions_z_tracked_abs, final_tracked_indices, g1_reference)
+    save_ion_position_data(output_dir, time_points, ions_z_tracked_abs, final_tracked_indices, g1_reference)
 
     # Plot positions (using G1-centric coordinates)
-    plot_ion_positions(run_dir, time_points, ions_z_tracked_abs, final_tracked_indices, filter_sites, g1_reference, logger=logger)
+    plot_ion_positions(output_dir, time_points, ions_z_tracked_abs, final_tracked_indices, filter_sites, g1_reference, logger=logger)
+
+    # --- Generate Occupancy Plots --- #
+    # Need G1-centric coordinates for the occupancy heatmap function
+    ions_z_g1_centric = {}
+    if g1_reference is not None:
+        for idx, abs_z in ions_z_tracked_abs.items():
+            ions_z_g1_centric[idx] = abs_z - g1_reference
+    else: # Should not happen if tracking succeeded, but handle just in case
+        logger.warning("G1 reference is None, cannot calculate G1-centric coordinates for occupancy heatmap.")
+
+    # Call the function to create and save heatmap and average occupancy plot
+    if ions_z_g1_centric and final_tracked_indices and filter_sites:
+        _ = create_ion_occupancy_heatmap(
+            run_dir=output_dir, # Save plots inside the ion_analysis directory
+            time_points=time_points,
+            ions_z_g1_centric=ions_z_g1_centric,
+            ion_indices=final_tracked_indices,
+            filter_sites=filter_sites,
+            logger=logger
+        )
+    else:
+        logger.warning("Skipping occupancy heatmap generation due to missing data (ions_z_g1, indices, or sites).")
 
     return ions_z_tracked_abs, time_points, final_tracked_indices, g1_reference, filter_sites, filter_residues

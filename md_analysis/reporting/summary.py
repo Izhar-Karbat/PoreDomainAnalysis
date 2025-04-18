@@ -96,21 +96,21 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
         if os.path.exists(gg_filt_path):
             try:
                 gg_df = pd.read_csv(gg_filt_path)
-                gg_ac_series = gg_df.get('A_C_Distance_Filtered')
-                gg_bd_series = gg_df.get('B_D_Distance_Filtered')
+                gg_ac_series = gg_df.get('G_G_Distance_AC_Filt')
+                gg_bd_series = gg_df.get('G_G_Distance_BD_Filt')
             except Exception as e:
                 logger.warning(f"Error reading G-G filtered CSV ({gg_filt_path}): {e}")
-                stats_collection_errors.append("GG_Filtered_ReadError")
+                stats_collection_errors.append("G_G_Filtered_ReadError")
         else:
             logger.warning(f"G-G filtered CSV not found: {gg_filt_path}")
-            stats_collection_errors.append("GG_Filtered_Missing")
+            stats_collection_errors.append("G_G_Filtered_Missing")
 
-        run_summary['GG_AC_Mean_Filt'] = safe_stat(gg_ac_series, np.nanmean)
-        run_summary['GG_AC_Std_Filt'] = safe_stat(gg_ac_series, np.nanstd)
-        run_summary['GG_AC_Min_Filt'] = safe_stat(gg_ac_series, np.nanmin)
-        run_summary['GG_BD_Mean_Filt'] = safe_stat(gg_bd_series, np.nanmean)
-        run_summary['GG_BD_Std_Filt'] = safe_stat(gg_bd_series, np.nanstd)
-        run_summary['GG_BD_Min_Filt'] = safe_stat(gg_bd_series, np.nanmin)
+        run_summary['G_G_AC_Mean_Filt'] = safe_stat(gg_ac_series, np.nanmean)
+        run_summary['G_G_AC_Std_Filt'] = safe_stat(gg_ac_series, np.nanstd)
+        run_summary['G_G_AC_Min_Filt'] = safe_stat(gg_ac_series, np.nanmin)
+        run_summary['G_G_BD_Mean_Filt'] = safe_stat(gg_bd_series, np.nanmean)
+        run_summary['G_G_BD_Std_Filt'] = safe_stat(gg_bd_series, np.nanstd)
+        run_summary['G_G_BD_Min_Filt'] = safe_stat(gg_bd_series, np.nanmin)
 
         # --- COM Stats (Filtered) --- (Set to None for control systems)
         if is_control_system:
@@ -126,7 +126,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                 if os.path.exists(com_filt_path):
                     try:
                         com_df = pd.read_csv(com_filt_path)
-                        com_series = com_df.get('COM_Distance_Filtered')
+                        com_series = com_df.get('COM_Distance_Filt')
                     except Exception as e:
                         logger.warning(f"Error reading COM filtered CSV ({com_filt_path}): {e}")
                         stats_collection_errors.append("COM_Filtered_ReadError")
@@ -240,19 +240,19 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                 run_summary[key] = np.nan
 
         # --- Add Raw Distance Stats --- (COM depends on control status)
-        run_summary['GG_AC_Std_Raw'] = raw_dist_stats.get('GG_AC_Std_Raw', np.nan)
-        run_summary['GG_BD_Std_Raw'] = raw_dist_stats.get('GG_BD_Std_Raw', np.nan)
+        run_summary['G_G_AC_Std_Raw'] = raw_dist_stats.get('G_G_AC_Std_Raw', np.nan)
+        run_summary['G_G_BD_Std_Raw'] = raw_dist_stats.get('G_G_BD_Std_Raw', np.nan)
         run_summary['COM_Std_Raw'] = raw_dist_stats.get('COM_Std_Raw', np.nan) if not is_control_system else None
-        run_summary['GG_AC_Mean_Raw'] = raw_dist_stats.get('GG_AC_Mean_Raw', np.nan)
-        run_summary['GG_BD_Mean_Raw'] = raw_dist_stats.get('GG_BD_Mean_Raw', np.nan)
+        run_summary['G_G_AC_Mean_Raw'] = raw_dist_stats.get('G_G_AC_Mean_Raw', np.nan)
+        run_summary['G_G_BD_Mean_Raw'] = raw_dist_stats.get('G_G_BD_Mean_Raw', np.nan)
         run_summary['COM_Mean_Raw'] = raw_dist_stats.get('COM_Mean_Raw', np.nan) if not is_control_system else None
         logger.debug(f"Incorporated raw distance stats: {raw_dist_stats}")
 
         # --- Add Percentile Stats --- (COM depends on control status)
         percentile_keys = [
-            'GG_AC_Pctl10_Raw', 'GG_AC_Pctl90_Raw', 'GG_BD_Pctl10_Raw', 'GG_BD_Pctl90_Raw',
-            'COM_Pctl10_Raw', 'COM_Pctl90_Raw', 'GG_AC_Pctl10_Filt', 'GG_AC_Pctl90_Filt',
-            'GG_BD_Pctl10_Filt', 'GG_BD_Pctl90_Filt', 'COM_Pctl10_Filt', 'COM_Pctl90_Filt'
+            'G_G_AC_Pctl10_Raw', 'G_G_AC_Pctl90_Raw', 'G_G_BD_Pctl10_Raw', 'G_G_BD_Pctl90_Raw',
+            'COM_Pctl10_Raw', 'COM_Pctl90_Raw', 'G_G_AC_Pctl10_Filt', 'G_G_AC_Pctl90_Filt',
+            'G_G_BD_Pctl10_Filt', 'G_G_BD_Pctl90_Filt', 'COM_Pctl10_Filt', 'COM_Pctl90_Filt'
         ]
         for key in percentile_keys:
             # Check if the key exists in the passed dict *before* checking control status
@@ -428,7 +428,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             logger.info("Summary statistics calculation completed successfully.")
         else:
             # Check if critical files were missing vs. just read errors or missing optional data
-            critical_missing = {'GG_Filtered_Missing'}
+            critical_missing = {'G_G_Filtered_Missing'}
             if not is_control_system:
                 # Only add COM/orientation as critical for non-control systems
                 critical_missing.update({'COM_Filtered_Missing', 'Orientation_Missing'})

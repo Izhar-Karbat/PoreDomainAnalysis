@@ -59,7 +59,7 @@ try:
     from md_analysis.core.utils import frames_to_time, clean_json_data
     from md_analysis.core.logging import setup_root_logger, setup_system_logger
     from md_analysis.modules.core_analysis.core import analyze_trajectory, filter_and_save_data
-    from md_analysis.modules.orientation_contacts.orientation import analyze_toxin_orientation
+    from md_analysis.modules.orientation_contacts.orientation_contacts import analyze_toxin_orientation
     from md_analysis.modules.ion_analysis import track_potassium_ions, analyze_ion_coordination, analyze_ion_conduction
     from md_analysis.modules.inner_vestibule_analysis import analyze_inner_vestibule as analyze_cavity_water
     from md_analysis.reporting.summary import calculate_and_save_run_summary
@@ -555,6 +555,13 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             # track_potassium_ions returns: ions_z_abs, time_points, ion_indices, g1_ref, sites, filter_residues
             ions_z_abs, time_points_ions, ion_indices, g1_ref, sites, filter_res_dict = \
                 track_potassium_ions(run_dir, psf_file=psf_file, dcd_file=dcd_file)
+            # === DEBUGGING ADDED ===
+            logging.debug(f"track_potassium_ions returned:")
+            logging.debug(f"  - ion_indices type: {type(ion_indices)}, len: {len(ion_indices) if ion_indices is not None else 'N/A'}")
+            logging.debug(f"  - g1_ref type: {type(g1_ref)}, value: {g1_ref}")
+            logging.debug(f"  - sites type: {type(sites)}, is_none: {sites is None}, keys: {list(sites.keys()) if isinstance(sites, dict) else 'N/A'}")
+            logging.debug(f"  - filter_res_dict type: {type(filter_res_dict)}, is_none: {filter_res_dict is None}, keys: {list(filter_res_dict.keys()) if isinstance(filter_res_dict, dict) else 'N/A'}")
+            # === END DEBUGGING ===
             # Assign to results dictionary
             results['ions_z_abs'] = ions_z_abs
             results['time_points_ions'] = time_points_ions
@@ -568,9 +575,19 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         if run_orientation and not results['is_control_system']:
             logging.info("Running Toxin Orientation Analysis...")
             if results['com_analyzed']:
-                # This saves its own files and now returns rotation stats
-                _, _, _, _, results['orientation_rotation_stats'] = \
+                # Call the comprehensive function from orientation_contacts.py
+                # It handles calculations, plotting, and saving internally.
+                # It returns 5 values: angles, euler_angles, contact_counts, contact_df, rotation_stats_dict
+                orientation_angles, rotation_euler_angles, contact_counts, residue_contact_df, rotation_stats_dict = \
                     analyze_toxin_orientation(dcd_file, psf_file, run_dir)
+                
+                # Assign the returned dictionary directly to the results
+                results['orientation_rotation_stats'] = rotation_stats_dict
+                
+                # Optional: could store other returned values in results if needed later
+                # results['orientation_angles'] = orientation_angles
+                # results['contact_counts'] = contact_counts
+
             else:
                 # Should not happen if com_analyzed is False for control, but safety check
                 logging.warning("Skipping Toxin Orientation analysis (run requested but COM not analyzed).")
@@ -594,8 +611,11 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         # 5. Ion Coordination (if requested)
         if run_ion_coordination:
             logging.info("Running K+ Ion Coordination Analysis...")
-            # Prerequisites: Need results from ion tracking (filtered Z, indices, residues)
-            # and the Universe object needs to be loaded.
+            # === DEBUGGING ADDED - BEFORE CHECK ===
+            logging.debug(f"BEFORE check: ion_indices is None = {results.get('ion_indices') is None}")
+            logging.debug(f"BEFORE check: filter_residues is None = {results.get('filter_residues') is None}")
+            logging.debug(f"BEFORE check: filter_residues is Falsy = {not results.get('filter_residues')}")
+            # === END DEBUGGING ===
             if results.get('ion_indices') is not None and results.get('filter_residues'):
                 try:
                     # Call the refactored function with CORRECT arguments

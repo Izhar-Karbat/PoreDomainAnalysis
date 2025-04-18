@@ -47,21 +47,6 @@
     </div>
     {% endif %}
 
-    <h3>Ion Occupancy Statistics</h3>
-    <table class="stats-table">
-        <thead><tr><th>Site</th><th>Mean Occ.</th><th>Max Occ.</th><th>% Time Occ. (>0)</th></tr></thead>
-        <tbody>
-        {% for site in ['S0', 'S1', 'S2', 'S3', 'S4', 'Cavity'] %}
-            <tr>
-                <td>{{ site }}</td>
-                <td>{{ "%.3f"|format(run_summary['Ion_AvgOcc_'~site]) if run_summary['Ion_AvgOcc_'~site] is not none else 'N/A' }}</td>
-                <td>{{ "%d"|format(run_summary['Ion_MaxOcc_'~site]) if run_summary['Ion_MaxOcc_'~site] is not none else 'N/A' }}</td>
-                <td>{{ "%.1f"|format(run_summary['Ion_PctTimeOcc_'~site]) if run_summary['Ion_PctTimeOcc_'~site] is not none else 'N/A' }}%</td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-
     <h3>Ion Transit Statistics</h3>
     <table class="stats-table">
         <!-- Table content remains the same -->

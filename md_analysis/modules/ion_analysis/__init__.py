@@ -18,7 +18,7 @@ __version__ = "1.6.0" # Version update
 # Import main functions from submodules to expose them at the package level
 from .ion_core import track_potassium_ions
 from .ion_position import save_ion_position_data, plot_ion_positions
-from .coordination import analyze_ion_coordination
+from .ion_occupancy import analyze_ion_coordination
 from .filter_structure import find_filter_residues
 from .ion_conduction import analyze_ion_conduction # Import new function
 

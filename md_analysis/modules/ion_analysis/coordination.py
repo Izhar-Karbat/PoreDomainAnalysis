@@ -131,6 +131,37 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
         output_file = os.path.join(output_dir, "Ion_Coordination_Stats.csv")
         df.to_csv(output_file, float_format='%.4f')
         logger.info(f"Saved ion coordination statistics to {output_file}")
+        
+        # Also create the K_Ion_Site_Statistics.csv file expected by summary.py
+        site_stats = []
+        for site_name in filter_sites.keys():
+            # Get average occupancy across all ions
+            site_occ_values = [stats.get(site_name, 0) for stats in coordination_stats['site_occupancy'].values()]
+            if site_occ_values:
+                mean_occ = np.mean(site_occ_values)
+                max_occ = np.max(site_occ_values)
+                # Calculate percent time with occupancy > 0
+                nonzero_pct = np.sum([v > 0 for v in site_occ_values]) / len(site_occ_values) * 100.0
+                # Add to stats
+                site_stats.append({
+                    'Site': site_name,
+                    'Mean Occupancy': mean_occ,
+                    'Max Occupancy': max_occ,
+                    'Occupancy > 0 (%)': nonzero_pct,
+                    'Occupancy > 1 (%)': 0.0  # We don't have this info, default to 0
+                })
+        
+        # Create DataFrame and save
+        stats_df = pd.DataFrame(site_stats)
+        if not stats_df.empty:
+            # Ensure expected column order
+            stats_df = stats_df[['Site', 'Mean Occupancy', 'Max Occupancy', 'Occupancy > 0 (%)', 'Occupancy > 1 (%)']]
+            stats_path = os.path.join(output_dir, 'K_Ion_Site_Statistics.csv')
+            try:
+                stats_df.to_csv(stats_path, index=False, float_format='%.4f', na_rep='NaN')
+                logger.info(f"Saved K+ Ion site statistics to {stats_path}")
+            except Exception as csv_err:
+                logger.error(f"Failed to save K+ Ion site statistics CSV: {csv_err}")
 
         return coordination_stats
 

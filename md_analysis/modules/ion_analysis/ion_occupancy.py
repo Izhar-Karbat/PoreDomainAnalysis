@@ -177,10 +177,34 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
         coord_log.warning("No ion indices provided for coordination analysis.")
         # Create and save empty DataFrame for consistency?
         empty_df = pd.DataFrame(columns=['Site', 'Mean Occupancy', 'Max Occupancy', 'Occupancy > 0 (%)', 'Occupancy > 1 (%)'])
-        stats_path = os.path.join(run_dir, 'K_Ion_Site_Statistics.csv')
+        
+        # Ensure ion_analysis subdirectory exists
+        ion_analysis_dir = os.path.join(run_dir, 'ion_analysis')
+        os.makedirs(ion_analysis_dir, exist_ok=True)
+        
+        # Save to the ion_analysis subdirectory
+        stats_path = os.path.join(ion_analysis_dir, 'K_Ion_Site_Statistics.csv')
+        
         try: empty_df.to_csv(stats_path, index=False); coord_log.info(f"Saved empty ion stats file to {stats_path}")
         except: pass
         return empty_df
+
+    # === DEBUGGING ADDED - Before G1 Centric ===
+    coord_log.debug(f"Input time_points type: {type(time_points)}, shape: {getattr(time_points, 'shape', 'N/A')}")
+    coord_log.debug(f"Input ions_z_positions_abs type: {type(ions_z_positions_abs)}, keys: {list(ions_z_positions_abs.keys()) if isinstance(ions_z_positions_abs, dict) else 'N/A'}")
+    coord_log.debug(f"Input g1_reference type: {type(g1_reference)}, value: {g1_reference}")
+    
+    # Add a check for the reference coordinate file
+    try:
+        ref_file_path = os.path.join(run_dir, 'ion_analysis', 'K_Ion_Coordinate_Reference.txt')
+        if os.path.exists(ref_file_path):
+            with open(ref_file_path, 'r') as f:
+                for line in f:
+                    if line.startswith('G1_C_alpha_reference_position_absolute_Z:'):
+                        coord_log.debug(f"Found G1 reference in file: {line.strip()}")
+    except Exception as e:
+        coord_log.warning(f"Error checking reference file: {e}")
+    # === END DEBUGGING ===
 
     # --- Convert to G1-Centric ---
     ions_z_g1 = {}
@@ -199,6 +223,7 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
     # Re-calculate boundaries as in heatmap function
     site_names_ordered = ['S0', 'S1', 'S2', 'S3', 'S4', 'Cavity']
     available_sites = {site: pos for site, pos in filter_sites.items() if site in site_names_ordered}
+    coord_log.debug(f"Available sites after filtering: {available_sites}")
     if not available_sites:
          coord_log.error("No standard sites (S0-S4, Cavity) found in filter_sites dict for coordination.")
          return None
@@ -257,7 +282,15 @@ def analyze_ion_coordination(run_dir, time_points, ions_z_positions_abs, ion_ind
     # Save statistics to CSV
     stats_df = pd.DataFrame(stats_data)
     stats_df = stats_df[['Site', 'Mean Occupancy', 'Max Occupancy', 'Occupancy > 0 (%)', 'Occupancy > 1 (%)']] # Ensure order
-    stats_path = os.path.join(run_dir, 'K_Ion_Site_Statistics.csv')
+    
+    # Ensure ion_analysis subdirectory exists
+    ion_analysis_dir = os.path.join(run_dir, 'ion_analysis')
+    os.makedirs(ion_analysis_dir, exist_ok=True)
+    
+    # Save to the ion_analysis subdirectory
+    stats_path = os.path.join(ion_analysis_dir, 'K_Ion_Site_Statistics.csv')
+    
+    coord_log.debug(f"Attempting to save stats_df (shape: {stats_df.shape}) to {stats_path}")
     try:
         stats_df.to_csv(stats_path, index=False, float_format='%.4f', na_rep='NaN')
         coord_log.info(f"Saved K+ Ion site statistics to {stats_path}")

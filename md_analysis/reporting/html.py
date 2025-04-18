@@ -208,12 +208,16 @@ def generate_html_report(run_dir, run_summary):
 
     # --- Load Base64 Encoded Images ---
     img_data = {}
-    plot_files = {
-        # Core distance plots (now in core_analysis/)
-        "GG_Distance_Plot_raw": "core_analysis/GG_Distance_Plot_raw.png",
-        "GG_Distance_Plot": "core_analysis/GG_Distance_Plot.png",
+    # Expected plot filenames relative to run_dir
+    PLOT_FILES = {
+        "Raw_Distances": "core_analysis/Raw_Distances.csv",
+        # Use G_G_ prefix for keys and filenames
+        "G_G_Distance_Plot_raw": "core_analysis/G_G_Distance_Plot_raw.png",
+        "G_G_Distance_Plot": "core_analysis/G_G_Distance_Plot.png",
         "G_G_Distance_AC_Comparison": "core_analysis/G_G_Distance_AC_Comparison.png",
         "G_G_Distance_BD_Comparison": "core_analysis/G_G_Distance_BD_Comparison.png",
+        "COM_Distance_Plot_raw": "core_analysis/COM_Distance_Plot_raw.png",
+        "COM_Distance_Plot": "core_analysis/COM_Distance_Plot.png",
         "COM_Stability_Plot_raw": "core_analysis/COM_Stability_Plot_raw.png",
         "COM_Stability_Plot": "core_analysis/COM_Stability_Plot.png",
         "COM_Stability_Comparison": "core_analysis/COM_Stability_Comparison.png",
@@ -243,7 +247,7 @@ def generate_html_report(run_dir, run_summary):
     }
 
     logger.debug("Loading images for HTML report...")
-    for key, filename in plot_files.items():
+    for key, filename in PLOT_FILES.items():
         img_path = os.path.join(run_dir, filename)
         img_data[key] = _load_image_base64(img_path)
         if img_data[key] is None:

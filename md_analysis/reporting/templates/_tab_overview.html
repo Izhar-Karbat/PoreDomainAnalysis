@@ -16,19 +16,19 @@
     <table class="stats-table">
         <thead><tr><th>Metric</th><th>Filtered A:C</th><th>Filtered B:D</th></tr></thead>
         <tbody>
-        <tr><td>Mean (Å)</td><td>{{ "%.3f"|format(run_summary.GG_AC_Mean_Filt) if run_summary.GG_AC_Mean_Filt is not none else 'N/A' }}</td><td>{{ "%.3f"|format(run_summary.GG_BD_Mean_Filt) if run_summary.GG_BD_Mean_Filt is not none else 'N/A' }}</td></tr>
-        <tr><td>Std Dev (Å)</td><td>{{ "%.3f"|format(run_summary.GG_AC_Std_Filt) if run_summary.GG_AC_Std_Filt is not none else 'N/A' }}</td><td>{{ "%.3f"|format(run_summary.GG_BD_Std_Filt) if run_summary.GG_BD_Std_Filt is not none else 'N/A' }}</td></tr>
-        <tr><td>Min (Å)</td><td>{{ "%.3f"|format(run_summary.GG_AC_Min_Filt) if run_summary.GG_AC_Min_Filt is not none else 'N/A' }}</td><td>{{ "%.3f"|format(run_summary.GG_BD_Min_Filt) if run_summary.GG_BD_Min_Filt is not none else 'N/A' }}</td></tr>
+        <tr><td>Mean (Å)</td><td>{{ "%.3f"|format(run_summary.G_G_AC_Mean_Filt) if run_summary.G_G_AC_Mean_Filt is not none else 'N/A' }}</td><td>{{ "%.3f"|format(run_summary.G_G_BD_Mean_Filt) if run_summary.G_G_BD_Mean_Filt is not none else 'N/A' }}</td></tr>
+        <tr><td>Std Dev (Å)</td><td>{{ "%.3f"|format(run_summary.G_G_AC_Std_Filt) if run_summary.G_G_AC_Std_Filt is not none else 'N/A' }}</td><td>{{ "%.3f"|format(run_summary.G_G_BD_Std_Filt) if run_summary.G_G_BD_Std_Filt is not none else 'N/A' }}</td></tr>
+        <tr><td>Min (Å)</td><td>{{ "%.3f"|format(run_summary.G_G_AC_Min_Filt) if run_summary.G_G_AC_Min_Filt is not none else 'N/A' }}</td><td>{{ "%.3f"|format(run_summary.G_G_BD_Min_Filt) if run_summary.G_G_BD_Min_Filt is not none else 'N/A' }}</td></tr>
         </tbody>
     </table>
     <div class="two-column">
         <div class="column plot-container">
             <h3>Raw G-G Distance</h3>
-            {% if plots.GG_Distance_Plot_raw %} <img src="data:image/png;base64,{{ plots.GG_Distance_Plot_raw }}" alt="Raw G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            {% if plots.G_G_Distance_Plot_raw %} <img src="data:image/png;base64,{{ plots.G_G_Distance_Plot_raw }}" alt="Raw G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
         </div>
         <div class="column plot-container">
             <h3>Filtered G-G Distance</h3>
-            {% if plots.GG_Distance_Plot %} <img src="data:image/png;base64,{{ plots.GG_Distance_Plot }}" alt="Filtered G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            {% if plots.G_G_Distance_Plot %} <img src="data:image/png;base64,{{ plots.G_G_Distance_Plot }}" alt="Filtered G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
         </div>
     </div>
     {% if plots.G_G_Distance_AC_Comparison %}

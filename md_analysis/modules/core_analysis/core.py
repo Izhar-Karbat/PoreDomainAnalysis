@@ -281,7 +281,7 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
         is_control_system (bool): Whether this is a control system without toxin.
         
     Returns:
-        tuple: (filtered_ac, filtered_bd, filtered_com, filter_info_gg, filter_info_com,
+        tuple: (filtered_ac, filtered_bd, filtered_com, filter_info_g_g, filter_info_com,
                 raw_dist_stats, percentile_stats)
     """
     # Set up logging
@@ -297,7 +297,7 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
     filtered_ac = np.array([])
     filtered_bd = np.array([])
     filtered_com = np.array([])
-    filter_info_gg = {}
+    filter_info_g_g = {}
     filter_info_com = {}
     raw_dist_stats = {}
     percentile_stats = {}
@@ -306,28 +306,34 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
     if len(dist_ac) > 0 and len(dist_bd) > 0:
         try:
             # Apply filtering to G-G distances
-            filtered_ac, filter_info_gg = auto_select_filter(dist_ac, data_type='gg_distance')
+            filtered_ac, filter_info_g_g = auto_select_filter(dist_ac, data_type='gg_distance')
             filtered_bd, _ = auto_select_filter(dist_bd, data_type='gg_distance')
             
             # Calculate statistics
-            raw_dist_stats['GG_AC_Mean'] = np.nanmean(dist_ac)
-            raw_dist_stats['GG_AC_Std'] = np.nanstd(dist_ac)
-            raw_dist_stats['GG_BD_Mean'] = np.nanmean(dist_bd)
-            raw_dist_stats['GG_BD_Std'] = np.nanstd(dist_bd)
+            raw_dist_stats['G_G_AC_Mean'] = np.nanmean(dist_ac)
+            raw_dist_stats['G_G_AC_Std'] = np.nanstd(dist_ac)
+            raw_dist_stats['G_G_BD_Mean'] = np.nanmean(dist_bd)
+            raw_dist_stats['G_G_BD_Std'] = np.nanstd(dist_bd)
             
-            percentile_stats['GG_AC_Percentiles'] = np.nanpercentile(dist_ac, [25, 50, 75])
-            percentile_stats['GG_BD_Percentiles'] = np.nanpercentile(dist_bd, [25, 50, 75])
-            
+            percentile_stats['G_G_AC_Pctl10_Raw'] = np.percentile(dist_ac[np.isfinite(dist_ac)], 10) if np.any(np.isfinite(dist_ac)) else np.nan
+            percentile_stats['G_G_AC_Pctl90_Raw'] = np.percentile(dist_ac[np.isfinite(dist_ac)], 90) if np.any(np.isfinite(dist_ac)) else np.nan
+            percentile_stats['G_G_BD_Pctl10_Raw'] = np.percentile(dist_bd[np.isfinite(dist_bd)], 10) if np.any(np.isfinite(dist_bd)) else np.nan
+            percentile_stats['G_G_BD_Pctl90_Raw'] = np.percentile(dist_bd[np.isfinite(dist_bd)], 90) if np.any(np.isfinite(dist_bd)) else np.nan
+            percentile_stats['G_G_AC_Pctl10_Filt'] = np.percentile(filtered_ac[np.isfinite(filtered_ac)], 10) if np.any(np.isfinite(filtered_ac)) else np.nan
+            percentile_stats['G_G_AC_Pctl90_Filt'] = np.percentile(filtered_ac[np.isfinite(filtered_ac)], 90) if np.any(np.isfinite(filtered_ac)) else np.nan
+            percentile_stats['G_G_BD_Pctl10_Filt'] = np.percentile(filtered_bd[np.isfinite(filtered_bd)], 10) if np.any(np.isfinite(filtered_bd)) else np.nan
+            percentile_stats['G_G_BD_Pctl90_Filt'] = np.percentile(filtered_bd[np.isfinite(filtered_bd)], 90) if np.any(np.isfinite(filtered_bd)) else np.nan
+
             # Save filtered G-G data
-            df_gg = pd.DataFrame({
+            df_g_g = pd.DataFrame({
                 'Time (ns)': time_points,
-                'GG_Distance_AC_Raw': dist_ac,
-                'GG_Distance_BD_Raw': dist_bd,
-                'GG_Distance_AC_Filt': filtered_ac,
-                'GG_Distance_BD_Filt': filtered_bd
+                'G_G_Distance_AC_Raw': dist_ac,
+                'G_G_Distance_BD_Raw': dist_bd,
+                'G_G_Distance_AC_Filt': filtered_ac,
+                'G_G_Distance_BD_Filt': filtered_bd
             })
-            gg_csv_path = os.path.join(output_dir, "GG_Distances_Filtered.csv")
-            df_gg.to_csv(gg_csv_path, index=False, float_format='%.4f')
+            gg_csv_path = os.path.join(output_dir, "G_G_Distance_Filtered.csv")
+            df_g_g.to_csv(gg_csv_path, index=False, float_format='%.4f')
             logger.info(f"Saved filtered G-G distances to {gg_csv_path}")
             
             # Create G-G distance plots
@@ -354,7 +360,7 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
                 'COM_Distance_Raw': com_distances,
                 'COM_Distance_Filt': filtered_com
             })
-            com_csv_path = os.path.join(output_dir, "COM_Distances_Filtered.csv")
+            com_csv_path = os.path.join(output_dir, "COM_Stability_Filtered.csv")
             df_com.to_csv(com_csv_path, index=False, float_format='%.4f')
             logger.info(f"Saved filtered COM distances to {com_csv_path}")
             
@@ -369,7 +375,7 @@ def filter_and_save_data(run_dir, dist_ac, dist_bd, com_distances, time_points, 
             logger.error(f"Error in COM filtering: {e}", exc_info=True)
 
     return (filtered_ac, filtered_bd, filtered_com, 
-            filter_info_gg, filter_info_com,
+            filter_info_g_g, filter_info_com,
             raw_dist_stats, percentile_stats)
 
 def plot_distances(time_points, raw_data1, raw_data2=None, filtered_data1=None, filtered_data2=None, 
@@ -418,7 +424,7 @@ def plot_distances(time_points, raw_data1, raw_data2=None, filtered_data1=None, 
         plt.legend()
         plt.tight_layout()
         
-        raw_plot_path = os.path.join(output_dir, f"{'GG' if is_gg else 'COM'}_Distance_Plot_raw.png")
+        raw_plot_path = os.path.join(output_dir, f"{'G_G' if is_gg else 'COM'}_Distance_Plot_raw.png")
         plt.savefig(raw_plot_path, dpi=150)
         plt.close()
         logger.info(f"Saved raw {title_prefix.lower()} plot to {raw_plot_path}")
@@ -441,7 +447,7 @@ def plot_distances(time_points, raw_data1, raw_data2=None, filtered_data1=None, 
             plt.legend()
             plt.tight_layout()
             
-            filtered_plot_path = os.path.join(output_dir, f"{'GG' if is_gg else 'COM'}_Distance_Plot.png")
+            filtered_plot_path = os.path.join(output_dir, f"{'G_G' if is_gg else 'COM'}_Distance_Plot.png")
             plt.savefig(filtered_plot_path, dpi=150)
             plt.close()
             logger.info(f"Saved filtered {title_prefix.lower()} plot to {filtered_plot_path}")

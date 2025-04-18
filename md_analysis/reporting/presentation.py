@@ -84,21 +84,18 @@ def Create_PPT(unique_dirs, com_averages):
     max_cols = 5 # Max plots per row
     max_rows = 4 # Max plot rows per slide
 
-    # --- Slide Generation Loop ---
-    plot_types = [
-        {"title_suffix": "(Raw Data)", "com_file": "COM_Stability_Plot_raw.png", "gg_file": "GG_Distance_Plot_raw.png"},
-        {"title_suffix": "(Filtered Data)", "com_file": "COM_Stability_Plot.png", "gg_file": "GG_Distance_Plot.png"},
-        {"title_suffix": "(Toxin Orientation)", "plot1_file": "Toxin_Orientation_Angle.png", "plot2_file": "Toxin_Channel_Contacts.png", "skip_control": True},
-        {"title_suffix": "(Toxin Rotation)", "plot1_file": "Toxin_Rotation_Components.png", "plot2_file": None, "skip_control": True}, # Only one plot for rotation usually
-        {"title_suffix": "(Focused Contacts)", "plot1_file": "Toxin_Channel_Residue_Contact_Map_Focused.png", "plot2_file": None, "skip_control": True},
-        {"title_suffix": "(Ion Positions)", "plot1_file": "K_Ion_Combined_Plot.png", "plot2_file": None},
-        {"title_suffix": "(Ion Occupancy)", "plot1_file": "K_Ion_Occupancy_Heatmap.png", "plot2_file": "K_Ion_Average_Occupancy.png"},
-        {"title_suffix": "(Cavity Water)", "plot1_file": "Cavity_Water_Count_Plot.png", "plot2_file": "Cavity_Water_Residence_Hist.png"},
-        # Add G1 gyration plot
-        {"title_suffix": "(G1 Gyration Radius)", "plot1_file": "G1_gyration_radii.png", "plot2_file": None}
+    # Information about different distance plots
+    DISTANCE_PLOT_INFO = [
+        # Use G_G_ prefix for key
+        {"title_suffix": "(Raw Data)", "com_file": "COM_Stability_Plot_raw.png", "g_g_file": "G_G_Distance_Plot_raw.png"},
+        {"title_suffix": "(Filtered Data)", "com_file": "COM_Stability_Plot.png", "g_g_file": "G_G_Distance_Plot.png"},
+        {"title_suffix": "(Stability KDE)", "plot1_file": "COM_Stability_KDE_Analysis.png"},
+        {"title_suffix": "(AC Comparison)", "plot1_file": "G_G_Distance_AC_Comparison.png"},
+        {"title_suffix": "(BD Comparison)", "plot1_file": "G_G_Distance_BD_Comparison.png"}
     ]
 
-    for plot_info in plot_types:
+    # --- Slide Generation Loop ---
+    for plot_info in DISTANCE_PLOT_INFO:
         current_slide = None
         plots_on_current_slide = 0
         plot_idx_on_slide = 0
@@ -138,17 +135,26 @@ def Create_PPT(unique_dirs, com_averages):
 
                 # --- Add plots to the current slide ---
                 added_plot = False
-                plot1_path = os.path.join(run_dir, plot_info.get('plot1_file', plot_info.get('com_file'))) # Handle different key names
-                plot2_path = os.path.join(run_dir, plot_info.get('plot2_file', plot_info.get('gg_file'))) if plot_info.get('plot2_file') or plot_info.get('gg_file') else None
+                # Determine paths based on whether it's COM or G-G
+                if "COM" in plot_info['title_suffix']:
+                    plot1_path = os.path.join(run_dir, plot_info.get('plot1_file', plot_info.get('com_file'))) if plot_info.get('plot1_file') or plot_info.get('com_file') else None
+                    plot2_path = None # COM only has one plot usually unless comparison explicitly defined
+                elif "G-G" in plot_info['title_suffix']:
+                    # Use G_G_ key
+                    plot1_path = os.path.join(run_dir, plot_info.get('plot1_file', plot_info.get('g_g_file'))) if plot_info.get('plot1_file') or plot_info.get('g_g_file') else None
+                    # Use G_G_ key
+                    plot2_path = os.path.join(run_dir, plot_info.get('plot2_file', plot_info.get('g_g_file'))) if plot_info.get('plot2_file') or plot_info.get('g_g_file') else None
+                else: # Default or comparison plots
+                    plot1_path = os.path.join(run_dir, plot_info.get('plot1_file')) if plot_info.get('plot1_file') else None
+                    plot2_path = os.path.join(run_dir, plot_info.get('plot2_file')) if plot_info.get('plot2_file') else None
 
-                # Add first plot (e.g., COM / Angle / Rotation / Focused Contact / Ion Combined / Water Count)
+                # Add image placeholders if paths exist
                 if plot1_path and os.path.exists(plot1_path):
                     try:
                          current_slide.shapes.add_picture(plot1_path, left, top, width=plot_width, height=plot_height)
                          added_plot = True
                     except Exception as e:
                          logger.warning(f"Could not add picture {plot1_path} to PPT: {e}")
-                # Add second plot if it exists (e.g., GG / Contacts / Ion Avg Occ / Water Hist)
                 if plot2_path and os.path.exists(plot2_path):
                     try:
                         # Position below the first plot

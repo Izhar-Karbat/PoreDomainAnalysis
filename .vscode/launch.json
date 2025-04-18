@@ -1,0 +1,22 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug MD Analysis (R1)", // Give it a descriptive name
+            "type": "python",
+            "request": "launch",
+            "module": "md_analysis.main", // Specify to run as a module
+            "args": [
+                "--folder",
+                "/home/labs/bmeitan/karbati/rCs1/toxin/toxin/R1"
+                // Add any other necessary flags here (e.g., --orientation if needed)
+            ],
+            "console": "integratedTerminal", // Show output in the integrated terminal
+            "justMyCode": true // Often helpful to skip stepping into installed library code
+        }
+        // ... other configurations if you have them ...
+    ]
+}

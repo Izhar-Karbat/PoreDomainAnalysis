@@ -665,5 +665,8 @@ def auto_select_filter(data, data_type='com_distance', std_threshold=1.5, range_
             return detect_and_correct_multilevel_pbc(data, **kwargs)
         else:
             logger.info(f"Low std dev ({std_dev:.3f}) and range ({data_range:.3f}). Applying standard filtering.")
-            # Pass kwargs (like smoothing_window) to the standard function
-            return standard_filter(data, data_type=data_type, **kwargs)
+            # Pass only relevant kwargs (like smoothing_window) to the standard function
+            standard_kwargs = {}
+            if 'smoothing_window' in kwargs:
+                standard_kwargs['smoothing_window'] = kwargs['smoothing_window']
+            return standard_filter(data, data_type=data_type, **standard_kwargs)
