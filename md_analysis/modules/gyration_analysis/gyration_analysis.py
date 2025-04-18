@@ -622,10 +622,10 @@ def plot_flip_durations(state_analysis_results, output_dir):
     # Violin Plot
     sns.violinplot(x='Residue', y='Duration (ns)', data=df,
                    inner=None, palette=pastel_palette_map, cut=0)
-    # Strip Plot (Scatter overlay)
-    sns.stripplot(x='Residue', y='Duration (ns)', data=df,
-                  jitter=True, size=marker_size, palette=bright_palette_map,
-                  edgecolor=edge_color, linewidth=line_width, dodge=True)
+    # Swarm Plot (Scatter overlay)
+    sns.swarmplot(x='Residue', y='Duration (ns)', data=df,
+                  size=marker_size, palette=bright_palette_map,
+                  edgecolor=edge_color, linewidth=line_width)
 
     plt.title('Distribution of Carbonyl Flip Durations')
     plt.ylabel('Duration in Flipped State (ns)')

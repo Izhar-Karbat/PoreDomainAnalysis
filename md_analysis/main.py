@@ -88,6 +88,7 @@ def main():
     parser.add_argument("--folder", help="Path to a specific run folder containing PSF/DCD (preferred single-run mode).")
     parser.add_argument("--base_dir", default=os.getcwd(), help="Base directory for batch processing (defaults to current directory).")
     parser.add_argument("--pptx", action="store_true", help="Only generate PowerPoint summary from existing results in the base directory.")
+    parser.add_argument("--generate_report", action="store_true", help="Only generate HTML report for a specific --folder from existing analysis results.")
     parser.add_argument("--force_rerun", action="store_true", help="Force reprocessing of runs even if a successful summary exists (batch/folder mode).")
 
     # --- Analysis Selection Flags ---
@@ -117,6 +118,35 @@ def main():
     logging.info(f"Log level set to: {args.log_level}")
     logging.info(f"Base directory set to: {args.base_dir}")
 
+    # =========================================
+    # --- Generate Report Only Mode (Single Folder) ---
+    # =========================================
+    if args.generate_report:
+        if not args.folder:
+            logging.error("--generate_report requires the --folder argument specifying the run directory.")
+            return
+        if not os.path.isdir(args.folder):
+            logging.error(f"Specified folder for report generation does not exist or is not a directory: {args.folder}")
+            return
+
+        summary_path = os.path.join(args.folder, 'analysis_summary.json')
+        if not os.path.exists(summary_path):
+            logging.error(f"Cannot generate report: 'analysis_summary.json' not found in {args.folder}")
+            return
+
+        logging.info(f"--generate_report mode: Attempting to generate HTML report for {args.folder} from existing summary.")
+        try:
+            with open(summary_path, 'r') as f_json:
+                run_summary = json.load(f_json)
+            html_report_path = generate_html_report(args.folder, run_summary)
+            if html_report_path:
+                logging.info(f"Successfully generated HTML report: {html_report_path}")
+            else:
+                logging.error(f"HTML report generation failed for {args.folder}. Check logs.")
+        except Exception as e:
+            logging.error(f"Error during report generation for {args.folder}: {e}", exc_info=True)
+
+        return # Exit after attempting report generation
 
     # --- Determine Which Analyses to Run ---
     run_all_initially = args.all or not (args.GG or args.COM or args.orientation or args.ions or args.water or args.gyration)

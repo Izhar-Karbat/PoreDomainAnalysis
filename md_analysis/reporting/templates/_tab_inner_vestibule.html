@@ -1,0 +1,31 @@
+{# --- Inner Vestibule Tab Content --- #}
+<div class="section">
+    <h2>Inner Vestibule Analysis</h2>
+    {% if run_summary.InnerVestibule_MeanOcc is defined and run_summary.InnerVestibule_MeanOcc is not none %} {# Check if inner vestibule stats exist #}
+        <div class="analysis-section">
+            <h3>Inner Vestibule Water Dynamics</h3>
+            <table class="stats-table">
+            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+            <tbody>
+                <tr><td>Mean Occupancy</td><td>{{ "%.2f"|format(run_summary.InnerVestibule_MeanOcc) }}</td></tr>
+                <tr><td>Std Dev Occupancy</td><td>{{ "%.2f"|format(run_summary.InnerVestibule_StdOcc) if run_summary.InnerVestibule_StdOcc is defined else 'N/A' }}</td></tr>
+                <tr><td>Avg Residence Time (ns)</td><td>{{ "%.3f"|format(run_summary.InnerVestibule_AvgResidenceTime_ns) if run_summary.InnerVestibule_AvgResidenceTime_ns is defined else 'N/A' }}</td></tr>
+                <tr><td>Total Confirmed Exit Events</td><td>{{ "%d"|format(run_summary.InnerVestibule_TotalExitEvents) if run_summary.InnerVestibule_TotalExitEvents is defined else 'N/A' }}</td></tr>
+                <tr><td>Exchange Rate (/ns)</td><td>{{ "%.4f"|format(run_summary.InnerVestibule_ExchangeRatePerNs) if run_summary.InnerVestibule_ExchangeRatePerNs is defined else 'N/A' }}</td></tr>
+            </tbody>
+            </table>
+        </div>
+        <div class="two-column">
+        <div class="column plot-container">
+            <h3>Inner Vestibule Water Count</h3>
+                {% if img_data.Inner_Vestibule_Count_Plot %} <img src="data:image/png;base64,{{ img_data.Inner_Vestibule_Count_Plot }}" alt="Inner Vestibule Water Count Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+        <div class="column plot-container">
+            <h3>Residence Time Distribution</h3>
+            {% if img_data.Inner_Vestibule_Residence_Hist %} <img src="data:image/png;base64,{{ img_data.Inner_Vestibule_Residence_Hist }}" alt="Inner Vestibule Water Residence Histogram"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+        </div>
+    {% else %}
+        <p><i>Inner vestibule analysis not performed or data unavailable.</i></p>
+    {% endif %}
+</div> 

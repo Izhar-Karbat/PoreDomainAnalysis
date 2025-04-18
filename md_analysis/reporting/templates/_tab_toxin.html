@@ -1,0 +1,49 @@
+{# --- Toxin Tab Content --- #}
+{% if not run_summary.IsControlSystem and run_summary.COM_Mean_Filt is not none %} {# Only show for non-control systems #}
+<div class="section">
+    <h2>Toxin Orientation & Interface Analysis</h2>
+        <table class="stats-table">
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+            <tr><td>Mean Orientation Angle (°)</td><td>{{ "%.2f"|format(run_summary.Orient_Angle_Mean) if run_summary.Orient_Angle_Mean is not none else 'N/A' }}</td></tr>
+            <tr><td>Std Dev Orientation Angle (°)</td><td>{{ "%.2f"|format(run_summary.Orient_Angle_Std) if run_summary.Orient_Angle_Std is not none else 'N/A' }}</td></tr>
+            <tr><td>Mean Atom Contacts</td><td>{{ "%.1f"|format(run_summary.Orient_Contacts_Mean) if run_summary.Orient_Contacts_Mean is not none else 'N/A' }}</td></tr>
+            <tr><td>Std Dev Atom Contacts</td><td>{{ "%.1f"|format(run_summary.Orient_Contacts_Std) if run_summary.Orient_Contacts_Std is not none else 'N/A' }}</td></tr>
+        </tbody>
+        </table>
+    <div class="two-column">
+        <div class="column plot-container">
+            <h3>Orientation Angle</h3>
+            {% if img_data.Toxin_Orientation_Angle %} <img src="data:image/png;base64,{{ img_data.Toxin_Orientation_Angle }}" alt="Toxin Orientation Angle"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+        <div class="column plot-container">
+            <h3>Rotation Components</h3>
+            {% if img_data.Toxin_Rotation_Components %} <img src="data:image/png;base64,{{ img_data.Toxin_Rotation_Components }}" alt="Toxin Rotation Components"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+    </div>
+        <div class="plot-container">
+            <h3>Total Atom Contacts</h3>
+            {% if img_data.Toxin_Channel_Contacts %} <img src="data:image/png;base64,{{ img_data.Toxin_Channel_Contacts }}" alt="Toxin-Channel Contacts"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+        <div class="plot-container">
+            <h3>Focused Residue Contact Map</h3>
+            {% if img_data.Toxin_Channel_Residue_Contact_Map_Focused %} <img src="data:image/png;base64,{{ img_data.Toxin_Channel_Residue_Contact_Map_Focused }}" alt="Focused Contact Map"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+        <div class="plot-container">
+            <h3>Full Residue Contact Map</h3>
+            {% if img_data.Toxin_Channel_Residue_Contact_Map_Full %} <img src="data:image/png;base64,{{ img_data.Toxin_Channel_Residue_Contact_Map_Full }}" alt="Full Contact Map"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+</div>
+{% elif run_summary.IsControlSystem %}
+<div class="section">
+    <h2>Toxin Orientation & Interface Analysis</h2>
+    <div class="info-box">
+        This is a control system without toxin. Orientation and interface analysis is not applicable.
+    </div>
+</div>
+{% else %}
+<div class="section">
+    <h2>Toxin Orientation & Interface Analysis</h2>
+    <p><i>Toxin orientation analysis not performed or data unavailable (check COM analysis).</i></p>
+</div>
+{% endif %} 

@@ -1,0 +1,61 @@
+{# --- Pore Ions Tab Content --- #}
+<div class="section">
+    <h2>K+ Ion Analysis (Selectivity Filter)</h2>
+    {% if run_summary.Ion_Count > 0 %} {# Check if ions were tracked #}
+            <div class="info-box">
+            Tracked {{ run_summary.Ion_Count }} unique K+ ions near the filter.<br>
+            Coordinates relative to G1 Cα Z-plane = 0 Å.
+            </div>
+            {% if binding_site_data %}
+            <div class="info-box">
+                <h3>Binding Site Positions (G1 Cα = 0 Å)</h3>
+                <pre>{{ binding_site_data }}</pre>
+            </div>
+            {% endif %}
+
+            {% if img_data.binding_sites_g1_centric_visualization %}
+            <div class="plot-container">
+                <h3>Binding Site Visualization</h3>
+                <img src="data:image/png;base64,{{ img_data.binding_sites_g1_centric_visualization }}" alt="Binding Sites Visualization">
+            </div>
+            {% endif %}
+
+            {% if img_data.K_Ion_Combined_Plot %}
+            <div class="plot-container">
+            <h3>Ion Positions & Density</h3>
+            <img src="data:image/png;base64,{{ img_data.K_Ion_Combined_Plot }}" alt="K+ Ion Positions and Density">
+            </div>
+            {% endif %}
+
+            {% if img_data.K_Ion_Occupancy_Heatmap %}
+            <div class="plot-container">
+            <h3>Site Occupancy Heatmap</h3>
+            <img src="data:image/png;base64,{{ img_data.K_Ion_Occupancy_Heatmap }}" alt="K+ Ion Occupancy Heatmap">
+            </div>
+            {% endif %}
+
+            {% if img_data.K_Ion_Average_Occupancy %}
+            <div class="plot-container">
+            <h3>Average Site Occupancy</h3>
+            <img src="data:image/png;base64,{{ img_data.K_Ion_Average_Occupancy }}" alt="Average K+ Ion Occupancy">
+            </div>
+            {% endif %}
+
+            <h3>Site Occupancy Statistics</h3>
+            <table class="stats-table">
+                <thead><tr><th>Site</th><th>Mean Occ.</th><th>Max Occ.</th><th>% Time Occ. (>0)</th></tr></thead>
+                <tbody>
+                {% for site in ['S0', 'S1', 'S2', 'S3', 'S4', 'Cavity'] %}
+                    <tr>
+                        <td>{{ site }}</td>
+                        <td>{{ "%.3f"|format(run_summary['Ion_AvgOcc_'~site]) if run_summary['Ion_AvgOcc_'~site] is not none else 'N/A' }}</td>
+                        <td>{{ "%d"|format(run_summary['Ion_MaxOcc_'~site]) if run_summary['Ion_MaxOcc_'~site] is not none else 'N/A' }}</td>
+                        <td>{{ "%.1f"|format(run_summary['Ion_PctTimeOcc_'~site]) if run_summary['Ion_PctTimeOcc_'~site] is not none else 'N/A' }}%</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+    {% else %}
+        <p><i>K+ ion analysis not performed or no ions tracked near filter.</i></p>
+    {% endif %}
+</div> 

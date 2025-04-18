@@ -1,0 +1,64 @@
+{# --- Carbonyl Tab Content --- #}
+<div class="section">
+    <h2>Carbonyl Gyration & State Analysis (Selectivity Filter G1 & Y)</h2>
+    {% if run_summary.Gyration_G1_Mean is not none or run_summary.Gyration_Y_Mean is not none %} {# Check if any gyration analysis was performed #}
+        <div class="info-box">
+            Gyration radius (ρ) measures the distance between the specified carbonyl oxygen atoms and the pore center.
+            Carbonyls are considered 'flipped' when ρ > {{ run_summary.get('GYRATION_FLIP_THRESHOLD', 'N/A') }} Å.
+            'On' flips represent transitions into the flipped state, 'Off' flips represent returning to the normal state.<br>
+            <i>Note: Flips are confirmed only if the state persists for > {{ run_summary.get('GYRATION_FLIP_TOLERANCE_FRAMES', 'N/A') }} frames ({{ '%.2f'|format(1.0/run_summary.get('FRAMES_PER_NS', 10) * run_summary.get('GYRATION_FLIP_TOLERANCE_FRAMES', 5)) }} ns).</i>
+        </div>
+        <table class="stats-table">
+        <thead>
+            <tr>
+                <th>Metric</th><th>G1 Glycine</th><th>Y Tyrosine</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>Mean Gyration Radius (Å)</td>
+                <td>{{ "%.3f"|format(run_summary.Gyration_G1_Mean) if run_summary.Gyration_G1_Mean is not none else 'N/A' }}</td>
+                <td>{{ "%.3f"|format(run_summary.Gyration_Y_Mean) if run_summary.Gyration_Y_Mean is not none else 'N/A' }}</td>
+            </tr>
+            <tr><td>Std Dev Gyration Radius (Å)</td>
+                <td>{{ "%.3f"|format(run_summary.Gyration_G1_Std) if run_summary.Gyration_G1_Std is not none else 'N/A' }}</td>
+                <td>{{ "%.3f"|format(run_summary.Gyration_Y_Std) if run_summary.Gyration_Y_Std is not none else 'N/A' }}</td>
+            </tr>
+            <tr><td>Confirmed 'On' Flips</td>
+                <td>{{ run_summary.Gyration_G1_OnFlips if run_summary.Gyration_G1_OnFlips is not none else 'N/A' }}</td>
+                <td>{{ run_summary.Gyration_Y_OnFlips if run_summary.Gyration_Y_OnFlips is not none else 'N/A' }}</td>
+            </tr>
+            <tr><td>Confirmed 'Off' Flips</td>
+                <td>{{ run_summary.Gyration_G1_OffFlips if run_summary.Gyration_G1_OffFlips is not none else 'N/A' }}</td>
+                <td>{{ run_summary.Gyration_Y_OffFlips if run_summary.Gyration_Y_OffFlips is not none else 'N/A' }}</td>
+            </tr>
+            <tr><td>Mean Flipped Duration (ns)</td>
+                <td>{{ "%.3f"|format(run_summary.Gyration_G1_MeanDuration_ns) if run_summary.Gyration_G1_MeanDuration_ns is not none else 'N/A' }}</td>
+                <td>{{ "%.3f"|format(run_summary.Gyration_Y_MeanDuration_ns) if run_summary.Gyration_Y_MeanDuration_ns is not none else 'N/A' }}</td>
+            </tr>
+            <tr><td>Std Dev Flipped Duration (ns)</td>
+                    <td>{{ "%.3f"|format(run_summary.Gyration_G1_StdDuration_ns) if run_summary.Gyration_G1_StdDuration_ns is not none else 'N/A' }}</td>
+                    <td>{{ "%.3f"|format(run_summary.Gyration_Y_StdDuration_ns) if run_summary.Gyration_Y_StdDuration_ns is not none else 'N/A' }}</td>
+            </tr>
+        </tbody>
+        </table>
+        <div class="two-column">
+            <div class="column plot-container">
+                <h3>G1 Gyration Radii & State Transitions</h3>
+                {% if img_data.G1_gyration_radii %} <img src="data:image/png;base64,{{ img_data.G1_gyration_radii }}" alt="G1 Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            </div>
+            <div class="column plot-container">
+                <h3>Y Gyration Radii & State Transitions</h3>
+                {% if img_data.Y_gyration_radii %} <img src="data:image/png;base64,{{ img_data.Y_gyration_radii }}" alt="Y Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            </div>
+        </div>
+        <div class="plot-container">
+            <h3>Flip Duration Distribution</h3>
+            {% if img_data.Flip_Duration_Distribution %} <img src="data:image/png;base64,{{ img_data.Flip_Duration_Distribution }}" alt="Flip Duration Distribution"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+        <div class="info-box">
+        <p><strong>Interpretation:</strong> Frequent confirmed transitions or long durations spent in the 'flipped' state (radius > threshold) can indicate carbonyl orientations less favorable for ion coordination. Compare the number of 'On' and 'Off' flips; imbalance might suggest persistent changes or incomplete transitions. The duration distribution shows how long confirmed flipped states typically last.</p>
+        </div>
+    {% else %}
+        <p><i>Carbonyl gyration analysis not performed or data unavailable.</i></p>
+    {% endif %}
+</div> 
