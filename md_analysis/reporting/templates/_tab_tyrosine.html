@@ -1,0 +1,72 @@
+<div class="section">
+    <h2>SF Tyrosine Analysis</h2>
+    <p>Analysis of the Selectivity Filter Tyrosine (e.g., Y445) rotational state and dynamics based on Chi1 and Chi2 dihedral angles.</p>
+
+    <h3>Rotamer Summary</h3>
+    {% if run_summary.Tyr_DominantRotamerOverall != 'N/A' %}
+        <div class="info-box">
+            Rotamer state is defined by (Chi1, Chi2) angles using t/p/m codes (see plot below).<br>
+            Confirmed transitions require the new state to persist for > {{ run_summary.get('TYROSINE_ROTAMER_TOLERANCE_FRAMES', 'N/A') }} frames.
+            Non-dominant state duration refers to time spent in any state other than the overall dominant one ({{ run_summary.Tyr_DominantRotamerOverall }}).
+        </div>
+        <table class="stats-table">
+            <tr>
+                <th>Metric</th>
+                <th>Value</th>
+            </tr>
+            <tr>
+                <td>Overall Dominant Rotamer State</td>
+                <td>{{ run_summary.Tyr_DominantRotamerOverall }}</td>
+            </tr>
+            <tr>
+                <td>Total Confirmed Transitions</td>
+                <td>{{ run_summary.Tyr_RotamerTransitions }}</td>
+            </tr>
+            <tr>
+                <td>Non-Dominant State Events</td>
+                <td>{{ run_summary.Tyr_NonDominant_EventCount }}</td>
+            </tr>
+             <tr>
+                <td>Mean Non-Dominant Duration (ns)</td>
+                <td>{{ "%.3f"|format(run_summary.Tyr_NonDominant_MeanDuration_ns) if run_summary.Tyr_NonDominant_MeanDuration_ns is not none and run_summary.Tyr_NonDominant_EventCount > 0 else ('0.000' if run_summary.Tyr_NonDominant_EventCount == 0 else 'N/A') }}</td>
+            </tr>
+             <tr>
+                <td>Std Dev Non-Dominant Duration (ns)</td>
+                <td>{{ "%.3f"|format(run_summary.Tyr_NonDominant_StdDuration_ns) if run_summary.Tyr_NonDominant_StdDuration_ns is not none and run_summary.Tyr_NonDominant_EventCount > 0 else ('0.000' if run_summary.Tyr_NonDominant_EventCount == 0 else 'N/A') }}</td>
+            </tr>
+            <!-- Add more specific stats here later if needed -->
+        </table>
+    {% else %}
+    <p class="unavailable">Tyrosine Rotamer analysis not performed or data unavailable.</p>
+    {% endif %}
+
+    <h3>Rotamer Plots</h3>
+    <div class="plot-container">
+        {% if plots.SF_Tyrosine_Dihedrals %}
+        <div class="plot">
+            <h4>SF Tyrosine Dihedral Time Series (Chi1 & Chi2)</h4>
+            <img src="data:image/png;base64,{{ plots.SF_Tyrosine_Dihedrals }}" alt="SF Tyrosine Dihedral Time Series">
+            <p>Chi1 and Chi2 dihedral angles for the SF Tyrosine residue over time.</p>
+        </div>
+        {% endif %}
+        {% if plots.SF_Tyrosine_Rotamer_Scatter %}
+        <div class="plot">
+            <h4>SF Tyrosine Rotamer Scatter Plot (Chi1 vs Chi2)</h4>
+            <img src="data:image/png;base64,{{ plots.SF_Tyrosine_Rotamer_Scatter }}" alt="SF Tyrosine Rotamer Scatter Plot">
+            <p>Scatter plot showing the distribution of Chi1 vs Chi2 dihedral angles, indicating preferred rotameric states.</p>
+        </div>
+        {% endif %}
+        {% if plots.SF_Tyrosine_Rotamer_Population %}
+        <div class="plot">
+            <h4>SF Tyrosine Rotamer State Population</h4>
+            <img src="data:image/png;base64,{{ plots.SF_Tyrosine_Rotamer_Population }}" alt="SF Tyrosine Rotamer State Population">
+            <p>Bar plot showing the population distribution of the different classified rotamer states.<br>
+               States are represented as (Chi1, Chi2), where <b>t</b>=trans (±180°), <b>p</b>=plus (+60°), <b>m</b>=minus (-60°).
+            </p>
+        </div>
+        {% endif %}
+    </div>
+    {% if not plots.SF_Tyrosine_Dihedrals and not plots.SF_Tyrosine_Rotamer_Scatter and not plots.SF_Tyrosine_Rotamer_Population %}
+    <p class="unavailable">Tyrosine Rotamer plots not available.</p>
+    {% endif %}
+</div> 

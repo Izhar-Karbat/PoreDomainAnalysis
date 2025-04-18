@@ -112,6 +112,7 @@ HTML_TEMPLATE = """
             <li><a href="#tab-pore-ions" class="tab-link">Pore Ions</a></li>
             <li><a href="#tab-inner-vestibule" class="tab-link">Inner Vestibule</a></li>
             <li><a href="#tab-carbonyl" class="tab-link">Carbonyl Dynamics</a></li>
+            <li><a href="#tab-tyrosine" class="tab-link">SF Tyrosine</a></li>
         </ul>
 
         <!-- Tab Content Containers -->
@@ -133,6 +134,10 @@ HTML_TEMPLATE = """
 
         <div id="tab-carbonyl" class="tab-content">
             {% include 'md_analysis/reporting/templates/_tab_carbonyl.html' %}
+        </div>
+
+        <div id="tab-tyrosine" class="tab-content">
+            {% include 'md_analysis/reporting/templates/_tab_tyrosine.html' %}
         </div>
 
         <div class="footer">End of Report</div>
@@ -231,6 +236,10 @@ def generate_html_report(run_dir, run_summary):
         "G1_gyration_radii": "gyration_analysis/G1_gyration_radii.png",
         "Y_gyration_radii": "gyration_analysis/Y_gyration_radii.png",
         "Flip_Duration_Distribution": "gyration_analysis/Flip_Duration_Distribution.png",
+        # Tyrosine analysis plots (NEW)
+        "SF_Tyrosine_Dihedrals": "tyrosine_analysis/SF_Tyrosine_Dihedrals.png",
+        "SF_Tyrosine_Rotamer_Scatter": "tyrosine_analysis/SF_Tyrosine_Rotamer_Scatter.png",
+        "SF_Tyrosine_Rotamer_Population": "tyrosine_analysis/SF_Tyrosine_Rotamer_Population.png",
     }
 
     logger.debug("Loading images for HTML report...")
@@ -269,7 +278,7 @@ def generate_html_report(run_dir, run_summary):
         # Prepare context for rendering
         render_context = {
             'run_summary': run_summary,
-            'img_data': img_data,
+            'plots': img_data,
             'binding_site_data': binding_site_data,
             'generation_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }

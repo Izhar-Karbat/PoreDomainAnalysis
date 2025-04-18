@@ -66,6 +66,7 @@ try:
     from md_analysis.reporting.html import generate_html_report
     from md_analysis.reporting.presentation import Create_PPT
     from md_analysis.modules.gyration_analysis.gyration_core import analyze_carbonyl_gyration
+    from md_analysis.modules.tyrosine_analysis import analyze_sf_tyrosine_rotamers
 
 except ImportError as e:
     print(f"ERROR: Failed to import necessary modules: {e}", file=sys.stderr)
@@ -100,6 +101,7 @@ def main():
     analysis_group.add_argument("--ions", action="store_true", help="Run K+ ion tracking and coordination analysis.")
     analysis_group.add_argument("--water", action="store_true", help="Run Cavity Water analysis.")
     analysis_group.add_argument("--gyration", action="store_true", help="Run Carbonyl Gyration analysis.")
+    analysis_group.add_argument("--tyrosine", action="store_true", help="Run SF Tyrosine rotamer analysis.")
     # --- Other Options ---
     parser.add_argument("--box_z", type=float, default=None, help="Provide estimated box Z-dimension (Angstroms) for multi-level COM filter.")
     parser.add_argument("--log_level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Set the logging level.")
@@ -149,7 +151,7 @@ def main():
         return # Exit after attempting report generation
 
     # --- Determine Which Analyses to Run ---
-    run_all_initially = args.all or not (args.GG or args.COM or args.orientation or args.ions or args.water or args.gyration)
+    run_all_initially = args.all or not (args.GG or args.COM or args.orientation or args.ions or args.water or args.gyration or args.tyrosine)
     if run_all_initially:
         logging.info("Initial flag setting: Running ALL analyses.")
     else:
@@ -161,7 +163,8 @@ def main():
     run_ion_tracking = args.ions or args.water or run_all_initially # Keep dependency on water
     run_ion_coordination = args.ions or run_all_initially
     run_water = args.water or run_all_initially
-    run_gyration = args.gyration or run_all_initially # <<< ADDED FLAG VARIABLE
+    run_gyration = args.gyration or run_all_initially
+    run_tyrosine = args.tyrosine or run_all_initially
 
     # --- Override if --force_rerun is specified ---
     if args.force_rerun:
@@ -173,16 +176,18 @@ def main():
         run_ion_coordination = True
         run_water = True
         run_gyration = True
+        run_tyrosine = True
 
     # Final determination of whether to generate the full HTML report
     # Generate HTML only if all individual analyses ended up being True
-    generate_html = run_gg and run_com and run_orientation and run_ion_tracking and run_ion_coordination and run_water and run_gyration
+    generate_html = run_gg and run_com and run_orientation and run_ion_tracking and run_ion_coordination and run_water and run_gyration and run_tyrosine
 
     # Flag indicating if *any* analysis requiring trajectory read should run
-    run_any_core_analysis = run_gg or run_com or run_orientation or run_ion_tracking or run_water or run_gyration
+    run_any_core_analysis = run_gg or run_com or run_orientation or run_ion_tracking or run_water or run_gyration or run_tyrosine
 
     logging.info(f"Final analysis execution plan: GG={run_gg}, COM={run_com}, Orientation={run_orientation}, "
-                 f"IonTracking={run_ion_tracking}, IonCoordination={run_ion_coordination}, Water={run_water}, Gyration={run_gyration}")
+                 f"IonTracking={run_ion_tracking}, IonCoordination={run_ion_coordination}, Water={run_water}, Gyration={run_gyration}, "
+                 f"Tyrosine={run_tyrosine}")
     logging.info(f"Generate HTML Report: {generate_html}")
 
     # ===========================
@@ -274,6 +279,7 @@ def main():
                 run_ion_coordination=run_ion_coordination,
                 run_water=run_water,
                 run_gyration=run_gyration,
+                run_tyrosine=run_tyrosine,
                 generate_html=generate_html, # HTML only if all analyses requested
                 box_z=args.box_z,
                 force_rerun=args.force_rerun # Pass force flag
@@ -336,6 +342,7 @@ def main():
                 run_ion_coordination=run_ion_coordination,
                 run_water=run_water,
                 run_gyration=run_gyration,
+                run_tyrosine=run_tyrosine,
                 generate_html=generate_html, # HTML only if all analyses requested
                 box_z=args.box_z,
                 force_rerun=args.force_rerun # Pass force flag
@@ -404,6 +411,7 @@ def main():
                 run_ion_coordination=run_ion_coordination,
                 run_water=run_water,
                 run_gyration=run_gyration,
+                run_tyrosine=run_tyrosine,
                 generate_html=generate_html, # HTML only if all analyses requested
                 box_z=args.box_z,
                 force_rerun=args.force_rerun # Pass force flag
@@ -442,7 +450,8 @@ def main():
 
 def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
                            run_gg, run_com, run_orientation, run_ion_tracking,
-                           run_ion_coordination, run_water, run_gyration, generate_html,
+                           run_ion_coordination, run_water, run_gyration, run_tyrosine,
+                           generate_html,
                            box_z=None, force_rerun=False):
     """
     Internal helper function to execute the analysis steps for a single run.
@@ -487,7 +496,9 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         'cavity_water_stats': {}, 'ion_transit_stats': {}, # Added ion transit stats
         'orientation_rotation_stats': {}, 'raw_dist_stats': {}, 'percentile_stats': {},
         'com_analyzed': False, # Flag: Was COM calculated?
-        'is_control_system': False # Flag: Is this a control system?
+        'is_control_system': False, # Flag: Is this a control system?
+        'gyration_stats': {},
+        'tyrosine_stats': {} # New key
     }
 
     # --- Execute Analyses ---
@@ -624,9 +635,24 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             logging.info("Skipping Carbonyl Gyration analysis (not requested)")
             results['gyration_stats'] = {} # Ensure key exists even if empty
 
+        # 8. SF Tyrosine Rotamer Analysis (if requested) - NEW STEP
+        if run_tyrosine:
+            logging.info("Running SF Tyrosine Rotamer Analysis...")
+            # Assumes analyze_sf_tyrosine_rotamers is imported
+            tyrosine_results = analyze_sf_tyrosine_rotamers(
+                run_dir=run_dir,
+                psf_file=psf_file,
+                dcd_file=dcd_file,
+                filter_residues=results.get('filter_residues') # Pass detected residues if available
+            )
+            results['tyrosine_stats'] = tyrosine_results
+        else:
+            logging.info("Skipping SF Tyrosine analysis (not requested)")
+            results['tyrosine_stats'] = {}
+
         # --- Post-Analysis ---
 
-        # 8. Calculate and Save Final Summary JSON
+        # 9. Calculate and Save Final Summary JSON
         logging.info("Calculating and saving summary JSON...")
         # Ensure all potentially needed dicts are present, even if empty
         calculate_and_save_run_summary(
@@ -640,10 +666,11 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             orientation_rotation_stats=results.get('orientation_rotation_stats', {}),
             ion_transit_stats=results.get('ion_transit_stats', {}),
             gyration_stats=results.get('gyration_stats', {}),  # <<< ADDED gyration_stats ARGUMENT
+            tyrosine_stats=results.get('tyrosine_stats', {}), # Pass tyrosine stats
             is_control_system=results.get('is_control_system', False)
         )
 
-        # 9. Generate HTML Report (only if all analyses were run)
+        # 10. Generate HTML Report (only if all analyses were run)
         if generate_html:
             logging.info("Generating HTML Report...")
             # Load the freshly saved summary to pass to HTML generator

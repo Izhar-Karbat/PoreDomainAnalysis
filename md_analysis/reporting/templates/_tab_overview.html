@@ -24,23 +24,23 @@
     <div class="two-column">
         <div class="column plot-container">
             <h3>Raw G-G Distance</h3>
-            {% if img_data.GG_Distance_Plot_raw %} <img src="data:image/png;base64,{{ img_data.GG_Distance_Plot_raw }}" alt="Raw G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            {% if plots.GG_Distance_Plot_raw %} <img src="data:image/png;base64,{{ plots.GG_Distance_Plot_raw }}" alt="Raw G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
         </div>
         <div class="column plot-container">
             <h3>Filtered G-G Distance</h3>
-            {% if img_data.GG_Distance_Plot %} <img src="data:image/png;base64,{{ img_data.GG_Distance_Plot }}" alt="Filtered G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            {% if plots.GG_Distance_Plot %} <img src="data:image/png;base64,{{ plots.GG_Distance_Plot }}" alt="Filtered G-G Distance Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
         </div>
     </div>
-    {% if img_data.G_G_Distance_AC_Comparison %}
+    {% if plots.G_G_Distance_AC_Comparison %}
     <div class="plot-container">
         <h3>A:C Distance Filtering Detail</h3>
-        <img src="data:image/png;base64,{{ img_data.G_G_Distance_AC_Comparison }}" alt="A:C Filtering Comparison">
+        <img src="data:image/png;base64,{{ plots.G_G_Distance_AC_Comparison }}" alt="A:C Filtering Comparison">
     </div>
     {% endif %}
-    {% if img_data.G_G_Distance_BD_Comparison %}
+    {% if plots.G_G_Distance_BD_Comparison %}
     <div class="plot-container">
         <h3>B:D Distance Filtering Detail</h3>
-        <img src="data:image/png;base64,{{ img_data.G_G_Distance_BD_Comparison }}" alt="B:D Filtering Comparison">
+        <img src="data:image/png;base64,{{ plots.G_G_Distance_BD_Comparison }}" alt="B:D Filtering Comparison">
     </div>
     {% endif %}
 </div>
@@ -64,23 +64,23 @@
     <div class="two-column">
         <div class="column plot-container">
             <h3>Raw COM Distance</h3>
-            {% if img_data.COM_Stability_Plot_raw %} <img src="data:image/png;base64,{{ img_data.COM_Stability_Plot_raw }}" alt="Raw COM Stability Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            {% if plots.COM_Stability_Plot_raw %} <img src="data:image/png;base64,{{ plots.COM_Stability_Plot_raw }}" alt="Raw COM Stability Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
         </div>
         <div class="column plot-container">
             <h3>Filtered COM Distance</h3>
-            {% if img_data.COM_Stability_Plot %} <img src="data:image/png;base64,{{ img_data.COM_Stability_Plot }}" alt="Filtered COM Stability Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+            {% if plots.COM_Stability_Plot %} <img src="data:image/png;base64,{{ plots.COM_Stability_Plot }}" alt="Filtered COM Stability Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
         </div>
     </div>
-    {% if img_data.COM_Stability_Comparison %}
+    {% if plots.COM_Stability_Comparison %}
     <div class="plot-container">
         <h3>COM Distance Filtering Detail</h3>
-        <img src="data:image/png;base64,{{ img_data.COM_Stability_Comparison }}" alt="COM Filtering Comparison">
+        <img src="data:image/png;base64,{{ plots.COM_Stability_Comparison }}" alt="COM Filtering Comparison">
     </div>
     {% endif %}
-    {% if img_data.COM_Stability_KDE_Analysis %}
+    {% if plots.COM_Stability_KDE_Analysis %}
     <div class="plot-container">
         <h3>COM Level Analysis (KDE on Raw Data)</h3>
-        <img src="data:image/png;base64,{{ img_data.COM_Stability_KDE_Analysis }}" alt="COM KDE Analysis">
+        <img src="data:image/png;base64,{{ plots.COM_Stability_KDE_Analysis }}" alt="COM KDE Analysis">
     </div>
     {% endif %}
 </div>

@@ -16,7 +16,7 @@ import math # Keep math for potential future use, clean_json_data uses it too
 # Import from other modules
 try:
     from md_analysis.core.utils import clean_json_data
-    from md_analysis.core.config import Analysis_version
+    from md_analysis.core.config import Analysis_version, TYROSINE_ROTAMER_TOLERANCE_FRAMES
 except ImportError as e:
     print(f"Error importing dependency modules in reporting/summary.py: {e}")
     raise
@@ -29,11 +29,11 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                                    com_analyzed, filter_info_com, ion_indices,
                                    cavity_water_stats={}, raw_dist_stats={},
                                    percentile_stats={}, orientation_rotation_stats={},
-                                   ion_transit_stats={}, gyration_stats={},
+                                   ion_transit_stats={}, gyration_stats={}, tyrosine_stats={},
                                    is_control_system=False):
     """
     Calculates summary stats by reading analysis output files from a specific run
-    (including ion, water, raw distance, percentile, orientation, and ion transit stats passed as arguments)
+    (including ion, water, raw distance, percentile, orientation, ion transit, gyration, and tyrosine stats passed as arguments)
     and saves the combined summary to 'analysis_summary.json'. Handles control systems.
 
     Args:
@@ -49,6 +49,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
         orientation_rotation_stats (dict, optional): Dictionary with mean/std for toxin Euler rotation angles. Defaults to {}.
         ion_transit_stats (dict, optional): Dictionary with ion transit time statistics. Defaults to {}.
         gyration_stats (dict, optional): Dictionary with carbonyl gyration statistics. Defaults to {}.
+        tyrosine_stats (dict, optional): Dictionary with tyrosine analysis statistics. Defaults to {}.
         is_control_system (bool, optional): Flag indicating if this is a control system (no toxin). Defaults to False.
     """
     logger.info(f"Calculating final summary statistics for {system_name}/{run_name}...")
@@ -322,6 +323,56 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                 run_summary[prefix + 'MeanDuration_ns'] = np.nan
                 run_summary[prefix + 'StdDuration_ns'] = np.nan
                 # run_summary[prefix + 'Durations_ns'] = []
+
+        # --- Add SF Tyrosine Stats --- (New Section)
+        tyrosine_stat_keys = [ # Define keys expected from tyrosine analysis
+            'Tyr_DominantRotamerOverall', # Overall most common state (e.g., 'tp')
+            'Tyr_RotamerTransitions',      # Total transitions between states
+            'Tyr_RotamerToleranceFrames', # Add the tolerance frames key
+            # Add duration statistics keys
+            'Tyr_NonDominant_MeanDuration_ns',
+            'Tyr_NonDominant_StdDuration_ns',
+            'Tyr_NonDominant_EventCount'
+        ]
+        if tyrosine_stats and isinstance(tyrosine_stats, dict) and tyrosine_stats:
+            logger.debug("Incorporating SF Tyrosine rotamer stats into summary.")
+            for key in tyrosine_stat_keys:
+                run_summary[key] = tyrosine_stats.get(key, np.nan) # Use np.nan for missing numeric, could use 'N/A' for strings
+                # Handle specific defaults/types
+                if key == 'Tyr_DominantRotamerOverall' and pd.isna(run_summary[key]): # Handle potential string N/A
+                    run_summary[key] = 'N/A'
+                elif key in ['Tyr_RotamerTransitions', 'Tyr_NonDominant_EventCount'] and pd.isna(run_summary[key]):
+                    run_summary[key] = 0 # Default counts to 0
+                elif key == 'Tyr_RotamerToleranceFrames' and pd.isna(run_summary[key]):
+                    run_summary[key] = TYROSINE_ROTAMER_TOLERANCE_FRAMES # Use default if missing
+        else:
+            logger.debug("No SF Tyrosine stats provided, adding placeholders.")
+            for key in tyrosine_stat_keys:
+                 # Default values for placeholders
+                 if key in ['Tyr_RotamerTransitions', 'Tyr_NonDominant_EventCount']:
+                      run_summary[key] = 0
+                 elif key == 'Tyr_RotamerToleranceFrames':
+                     run_summary[key] = TYROSINE_ROTAMER_TOLERANCE_FRAMES # Save default if stats missing
+                 elif key in ['Tyr_NonDominant_MeanDuration_ns', 'Tyr_NonDominant_StdDuration_ns']:
+                     run_summary[key] = np.nan # Default durations to NaN
+                 else:
+                      run_summary[key] = 'N/A'
+
+        # --- Add Config Constants Used (for report reference) ---
+        # Explicitly add specific config values that the report might want to display
+        try:
+            from md_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
+            run_summary['GYRATION_FLIP_THRESHOLD'] = GYRATION_FLIP_THRESHOLD
+            run_summary['GYRATION_FLIP_TOLERANCE_FRAMES'] = GYRATION_FLIP_TOLERANCE_FRAMES
+            run_summary['FRAMES_PER_NS'] = FRAMES_PER_NS
+            run_summary['TYROSINE_ROTAMER_TOLERANCE_FRAMES'] = TYROSINE_ROTAMER_TOLERANCE_FRAMES # Also add here
+        except ImportError:
+            logger.warning("Could not import/add config values to summary.")
+            # Ensure keys exist even if import fails, using defaults or None
+            run_summary.setdefault('GYRATION_FLIP_THRESHOLD', None)
+            run_summary.setdefault('GYRATION_FLIP_TOLERANCE_FRAMES', None)
+            run_summary.setdefault('FRAMES_PER_NS', None)
+            run_summary.setdefault('TYROSINE_ROTAMER_TOLERANCE_FRAMES', TYROSINE_ROTAMER_TOLERANCE_FRAMES) # Use imported default
 
         # --- Finalize Status ---
         # More granular status based on errors

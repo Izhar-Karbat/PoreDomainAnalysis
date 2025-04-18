@@ -31,3 +31,7 @@ EXIT_BUFFER_FRAMES = 5
 # Add any other system-wide constants or default thresholds here
 # Example:
 # MIN_LEVEL_SIZE_PBC = 30 # Could move from detect_and_correct_multilevel_pbc if desired
+
+# --- Constants for Tyrosine Analysis ---
+# Tolerance: Minimum frames a new rotamer state must persist to be counted as a transition
+TYROSINE_ROTAMER_TOLERANCE_FRAMES = 10

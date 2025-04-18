@@ -1,6 +1,9 @@
 {# --- Carbonyl Tab Content --- #}
 <div class="section">
-    <h2>Carbonyl Gyration & State Analysis (Selectivity Filter G1 & Y)</h2>
+    <h2>Carbonyl Dynamics (G1/Y Gyration & Flips)</h2>
+    <p>Analysis of the radius of gyration for filter carbonyl groups (Gly1 and Tyr) and detection of flipping events.</p>
+
+    <h3>Gyration Radius Summary</h3>
     {% if run_summary.Gyration_G1_Mean is not none or run_summary.Gyration_Y_Mean is not none %} {# Check if any gyration analysis was performed #}
         <div class="info-box">
             Gyration radius (ρ) measures the distance between the specified carbonyl oxygen atoms and the pore center.
@@ -41,24 +44,44 @@
             </tr>
         </tbody>
         </table>
-        <div class="two-column">
-            <div class="column plot-container">
-                <h3>G1 Gyration Radii & State Transitions</h3>
-                {% if img_data.G1_gyration_radii %} <img src="data:image/png;base64,{{ img_data.G1_gyration_radii }}" alt="G1 Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
-            </div>
-            <div class="column plot-container">
-                <h3>Y Gyration Radii & State Transitions</h3>
-                {% if img_data.Y_gyration_radii %} <img src="data:image/png;base64,{{ img_data.Y_gyration_radii }}" alt="Y Gyration Radii"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
-            </div>
-        </div>
-        <div class="plot-container">
-            <h3>Flip Duration Distribution</h3>
-            {% if img_data.Flip_Duration_Distribution %} <img src="data:image/png;base64,{{ img_data.Flip_Duration_Distribution }}" alt="Flip Duration Distribution"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
-        </div>
-        <div class="info-box">
-        <p><strong>Interpretation:</strong> Frequent confirmed transitions or long durations spent in the 'flipped' state (radius > threshold) can indicate carbonyl orientations less favorable for ion coordination. Compare the number of 'On' and 'Off' flips; imbalance might suggest persistent changes or incomplete transitions. The duration distribution shows how long confirmed flipped states typically last.</p>
-        </div>
     {% else %}
         <p><i>Carbonyl gyration analysis not performed or data unavailable.</i></p>
     {% endif %}
+
+    <h3>Carbonyl Flip Summary</h3>
+    <table class="stats-table">
+        <thead>
+            <tr>
+                <th>Metric</th><th>G1 Glycine</th><th>Y Tyrosine</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>Flipping is defined based on distance threshold: {{ "%.2f"|format(run_summary.GYRATION_FLIP_THRESHOLD) }} Å. Tolerance frames: {{ run_summary.GYRATION_FLIP_TOLERANCE_FRAMES }}. Time per frame: {{ "%.3f"|format(1/run_summary.FRAMES_PER_NS) }} ns.</td>
+                <td></td>
+                <td></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>Gyration Radius Plots</h3>
+    <div class="two-column">
+        <div class="column plot-container">
+            <h4>Glycine 1 Radius of Gyration</h4>
+            {% if plots.G1_gyration_radii %} <img src="data:image/png;base64,{{ plots.G1_gyration_radii }}" alt="G1 Gyration Radii Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+        <div class="column plot-container">
+            <h4>Tyrosine Radius of Gyration</h4>
+            {% if plots.Y_gyration_radii %} <img src="data:image/png;base64,{{ plots.Y_gyration_radii }}" alt="Y Gyration Radii Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        </div>
+    </div>
+
+    <h3>Flip Duration Plot</h3>
+    <div class="plot-container">
+        <h4>Flip Event Duration Distribution</h4>
+        {% if plots.Flip_Duration_Distribution %} <img src="data:image/png;base64,{{ plots.Flip_Duration_Distribution }}" alt="Flip Duration Distribution Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+    </div>
+
+    <div class="info-box">
+    <p><strong>Interpretation:</strong> Frequent confirmed transitions or long durations spent in the 'flipped' state (radius > threshold) can indicate carbonyl orientations less favorable for ion coordination. Compare the number of 'On' and 'Off' flips; imbalance might suggest persistent changes or incomplete transitions. The duration distribution shows how long confirmed flipped states typically last.</p>
+    </div>
 </div> 
