@@ -91,8 +91,8 @@ def find_gate_residues_for_chain(u: mda.Universe, segid: str, filter_res_map: di
         raise ValueError(f"No ASP or GLU found C-terminal to filter (resids {asp_glu_search_start}-{asp_glu_search_end}) in segid {segid}.")
     logger.debug(f"Selected D/E for segid {segid}: {found_asp_glu.resname}{found_asp_glu.resid}")
 
-    # --- Find Trp (W) --- Residue with HIGHEST resid in range [g1-16, g1-6]
-    max_trp_resid = float('-inf')
+    # --- Find Trp (W) --- Residue with LOWEST resid in range [g1-16, g1-6]
+    min_trp_resid = float('inf')
     trp_search_start = g1_resid - 16
     trp_search_end = g1_resid - 6
     logger.debug(f"Searching for W in resid range [{trp_search_start}, {trp_search_end}]")
@@ -100,8 +100,8 @@ def find_gate_residues_for_chain(u: mda.Universe, segid: str, filter_res_map: di
         if trp_search_start <= res.resid <= trp_search_end:
             if res.resname == "TRP":
                 logger.debug(f"  Found potential W: {res.resname}{res.resid}")
-                if res.resid > max_trp_resid:
-                    max_trp_resid = res.resid
+                if res.resid < min_trp_resid:
+                    min_trp_resid = res.resid
                     found_trp = res
 
     if found_trp is None:
