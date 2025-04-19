@@ -296,7 +296,7 @@ def generate_html_report(run_dir, run_summary):
         # Prepare context for rendering
         render_context = {
             'run_summary': run_summary,
-            'img_data': img_data,
+            'plots': img_data,
             'binding_site_data': binding_site_data,
             'generation_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'DISTANCE_THRESHOLD': run_summary.get('DWhbond_threshold', 3.5)
