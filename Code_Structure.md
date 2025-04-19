@@ -18,11 +18,11 @@ This document outlines the structure, core logic, conventions, and development p
 ```
 .
 ├── setup.py                  # Package installation and dependencies
-├── config.py                 # Global configuration (consider moving to md_analysis/core)
+├── config.py                 # Global configuration (consider moving to pore_analysis/core)
 ├── README.md                 # Project overview and usage
 ├── Code_Structure.md         # This file
 ├── Aggregate_Summaries.py    # Utility for combining results from multiple runs
-├── md_analysis/              # Main Python package source code
+├── pore_analysis/              # Main Python package source code
 │   ├── __init__.py
 │   ├── main.py               # Main execution script (entry point for python -m)
 │   ├── core/                 # Core utilities, config, logging
@@ -47,20 +47,20 @@ This document outlines the structure, core logic, conventions, and development p
 # NOTE: main_analyzer.py and logger_setup.py in root are obsolete and should be deleted.
 ```
 
-## 3. Execution Flow: `md_analysis/main.py`
+## 3. Execution Flow: `pore_analysis/main.py`
 
-The primary way to run the analysis is via `python -m md_analysis.main --folder <path> ...`.
+The primary way to run the analysis is via `python -m pore_analysis.main --folder <path> ...`.
 
 1.  **Argument Parsing:** Uses `argparse` in `main()` to handle command-line arguments.
     *   `--folder` (Required): Specifies the path to the single run directory to process.
     *   Analysis Flags (`--GG`, `--COM`, `--ions`, etc.): Select specific analyses. If none are provided, `--all` is assumed.
     *   Other flags (`--force_rerun`, `--box_z`, `--log_level`).
 2.  **Determine Analyses:** Sets boolean flags (`run_gg`, `run_com`, etc.) based on user arguments or the default `--all`. Determines if the final HTML report should be generated (`generate_html`).
-3.  **Handle Single Trajectory Mode:** (Discouraged) If `--trajectory` is used, determines paths, sets up the logger using `setup_analysis_logger` from `md_analysis.core.logging` (directing output to the `--output` dir), logs initial info, calls `_run_analysis_workflow`, and exits.
+3.  **Handle Single Trajectory Mode:** (Discouraged) If `--trajectory` is used, determines paths, sets up the logger using `setup_analysis_logger` from `pore_analysis.core.logging` (directing output to the `--output` dir), logs initial info, calls `_run_analysis_workflow`, and exits.
 4.  **Single Folder Mode Execution:** (Primary Path)
     *   Validates the `--folder` path.
     *   Determines `system_name` and `run_name`.
-    *   **Sets up Logger:** Calls `setup_analysis_logger` from `md_analysis.core.logging`, passing the `folder_path`, `run_name`, and log level. This configures the root logger.
+    *   **Sets up Logger:** Calls `setup_analysis_logger` from `pore_analysis.core.logging`, passing the `folder_path`, `run_name`, and log level. This configures the root logger.
     *   **Logs Initial Info:** Writes startup messages, command, analysis plan etc. to console and the run-specific log file.
     *   Checks for required input files (`MD_Aligned.dcd`, `step5_input.psf`).
     *   Calls the internal `_run_analysis_workflow` function, passing the run details and analysis flags.
@@ -125,9 +125,9 @@ The primary way to run the analysis is via `python -m md_analysis.main --folder 
 
 *   Contains global constants and parameters used across different modules.
 *   **Policy:** Define parameters here if they are likely to be used in multiple places or might need user adjustment later. Avoid hardcoding values.
-*   **Location:** Currently in root directory. Consider moving to `md_analysis/core/` for better package structure.
+*   **Location:** Currently in root directory. Consider moving to `pore_analysis/core/` for better package structure.
 
-## 9. Logging (`md_analysis/core/logging.py`)
+## 9. Logging (`pore_analysis/core/logging.py`)
 
 *   Provides the `setup_analysis_logger` function.
 *   **Behavior:** This function configures the **root logger** when called by `main()`. It removes any previous handlers and sets up two new ones:
@@ -153,7 +153,7 @@ The primary way to run the analysis is via `python -m md_analysis.main --folder 
     *   **Be Explicit:** Clearly state the goal, the specific function to modify/create, its inputs (names, types), outputs (return value, files saved), and *exactly where it fits in the workflow*.
     *   **Provide Context:** Show the AI the calling function (e.g., `_run_analysis_workflow`) and the function being called (if modifying an existing one).
     *   **Specify Integration:** Do not just ask the AI to "add feature X". Instruct it *how* to integrate it.
-        *   **Example:** "Modify the `_run_analysis_workflow` function in `main_analyzer.py`. After the section calling `analyze_ion_coordination` (around line XXX), add a call to the new function `analyze_ion_conduction` (which you will define in `md_analysis/modules/ion_analysis/ion_conduction.py`). This new function requires `run_dir`, `time_points_ions`, `ions_z_abs`, `ion_indices`, `filter_sites`, and `g1_reference` as input. These variables should be available from the `results` dictionary or previous steps. Store the dictionary returned by `analyze_ion_conduction` into `results['conduction_stats']`. Ensure the `run_conduction` flag controls whether this call happens."
+        *   **Example:** "Modify the `_run_analysis_workflow` function in `main_analyzer.py`. After the section calling `analyze_ion_coordination` (around line XXX), add a call to the new function `analyze_ion_conduction` (which you will define in `pore_analysis/modules/ion_analysis/ion_conduction.py`). This new function requires `run_dir`, `time_points_ions`, `ions_z_abs`, `ion_indices`, `filter_sites`, and `g1_reference` as input. These variables should be available from the `results` dictionary or previous steps. Store the dictionary returned by `analyze_ion_conduction` into `results['conduction_stats']`. Ensure the `run_conduction` flag controls whether this call happens."
     *   **Review Carefully:** Always review AI-generated code for correctness, adherence to conventions, and proper integration *before* running it. Check function calls, argument passing, and file paths.
     *   **Incremental Steps:** Ask for the core function first, review it, then ask for the integration code separately.
 
