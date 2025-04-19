@@ -220,8 +220,8 @@ def analyse_dw_gates(
     raw_stats: Dict[str, Any] = {}
     per_subunit_fractions = {}
     all_closed_fractions = []
-    all_open_durations_ns = [] # Initialize list to collect all open durations
-    all_closed_durations_ns = [] # Initialize list to collect all closed durations
+    open_durations_by_chain = defaultdict(list) # New dict for per-chain data
+    closed_durations_by_chain = defaultdict(list) # New dict for per-chain data
 
     logger.info("Calculating DW Gate summary statistics...")
     for chain_id_full in valid_chain_ids:
@@ -308,9 +308,9 @@ def analyse_dw_gates(
         # Append chain durations to overall lists for histogram
         # Check if the numpy arrays were created before extending
         if open_durations_ns is not None:
-            all_open_durations_ns.extend(open_durations_ns)
+             open_durations_by_chain[chain_char].extend(open_durations_ns)
         if closed_durations_ns is not None:
-            all_closed_durations_ns.extend(closed_durations_ns)
+             closed_durations_by_chain[chain_char].extend(closed_durations_ns)
 
         # Store results in raw_stats (to be added to final_stats later)
         raw_stats[f'DW_OpenEvents_{chain_char}'] = n_open_events
@@ -399,26 +399,40 @@ def analyse_dw_gates(
     except Exception as e:
         logger.error(f"Failed to generate closed fraction bar plot: {e}", exc_info=True)
 
-    # 4. Event Duration Histogram (NEW)
+    # 4. Event Duration Histogram (Per Chain - NEW)
     try:
-        if all_open_durations_ns or all_closed_durations_ns:
-            fig4, ax4 = setup_plot(figsize=(8, 5))
-            bins = np.logspace(np.log10(max(0.01, min(all_open_durations_ns + all_closed_durations_ns + [0.01]))), # Set min bin edge, avoid log(0)
-                              np.log10(max(all_open_durations_ns + all_closed_durations_ns + [1])), # Set max bin edge
-                              num=20) # Logarithmic bins
+        # Check if there is any duration data across all chains
+        all_durations_flat = [dur for subdurs in open_durations_by_chain.values() for dur in subdurs] + \
+                           [dur for subdurs in closed_durations_by_chain.values() for dur in subdurs]
 
-            # Plot histograms only if data exists for that state
-            if all_open_durations_ns:
-                ax4.hist(all_open_durations_ns, bins=bins, alpha=0.7, label='Open Events', color='lightblue', density=True)
-            if all_closed_durations_ns:
-                ax4.hist(all_closed_durations_ns, bins=bins, alpha=0.7, label='Closed Events', color='darkblue', density=True)
+        if all_durations_flat:
+            fig4, ax4 = setup_plot(figsize=(10, 6)) # Slightly larger plot
+            min_dur = max(0.01, min(all_durations_flat)) # Avoid log(0)
+            max_dur = max(1, max(all_durations_flat))
+            bins = np.logspace(np.log10(min_dur), np.log10(max_dur), num=25) # Log bins based on overall range
+
+            # Define consistent colors for chains (use seaborn or default cycle)
+            colors = plt.cm.get_cmap('tab10') # Use a colormap
+
+            chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
+            for i, chain_char in enumerate(chain_chars_plot):
+                chain_color = colors(i / len(chain_chars_plot)) # Assign color per chain
+
+                open_durs = open_durations_by_chain.get(chain_char, [])
+                closed_durs = closed_durations_by_chain.get(chain_char, [])
+
+                # Plot histograms only if data exists for that chain/state
+                if open_durs:
+                    ax4.hist(open_durs, bins=bins, alpha=0.6, label=f'Chain {chain_char} Open', color=chain_color, density=True, histtype='step', linewidth=1.5)
+                if closed_durs:
+                    ax4.hist(closed_durs, bins=bins, alpha=0.8, label=f'Chain {chain_char} Closed', color=chain_color, density=True, histtype='step', linewidth=1.5, linestyle='--')
 
             ax4.set_xscale('log')
             ax4.set_xlabel("Event Duration (ns)")
-            ax4.set_ylabel("Probability Density") # Use density=True
+            ax4.set_ylabel("Probability Density")
             ax4.set_title(f"DW Gate Event Duration Distribution (Tolerance: {DW_GATE_TOLERANCE_FRAMES} frames)")
-            ax4.legend()
-            ax4.grid(True, which="both", ls="--", alpha=0.6) # Grid for log scale
+            ax4.legend(fontsize='small', ncol=2) # Adjust legend
+            ax4.grid(True, which="both", ls="--", alpha=0.6)
 
             save_plot(fig4, os.path.join(output_dir, "dw_gate_duration_histogram.png"))
         else:
