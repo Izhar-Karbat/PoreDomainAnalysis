@@ -53,9 +53,9 @@ The codebase has been refactored into logical modules for improved maintainabili
 1.  **Clone the repository** (or download the script files).
 2.  **Create a Python environment** (recommended):
     ```bash
-    python -m venv md_analysis_env
-    source md_analysis_env/bin/activate # Linux/macOS
-    # md_analysis_env\Scripts\activate # Windows
+    python -m venv pore_analysis_env
+    source pore_analysis_env/bin/activate # Linux/macOS
+    # pore_analysis_env\\Scripts\\activate # Windows
     ```
 3.  **Install dependencies:** Create a `requirements.txt` file with the packages listed above (pin versions as needed) and run:
     ```bash
@@ -75,8 +75,8 @@ The codebase has been refactored into logical modules for improved maintainabili
 The analysis suite is organized into modules:
 
 * `main_analyzer.py`: Main script execution and orchestration.
-* `md_analysis/` : Directory containing the analysis library modules.
-    * `__init__.py`: Makes `md_analysis` a Python package.
+* `pore_analysis/` : Directory containing the analysis library modules.
+    * `__init__.py`: Makes `pore_analysis` a Python package.
     * `config.py`: Global configuration parameters (version, FRAMES_PER_NS, cutoffs).
     * `core/`:
         * `utils.py`: General utility functions (AA conversion, time conversion, JSON cleaning).
@@ -92,7 +92,7 @@ The analysis suite is organized into modules:
         * `html.py`: Generation of the HTML report.
         * `templates/`: Jinja2 templates for the HTML report.
 * `logger_setup.py`: Functions for configuring logging (can be moved into `core`).
-* `config.py`: Global configuration (can be moved into `md_analysis/core`).
+* `config.py`: Global configuration parameters (can be moved into `pore_analysis/core`).
 
 **Expected Input Data Structure:**
 
@@ -194,7 +194,7 @@ Outputs are generated within the processed run directory specified via `--folder
 
 ## Configuration
 
-Key parameters can be adjusted in `config.py` (or its new location, e.g., `md_analysis/core/config.py`):
+Key parameters can be adjusted in `config.py` (or its new location, e.g., `pore_analysis/core/config.py`):
 
 * `FRAMES_PER_NS`: Frames per nanosecond in your trajectory (affects time axis).
 * `DEFAULT_CUTOFF`: Default distance (Å) for atom contacts.
@@ -203,7 +203,7 @@ Key parameters can be adjusted in `config.py` (or its new location, e.g., `md_an
 
 ## Logging
 
-* A main log file (`md_analysis_main_*.log`) is created in the directory where the script is run.
+* A main log file (`pore_analysis_main_*.log`) is created in the directory where the script is run.
 * Each processed run directory gets a specific log file (`<RunName>_analysis.log`).
 * Logging level can be controlled with `--log_level`.
 
