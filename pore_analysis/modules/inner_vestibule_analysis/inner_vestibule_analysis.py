@@ -19,9 +19,9 @@ from MDAnalysis.analysis import contacts, distances
 
 # Import from other modules
 try:
-    from md_analysis.core.utils import frames_to_time
-    from md_analysis.core.config import EXIT_BUFFER_FRAMES, FRAMES_PER_NS # Need EXIT_BUFFER_FRAMES
-    from md_analysis.core.logging import setup_system_logger
+    from pore_analysis.core.utils import frames_to_time
+    from pore_analysis.core.config import EXIT_BUFFER_FRAMES, FRAMES_PER_NS # Need EXIT_BUFFER_FRAMES
+    from pore_analysis.core.logging import setup_system_logger
 except ImportError as e:
     print(f"Error importing dependency modules in inner_vestibule_analysis.py: {e}")
     raise
