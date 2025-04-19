@@ -80,6 +80,7 @@ def plot_improved_duration_distribution(open_durations_by_chain, closed_duration
     # colors = plt.cm.get_cmap('tab10') # Old colormap
     sns_pastel = sns.color_palette("pastel", n_colors=max(4, len(valid_chain_ids))) # Get at least 4 pastel colors
     chain_color_map = {chain_id[-1]: color for chain_id, color in zip(sorted(valid_chain_ids), sns_pastel)}
+    chain_chars_plot = sorted([c[-1] for c in valid_chain_ids]) # Define the list of chain chars to iterate over
 
     # --- Plot Open States --- #
     ax_open_hist = axes[0, 0]
