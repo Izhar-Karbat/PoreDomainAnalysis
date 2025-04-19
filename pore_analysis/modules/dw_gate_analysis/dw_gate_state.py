@@ -283,26 +283,33 @@ def analyse_dw_gates(
         n_closed_events = len(closed_durations_frames)
 
         time_per_frame_ns = stride * dt_ns
-        if open_durations_frames:
-            open_durations_ns = np.array(open_durations_frames) * time_per_frame_ns
-            mean_open_ns = float(np.mean(open_durations_ns))
-            std_open_ns = float(np.std(open_durations_ns))
+        open_durations_ns = None # Initialize as None
+        if open_durations_frames: # Check the list before converting
+            open_durations_ns_array = np.array(open_durations_frames) * time_per_frame_ns
+            mean_open_ns = float(np.mean(open_durations_ns_array))
+            std_open_ns = float(np.std(open_durations_ns_array))
+            open_durations_ns = open_durations_ns_array # Assign numpy array for extension
         else:
             mean_open_ns = 0.0
             std_open_ns = 0.0
+            # open_durations_ns remains None
 
-        if closed_durations_frames:
-            closed_durations_ns = np.array(closed_durations_frames) * time_per_frame_ns
-            mean_closed_ns = float(np.mean(closed_durations_ns))
-            std_closed_ns = float(np.std(closed_durations_ns))
+        closed_durations_ns = None # Initialize as None
+        if closed_durations_frames: # Check the list before converting
+            closed_durations_ns_array = np.array(closed_durations_frames) * time_per_frame_ns
+            mean_closed_ns = float(np.mean(closed_durations_ns_array))
+            std_closed_ns = float(np.std(closed_durations_ns_array))
+            closed_durations_ns = closed_durations_ns_array # Assign numpy array for extension
         else:
             mean_closed_ns = 0.0
             std_closed_ns = 0.0
+            # closed_durations_ns remains None
 
         # Append chain durations to overall lists for histogram
-        if open_durations_ns:
+        # Check if the numpy arrays were created before extending
+        if open_durations_ns is not None:
             all_open_durations_ns.extend(open_durations_ns)
-        if closed_durations_ns:
+        if closed_durations_ns is not None:
             all_closed_durations_ns.extend(closed_durations_ns)
 
         # Store results in raw_stats (to be added to final_stats later)
