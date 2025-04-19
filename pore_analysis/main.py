@@ -49,7 +49,11 @@ try:
     from pore_analysis.core.logging import setup_analysis_logger
     from pore_analysis.modules.core_analysis.core import analyze_trajectory, filter_and_save_data
     from pore_analysis.modules.orientation_contacts.orientation_contacts import analyze_toxin_orientation
-    from pore_analysis.modules.ion_analysis import track_potassium_ions, analyze_ion_coordination, analyze_ion_conduction
+    from pore_analysis.modules.ion_analysis import (
+        track_potassium_ions, analyze_ion_coordination,
+        analyze_ion_conduction
+    )
+    from pore_analysis.modules.ion_analysis.ion_conduction import plot_idealized_transitions
     from pore_analysis.modules.inner_vestibule_analysis import analyze_inner_vestibule as analyze_cavity_water
     from pore_analysis.reporting.summary import calculate_and_save_run_summary
     from pore_analysis.reporting.html import generate_html_report
@@ -423,8 +427,17 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
                         g1_reference=results['g1_reference']
                     )
                     logging.info(f"Ion Conduction Analysis completed. Total Transitions: {results['conduction_stats'].get('Ion_TransitionEvents_Total', 'N/A')}")
+
+                    # Call the new plotting function *after* analyze_ion_conduction
+                    plot_idealized_transitions(
+                        run_dir=run_dir,
+                        time_points=results['time_points_ions'], # Use the full time axis
+                        filter_sites=results['filter_sites'],
+                        g1_reference=results['g1_reference']
+                    )
+
                 except Exception as e_conduction:
-                    logging.error(f"Ion Conduction analysis failed: {e_conduction}", exc_info=True)
+                    logging.error(f"Ion Conduction analysis or plotting failed: {e_conduction}", exc_info=True)
                     results['conduction_stats'] = {} # Ensure key exists on error
             else:
                 logging.warning("Skipping Ion Conduction (missing prerequisites from ion tracking).")

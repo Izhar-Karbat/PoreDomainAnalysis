@@ -24,6 +24,15 @@
         {% if plots.K_Ion_Combined_Plot %} <img src="data:image/png;base64,{{ plots.K_Ion_Combined_Plot }}" alt="Combined Ion Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
         <p>Top: K+ ion Z-positions relative to G1 over time. Middle: Occupancy count per frame for each binding site. Bottom: Total ions in the filter region.</p>
     </div>
+
+    <!-- NEW Idealized Plot Container -->
+    <div class="plot-container">
+        <h4>Detected Ion States (Idealized)</h4>
+        {% if plots.K_Ion_Idealized_Transitions %} <img src="data:image/png;base64,{{ plots.K_Ion_Idealized_Transitions }}" alt="Idealized Ion Transitions Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        <p>Idealized ion positions based only on confirmed site-to-site transitions recorded in <code>ion_transition_events.csv</code>. Horizontal lines represent the Z-position of the detected site.</p>
+    </div>
+    <!-- End NEW Container -->
+
     <div class="plot-container">
         <h4>Site Occupancy Heatmap</h4>
         {% if plots.K_Ion_Occupancy_Heatmap %} <img src="data:image/png;base64,{{ plots.K_Ion_Occupancy_Heatmap }}" alt="Ion Occupancy Heatmap"> {% else %} <p><i>Plot not available.</i></p> {% endif %}

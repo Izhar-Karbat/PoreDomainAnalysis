@@ -5,9 +5,14 @@ Module for analyzing K+ ion conduction and site‐to‐site transitions.
 import os
 import logging
 from typing import Dict, Any, List, Optional
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from scipy.stats import gaussian_kde
+import seaborn as sns
 
 from pore_analysis.core.config import (
     FRAMES_PER_NS,
@@ -334,3 +339,165 @@ def analyze_ion_conduction(
     save_conduction_data(run_dir, all_cond, all_trans, stats)
     logger.info("Ion conduction & transition analysis complete.")
     return stats 
+
+def plot_idealized_transitions(run_dir: str, time_points: np.ndarray, filter_sites: Dict[str, float], g1_reference: float) -> None:
+    """
+    Plots the idealized ion trajectories based on detected site transitions,
+    including a density plot showing time spent in each state.
+
+    Reads ion_transition_events.csv and plots horizontal lines representing
+    the detected site occupancy over time.
+
+    Args:
+        run_dir: Path to the simulation run directory.
+        time_points: Full time axis for the plot.
+        filter_sites: Map site_label -> Z_rel_to_G1.
+        g1_reference: Absolute Z position of G1 reference (Å).
+    """
+    logger.info("Generating idealized ion transition plot with density...")
+    output_dir = os.path.join(run_dir, "ion_analysis")
+    transitions_csv = os.path.join(output_dir, "ion_transition_events.csv")
+    plot_path = os.path.join(output_dir, "K_Ion_Idealized_Transitions.png")
+
+    if not os.path.exists(transitions_csv):
+        logger.warning(f"Transition events CSV not found: {transitions_csv}. Skipping idealized plot.")
+        return
+
+    try:
+        df_trans = pd.read_csv(transitions_csv)
+        if df_trans.empty:
+            logger.info("No transitions found in CSV. Skipping idealized plot.")
+            return
+    except Exception as e:
+        logger.error(f"Error reading transitions CSV {transitions_csv}: {e}")
+        return
+
+    df_trans = df_trans.sort_values(by=['ion_idx', 'frame'])
+    abs_site_positions = {site: z + g1_reference for site, z in filter_sites.items()}
+    site_order = [s for s in ['Cavity', 'S4', 'S3', 'S2', 'S1', 'S0'] if s in filter_sites]
+
+    # --- Plotting Setup with Gridspec ---
+    fig = plt.figure(figsize=(15, 8)) # Matched size from plot_ion_positions
+    gs = gridspec.GridSpec(1, 2, width_ratios=[3, 1], wspace=0.05) # Keep wspace for clarity
+    ax_traj = fig.add_subplot(gs[0])
+    ax_dens = fig.add_subplot(gs[1], sharey=ax_traj) # Share Y axis
+    sns.set_style("whitegrid")
+
+    colors = sns.color_palette("husl", n_colors=df_trans['ion_idx'].nunique())
+    ion_color_map = {ion_id: color for ion_id, color in zip(df_trans['ion_idx'].unique(), colors)}
+
+    min_time, max_time = time_points[0], time_points[-1]
+    plot_linewidth = 4 # Increased line thickness
+    transition_linestyle = ':'
+
+    # Data for density calculation
+    state_durations = defaultdict(float)
+    all_weighted_states = [] # Store Z-position samples weighted by duration
+
+    # Plot idealized trajectory for each ion
+    for ion_id, group in df_trans.groupby('ion_idx'):
+        last_time = min_time
+        last_site = None
+
+        for _, row in group.iterrows():
+            current_time = row['time']
+            from_site = row['from_site']
+            to_site = row['to_site']
+
+            if last_site and last_site in abs_site_positions:
+                site_z = abs_site_positions[last_site]
+                duration = current_time - last_time
+                state_durations[last_site] += duration
+                # Add weighted samples for KDE
+                # Use int(duration * factor) to get representative number of points
+                # Factor can be adjusted, e.g., 10 samples per ns
+                num_samples = max(1, int(duration * 10))
+                all_weighted_states.extend([site_z] * num_samples)
+
+                ax_traj.plot([last_time, current_time], [site_z, site_z],
+                             color=ion_color_map[ion_id], linewidth=plot_linewidth,
+                             label=f'Ion {ion_id}' if last_time == min_time else "_nolegend_")
+
+                if to_site in abs_site_positions:
+                    to_site_z = abs_site_positions[to_site]
+                    ax_traj.plot([current_time, current_time], [site_z, to_site_z],
+                                 color=ion_color_map[ion_id], linewidth=plot_linewidth - 1,
+                                 linestyle=transition_linestyle, alpha=0.7)
+
+            last_time = current_time
+            last_site = to_site
+
+        # Final state
+        if last_site and last_site in abs_site_positions:
+            site_z = abs_site_positions[last_site]
+            duration = max_time - last_time
+            state_durations[last_site] += duration
+            num_samples = max(1, int(duration * 10))
+            all_weighted_states.extend([site_z] * num_samples)
+
+            ax_traj.plot([last_time, max_time], [site_z, site_z],
+                         color=ion_color_map[ion_id], linewidth=plot_linewidth,
+                         label="_nolegend_")
+
+    # --- Density Plot --- 
+    if all_weighted_states:
+        try:
+            kde_data = np.array(all_weighted_states)
+            kde = gaussian_kde(kde_data)
+            min_z_plot = min(abs_site_positions.values()) - 2.0
+            max_z_plot = max(abs_site_positions.values()) + 2.0
+            z_grid = np.linspace(min_z_plot, max_z_plot, 400)
+            density = kde(z_grid)
+
+            ax_dens.plot(density, z_grid, color='black', linewidth=1.5)
+            ax_dens.fill_betweenx(z_grid, 0, density, color='grey', alpha=0.4)
+            ax_dens.set_xlabel("Density", fontsize=14) # Matched font size
+            ax_dens.set_ylim(min_z_plot, max_z_plot)
+            ax_dens.tick_params(axis='y', which='both', left=False, labelleft=False) # Hide Y ticks/labels
+            ax_dens.tick_params(axis='x', labelsize=10) # Matched tick label size
+            ax_dens.grid(True, axis='y', linestyle='--', alpha=0.5)
+            ax_dens.grid(False, axis='x') # No vertical grid lines
+
+        except Exception as e_kde:
+            logger.warning(f"Could not generate idealized density plot: {e_kde}")
+            ax_dens.text(0.5, 0.5, "Density Plot Error", ha='center', va='center', transform=ax_dens.transAxes)
+    else:
+         ax_dens.text(0.5, 0.5, "No Data for Density Plot", ha='center', va='center', transform=ax_dens.transAxes)
+
+
+    # --- Site Position Lines & Labels (Both Axes) ---
+    site_colors = sns.color_palette("muted", n_colors=len(site_order))
+    z_positions_sorted = sorted(abs_site_positions.items(), key=lambda item: item[1])
+    # Calculate position for right-side labels - adjust offset based on density plot presence
+    label_x_pos_traj = max_time + (max_time - min_time) * 0.01 # Small offset for traj plot
+
+    for i, (site, z_pos) in enumerate(z_positions_sorted):
+         color = site_colors[i % len(site_colors)]
+         # Trajectory axis lines and labels
+         ax_traj.axhline(z_pos, color=color, linestyle='--', linewidth=1, alpha=0.8)
+         ax_traj.text(label_x_pos_traj, z_pos, site,
+                 verticalalignment='center', horizontalalignment='left',
+                 color=color, fontsize=9) # Fontsize 9 matches original site labels
+         # Density axis lines
+         ax_dens.axhline(z_pos, color=color, linestyle='--', linewidth=1, alpha=0.8)
+
+    # --- Final Touches ---
+    ax_traj.set_xlabel("Time (ns)", fontsize=14) # Matched font size
+    ax_traj.set_ylabel("Detected Site Z-Position (Å)", fontsize=14) # Matched font size
+    ax_traj.tick_params(axis='both', labelsize=10) # Matched tick label size
+    ax_traj.grid(axis='y', linestyle=':', alpha=0.5, zorder=0) # Match grid style from original
+    # ax_traj.set_title("Idealized Ion States Based on Detected Transitions") # Title now above plot
+    ax_traj.legend(loc='upper right', fontsize='x-small') # Matched font size
+    # Ensure consistent X limits for trajectory plot
+    x_padding = (max_time - min_time) * 0.05
+    ax_traj.set_xlim(min_time, max_time + x_padding)
+
+    fig.suptitle("Idealized Ion States & Density Based on Detected Transitions", fontsize=16, y=0.99) # Matched font size and y pos
+    fig.tight_layout(rect=[0, 0.03, 1, 0.96]) # Matched layout rect from plot_ion_positions
+
+    try:
+        fig.savefig(plot_path, dpi=200)
+        logger.info(f"Saved idealized transition plot to {plot_path}")
+    except Exception as e:
+        logger.error(f"Failed to save idealized transition plot: {e}")
+    plt.close(fig) 

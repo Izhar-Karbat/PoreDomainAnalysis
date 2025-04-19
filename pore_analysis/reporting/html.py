@@ -233,6 +233,8 @@ def generate_html_report(run_dir, run_summary):
         "K_Ion_Combined_Plot": "ion_analysis/K_Ion_Combined_Plot.png",
         "K_Ion_Occupancy_Heatmap": "ion_analysis/K_Ion_Occupancy_Heatmap.png",
         "K_Ion_Average_Occupancy": "ion_analysis/K_Ion_Average_Occupancy.png",
+        # Add new idealized plot
+        "K_Ion_Idealized_Transitions": "ion_analysis/K_Ion_Idealized_Transitions.png",
         # Water plots (now in inner_vestibule_analysis/)
         "Inner_Vestibule_Count_Plot": "inner_vestibule_analysis/Inner_Vestibule_Count_Plot.png",
         "Inner_Vestibule_Residence_Hist": "inner_vestibule_analysis/Inner_Vestibule_Residence_Hist.png",
