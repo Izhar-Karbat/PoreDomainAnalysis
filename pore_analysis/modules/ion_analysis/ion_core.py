@@ -21,8 +21,8 @@ from .ion_occupancy import create_ion_occupancy_heatmap
 
 # External imports
 try:
-    from md_analysis.core.utils import frames_to_time
-    from md_analysis.core.logging import setup_system_logger
+    from pore_analysis.core.utils import frames_to_time
+    from pore_analysis.core.logging import setup_system_logger
 except ImportError as e:
     print(f"Error importing dependency modules in ion_core.py: {e}")
     raise
