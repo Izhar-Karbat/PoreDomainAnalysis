@@ -15,8 +15,8 @@ import math # Keep math for potential future use, clean_json_data uses it too
 
 # Import from other modules
 try:
-    from md_analysis.core.utils import clean_json_data
-    from md_analysis.core.config import (Analysis_version,
+    from pore_analysis.core.utils import clean_json_data
+    from pore_analysis.core.config import (Analysis_version,
                                          TYROSINE_ROTAMER_TOLERANCE_FRAMES,
                                          ION_TRANSITION_TOLERANCE_FRAMES) # Import ion tolerance
 except ImportError as e:
@@ -406,9 +406,9 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
         # --- Add Config Constants Used (for report reference) ---
         # Explicitly add specific config values that the report might want to display
         try:
-            from md_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
-            run_summary['GYRATION_FLIP_THRESHOLD'] = GYRATION_FLIP_THRESHOLD
-            run_summary['GYRATION_FLIP_TOLERANCE_FRAMES'] = GYRATION_FLIP_TOLERANCE_FRAMES
+            from pore_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
+            run_summary['Gyration_FlipThreshold'] = GYRATION_FLIP_THRESHOLD
+            run_summary['Gyration_FlipToleranceFrames'] = GYRATION_FLIP_TOLERANCE_FRAMES
             run_summary['FRAMES_PER_NS'] = FRAMES_PER_NS
             run_summary['TYROSINE_ROTAMER_TOLERANCE_FRAMES'] = TYROSINE_ROTAMER_TOLERANCE_FRAMES # Also add here
             run_summary.setdefault('ION_TRANSITION_TOLERANCE_FRAMES', ION_TRANSITION_TOLERANCE_FRAMES) # Add ion tolerance here too
