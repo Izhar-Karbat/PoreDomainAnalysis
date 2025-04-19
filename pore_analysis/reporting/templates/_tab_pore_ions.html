@@ -25,13 +25,13 @@
         <p>Top: K+ ion Z-positions relative to G1 over time. Middle: Occupancy count per frame for each binding site. Bottom: Total ions in the filter region.</p>
     </div>
 
-    <!-- NEW Idealized Plot Container -->
+    <!-- UPDATED Overlay Plot Container -->
     <div class="plot-container">
-        <h4>Detected Ion States (Idealized)</h4>
-        {% if plots.K_Ion_Idealized_Transitions %} <img src="data:image/png;base64,{{ plots.K_Ion_Idealized_Transitions }}" alt="Idealized Ion Transitions Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
-        <p>Idealized ion positions based only on confirmed site-to-site transitions recorded in <code>ion_transition_events.csv</code>. Horizontal lines represent the Z-position of the detected site.</p>
+        <h4>Overlayed Actual vs Idealized Transitions</h4>
+        {% if plots.K_Ion_Overlayed_Transitions %} <img src="data:image/png;base64,{{ plots.K_Ion_Overlayed_Transitions }}" alt="Overlayed Ion Transitions Plot"> {% else %} <p><i>Plot not available.</i></p> {% endif %}
+        <p>Comparison of actual K+ ion Z-positions (thin pastel lines) vs. idealized states derived from detected site transitions (thick solid lines).</p>
     </div>
-    <!-- End NEW Container -->
+    <!-- End UPDATED Container -->
 
     <div class="plot-container">
         <h4>Site Occupancy Heatmap</h4>

@@ -6,11 +6,13 @@ import os
 import logging
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
+import colorsys
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.colors import to_rgb, rgb_to_hsv, hsv_to_rgb # Import color conversion tools
 from scipy.stats import gaussian_kde
 import seaborn as sns
 
@@ -340,33 +342,55 @@ def analyze_ion_conduction(
     logger.info("Ion conduction & transition analysis complete.")
     return stats 
 
-def plot_idealized_transitions(run_dir: str, time_points: np.ndarray, filter_sites: Dict[str, float], g1_reference: float) -> None:
-    """
-    Plots the idealized ion trajectories based on detected site transitions,
-    including a density plot showing time spent in each state.
+def make_pastel(color, factor=0.5, light_boost=0.15):
+    """Create a pastel version of a color."""
+    try:
+        rgb = to_rgb(color)
+        h, s, v = rgb_to_hsv(rgb)
+        # Decrease saturation, increase value (lightness)
+        pastel_s = max(0, s * (1.0 - factor))
+        pastel_v = min(1, v + light_boost)
+        return hsv_to_rgb((h, pastel_s, pastel_v))
+    except Exception as e:
+        logger.warning(f"Could not create pastel color for {color}: {e}")
+        return color # Return original on error
 
-    Reads ion_transition_events.csv and plots horizontal lines representing
-    the detected site occupancy over time.
+def plot_idealized_transitions(
+    run_dir: str,
+    time_points: np.ndarray,
+    filter_sites: Dict[str, float],
+    g1_reference: float,
+    ions_z_positions: Dict[int, np.ndarray], # Added
+    ion_indices: List[int] # Added
+) -> None:
+    """
+    Plots idealized ion trajectories based on detected site transitions,
+    overlaid with the actual Z-position trajectories.
+
+    Reads ion_transition_events.csv for idealized states.
+    Uses ions_z_positions for actual trajectories.
 
     Args:
         run_dir: Path to the simulation run directory.
         time_points: Full time axis for the plot.
         filter_sites: Map site_label -> Z_rel_to_G1.
         g1_reference: Absolute Z position of G1 reference (Å).
+        ions_z_positions: Mapping ion_idx -> array of Z coordinates.
+        ion_indices: List of ion indices present in ions_z_positions.
     """
-    logger.info("Generating idealized ion transition plot with density...")
+    logger.info("Generating overlayed idealized and actual ion transition plot...")
     output_dir = os.path.join(run_dir, "ion_analysis")
     transitions_csv = os.path.join(output_dir, "ion_transition_events.csv")
-    plot_path = os.path.join(output_dir, "K_Ion_Idealized_Transitions.png")
+    plot_path = os.path.join(output_dir, "K_Ion_Overlayed_Transitions.png") # New filename
 
     if not os.path.exists(transitions_csv):
-        logger.warning(f"Transition events CSV not found: {transitions_csv}. Skipping idealized plot.")
+        logger.warning(f"Transition events CSV not found: {transitions_csv}. Skipping overlay plot.")
         return
 
     try:
         df_trans = pd.read_csv(transitions_csv)
         if df_trans.empty:
-            logger.info("No transitions found in CSV. Skipping idealized plot.")
+            logger.info("No transitions found in CSV. Skipping overlay plot.")
             return
     except Exception as e:
         logger.error(f"Error reading transitions CSV {transitions_csv}: {e}")
@@ -376,128 +400,115 @@ def plot_idealized_transitions(run_dir: str, time_points: np.ndarray, filter_sit
     abs_site_positions = {site: z + g1_reference for site, z in filter_sites.items()}
     site_order = [s for s in ['Cavity', 'S4', 'S3', 'S2', 'S1', 'S0'] if s in filter_sites]
 
-    # --- Plotting Setup with Gridspec ---
-    fig = plt.figure(figsize=(15, 8)) # Matched size from plot_ion_positions
-    gs = gridspec.GridSpec(1, 2, width_ratios=[3, 1], wspace=0.05) # Keep wspace for clarity
-    ax_traj = fig.add_subplot(gs[0])
-    ax_dens = fig.add_subplot(gs[1], sharey=ax_traj) # Share Y axis
+    # --- Plotting Setup - Single Plot --- 
+    fig, ax = plt.subplots(figsize=(15, 8)) # Single axes, matched size
     sns.set_style("whitegrid")
 
-    colors = sns.color_palette("husl", n_colors=df_trans['ion_idx'].nunique())
-    ion_color_map = {ion_id: color for ion_id, color in zip(df_trans['ion_idx'].unique(), colors)}
+    # Use unique ions present in *both* transitions and actual positions
+    plot_ion_ids = sorted(list(set(df_trans['ion_idx'].unique()) & set(ion_indices)))
+    if not plot_ion_ids:
+        logger.warning("No common ion IDs found between transition data and actual positions. Skipping plot.")
+        plt.close(fig)
+        return
+
+    colors = sns.color_palette("husl", n_colors=len(plot_ion_ids))
+    ion_color_map = {ion_id: color for ion_id, color in zip(plot_ion_ids, colors)}
+    pastel_color_map = {ion_id: make_pastel(color) for ion_id, color in ion_color_map.items()}
 
     min_time, max_time = time_points[0], time_points[-1]
-    plot_linewidth = 4 # Increased line thickness
-    transition_linestyle = ':'
+    idealized_linewidth = 4
+    actual_linewidth = 1
+    actual_alpha = 0.5
 
-    # Data for density calculation
-    state_durations = defaultdict(float)
-    all_weighted_states = [] # Store Z-position samples weighted by duration
+    # Plot Actual and Idealized Trajectories
+    for ion_id in plot_ion_ids:
+        color = ion_color_map[ion_id]
+        pastel_color = pastel_color_map[ion_id]
 
-    # Plot idealized trajectory for each ion
-    for ion_id, group in df_trans.groupby('ion_idx'):
-        last_time = min_time
-        last_site = None
+        # Plot Actual Trajectory (background)
+        if ion_id in ions_z_positions:
+            z_actual = ions_z_positions[ion_id]
+            # Ensure actual time matches z_actual length, trim if needed
+            time_actual = time_points[:len(z_actual)]
+            if len(time_actual) == len(z_actual):
+                ax.plot(time_actual, z_actual, color=pastel_color, linewidth=actual_linewidth,
+                        alpha=actual_alpha, zorder=1, label=f'Ion {ion_id} (Actual)' if False else "_nolegend_") # Legend optional
+            else:
+                 logger.warning(f"Skipping actual plot for ion {ion_id}: Time points ({len(time_actual)}) vs Z positions ({len(z_actual)}) mismatch.")
+        else:
+            logger.warning(f"Actual position data missing for ion {ion_id}.")
 
-        for _, row in group.iterrows():
-            current_time = row['time']
-            from_site = row['from_site']
-            to_site = row['to_site']
+        # Plot Idealized Trajectory (foreground)
+        ion_trans = df_trans[df_trans['ion_idx'] == ion_id]
+        if not ion_trans.empty:
+            last_time = min_time
+            last_site = None
+            first_segment = True
 
+            for _, row in ion_trans.iterrows():
+                current_time = row['time']
+                from_site = row['from_site']
+                to_site = row['to_site']
+
+                if last_site and last_site in abs_site_positions:
+                    site_z = abs_site_positions[last_site]
+                    ax.plot([last_time, current_time], [site_z, site_z],
+                             color=color, linewidth=idealized_linewidth,
+                             linestyle='-', zorder=2, # Solid line, foreground
+                             label=f'Ion {ion_id} (Idealized)' if first_segment else "_nolegend_")
+                    first_segment = False
+
+                # Removed vertical transition lines for clarity
+                # if to_site in abs_site_positions:
+                #     to_site_z = abs_site_positions[to_site]
+                #     ax.plot([current_time, current_time], [site_z, to_site_z],
+                #              color=color, linewidth=idealized_linewidth - 1,
+                #              linestyle=":", alpha=0.7, zorder=2)
+
+                last_time = current_time
+                last_site = to_site
+
+            # Final idealized state segment
             if last_site and last_site in abs_site_positions:
                 site_z = abs_site_positions[last_site]
-                duration = current_time - last_time
-                state_durations[last_site] += duration
-                # Add weighted samples for KDE
-                # Use int(duration * factor) to get representative number of points
-                # Factor can be adjusted, e.g., 10 samples per ns
-                num_samples = max(1, int(duration * 10))
-                all_weighted_states.extend([site_z] * num_samples)
-
-                ax_traj.plot([last_time, current_time], [site_z, site_z],
-                             color=ion_color_map[ion_id], linewidth=plot_linewidth,
-                             label=f'Ion {ion_id}' if last_time == min_time else "_nolegend_")
-
-                if to_site in abs_site_positions:
-                    to_site_z = abs_site_positions[to_site]
-                    ax_traj.plot([current_time, current_time], [site_z, to_site_z],
-                                 color=ion_color_map[ion_id], linewidth=plot_linewidth - 1,
-                                 linestyle=transition_linestyle, alpha=0.7)
-
-            last_time = current_time
-            last_site = to_site
-
-        # Final state
-        if last_site and last_site in abs_site_positions:
-            site_z = abs_site_positions[last_site]
-            duration = max_time - last_time
-            state_durations[last_site] += duration
-            num_samples = max(1, int(duration * 10))
-            all_weighted_states.extend([site_z] * num_samples)
-
-            ax_traj.plot([last_time, max_time], [site_z, site_z],
-                         color=ion_color_map[ion_id], linewidth=plot_linewidth,
+                ax.plot([last_time, max_time], [site_z, site_z],
+                         color=color, linewidth=idealized_linewidth, linestyle='-', zorder=2,
                          label="_nolegend_")
 
-    # --- Density Plot --- 
-    if all_weighted_states:
-        try:
-            kde_data = np.array(all_weighted_states)
-            kde = gaussian_kde(kde_data)
-            min_z_plot = min(abs_site_positions.values()) - 2.0
-            max_z_plot = max(abs_site_positions.values()) + 2.0
-            z_grid = np.linspace(min_z_plot, max_z_plot, 400)
-            density = kde(z_grid)
-
-            ax_dens.plot(density, z_grid, color='black', linewidth=1.5)
-            ax_dens.fill_betweenx(z_grid, 0, density, color='grey', alpha=0.4)
-            ax_dens.set_xlabel("Density", fontsize=14) # Matched font size
-            ax_dens.set_ylim(min_z_plot, max_z_plot)
-            ax_dens.tick_params(axis='y', which='both', left=False, labelleft=False) # Hide Y ticks/labels
-            ax_dens.tick_params(axis='x', labelsize=10) # Matched tick label size
-            ax_dens.grid(True, axis='y', linestyle='--', alpha=0.5)
-            ax_dens.grid(False, axis='x') # No vertical grid lines
-
-        except Exception as e_kde:
-            logger.warning(f"Could not generate idealized density plot: {e_kde}")
-            ax_dens.text(0.5, 0.5, "Density Plot Error", ha='center', va='center', transform=ax_dens.transAxes)
-    else:
-         ax_dens.text(0.5, 0.5, "No Data for Density Plot", ha='center', va='center', transform=ax_dens.transAxes)
-
-
-    # --- Site Position Lines & Labels (Both Axes) ---
+    # --- Site Position Lines & Labels --- 
     site_colors = sns.color_palette("muted", n_colors=len(site_order))
     z_positions_sorted = sorted(abs_site_positions.items(), key=lambda item: item[1])
-    # Calculate position for right-side labels - adjust offset based on density plot presence
-    label_x_pos_traj = max_time + (max_time - min_time) * 0.01 # Small offset for traj plot
+    label_x_pos = max_time + (max_time - min_time) * 0.01 # Small offset for labels
 
     for i, (site, z_pos) in enumerate(z_positions_sorted):
          color = site_colors[i % len(site_colors)]
-         # Trajectory axis lines and labels
-         ax_traj.axhline(z_pos, color=color, linestyle='--', linewidth=1, alpha=0.8)
-         ax_traj.text(label_x_pos_traj, z_pos, site,
+         ax.axhline(z_pos, color=color, linestyle='--', linewidth=1, alpha=0.8, zorder=0) # Behind everything
+         ax.text(label_x_pos, z_pos, site,
                  verticalalignment='center', horizontalalignment='left',
                  color=color, fontsize=9) # Fontsize 9 matches original site labels
-         # Density axis lines
-         ax_dens.axhline(z_pos, color=color, linestyle='--', linewidth=1, alpha=0.8)
 
-    # --- Final Touches ---
-    ax_traj.set_xlabel("Time (ns)", fontsize=14) # Matched font size
-    ax_traj.set_ylabel("Detected Site Z-Position (Å)", fontsize=14) # Matched font size
-    ax_traj.tick_params(axis='both', labelsize=10) # Matched tick label size
-    ax_traj.grid(axis='y', linestyle=':', alpha=0.5, zorder=0) # Match grid style from original
-    # ax_traj.set_title("Idealized Ion States Based on Detected Transitions") # Title now above plot
-    ax_traj.legend(loc='upper right', fontsize='x-small') # Matched font size
-    # Ensure consistent X limits for trajectory plot
+    # --- Final Touches --- 
+    ax.set_xlabel("Time (ns)", fontsize=14)
+    ax.set_ylabel("Z-Position (Å)", fontsize=14) # Generic Y label
+    ax.tick_params(axis='both', labelsize=10)
+    ax.grid(axis='y', linestyle=':', alpha=0.5, zorder=0)
+    ax.legend(loc='upper right', fontsize='x-small') # Legend for idealized lines
+    
+    # Set Y limits based on site positions
+    min_z_plot = min(abs_site_positions.values()) - 5.0 # Add padding
+    max_z_plot = max(abs_site_positions.values()) + 5.0
+    ax.set_ylim(min_z_plot, max_z_plot)
+
+    # Ensure consistent X limits 
     x_padding = (max_time - min_time) * 0.05
-    ax_traj.set_xlim(min_time, max_time + x_padding)
+    ax.set_xlim(min_time, max_time + x_padding)
 
-    fig.suptitle("Idealized Ion States & Density Based on Detected Transitions", fontsize=16, y=0.99) # Matched font size and y pos
-    fig.tight_layout(rect=[0, 0.03, 1, 0.96]) # Matched layout rect from plot_ion_positions
+    fig.suptitle("Overlayed Actual vs Idealized K+ Ion Trajectories", fontsize=16, y=0.99)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.96]) # Keep layout rect from previous version
 
     try:
         fig.savefig(plot_path, dpi=200)
-        logger.info(f"Saved idealized transition plot to {plot_path}")
+        logger.info(f"Saved overlayed transition plot to {plot_path}")
     except Exception as e:
-        logger.error(f"Failed to save idealized transition plot: {e}")
+        logger.error(f"Failed to save overlayed transition plot: {e}")
     plt.close(fig) 

@@ -4,7 +4,7 @@ Configuration settings for the MD Analysis Script.
 """
 
 # --- Global Version ---
-Analysis_version = "1.6.0"
+Analysis_version = "1.6.1"
 # ---------------------
 
 # --- Simulation Parameters ---
