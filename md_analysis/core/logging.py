@@ -14,57 +14,65 @@ LOG_FORMAT = '%(asctime)s - %(levelname)s - [%(name)s:%(funcName)s] - %(message)
 # LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
 
 
-def setup_root_logger(log_level=logging.INFO, log_dir=None):
+def setup_analysis_logger(run_dir, run_name, log_level=logging.INFO):
     """
-    Configures the root logger for the main script execution.
+    Configures the root logger to write ONLY to a log file within the specific run directory.
 
-    Sets up basic console logging and a file handler for the main execution log.
+    Removes any existing handlers from the root logger and sets up a new
+    FileHandler pointing to '<run_dir>/<run_name>_analysis.log'.
+    Also maintains console logging.
 
     Args:
+        run_dir (str): Path to the specific run directory where the log file will be saved.
+        run_name (str): The name of the run (used for the log filename).
         log_level (int): The logging level (e.g., logging.INFO, logging.DEBUG).
-        log_dir (str, optional): Directory to save the main log file.
-                                 Defaults to the current working directory.
 
     Returns:
-        str: The path to the main log file created.
+        str | None: The path to the analysis log file created, or None on error.
     """
-    if log_dir is None:
-        log_dir = os.getcwd()
-    os.makedirs(log_dir, exist_ok=True) # Ensure log directory exists
+    if not run_dir or not os.path.isdir(run_dir):
+        print(f"ERROR: Invalid run directory provided for logger setup: {run_dir}", file=sys.stderr)
+        return None
+    if not run_name:
+        print(f"ERROR: Invalid run_name provided for logger setup.", file=sys.stderr)
+        return None
 
-    # Create the main log file path
-    main_log_filename = f"md_analysis_main_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    main_log_path = os.path.join(log_dir, main_log_filename)
+    log_file_name = f"{run_name}_analysis.log"
+    log_file_path = os.path.join(run_dir, log_file_name)
 
     # Get the root logger
     root_logger = logging.getLogger()
 
-    # Check if handlers already exist (e.g., if called multiple times)
-    # Avoid adding duplicate handlers
-    if not root_logger.handlers:
-        # Configure basic console logging
-        console_handler = logging.StreamHandler(sys.stdout) # Use stdout
-        console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-        console_handler.setLevel(log_level) # Console level can be same or different
+    # --- Critical: Remove existing handlers --- #
+    if root_logger.hasHandlers():
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
 
-        # Configure file logging
-        file_handler = logging.FileHandler(main_log_path)
+    # --- Configure Handlers --- #
+    try:
+        file_handler = logging.FileHandler(log_file_path, mode='w') # Use mode 'w' to overwrite
         file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-        file_handler.setLevel(log_level) # Log level for the file
+        file_handler.setLevel(log_level)
+    except Exception as e:
+        print(f"ERROR: Failed to create log file handler at {log_file_path}: {e}", file=sys.stderr)
+        return None
 
-        # Add handlers to the root logger
-        root_logger.addHandler(console_handler)
-        root_logger.addHandler(file_handler)
-        root_logger.setLevel(log_level) # Set the overall level for the logger
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    console_handler.setLevel(log_level)
 
-        root_logger.info(f"Root logger configured. Console Level: {log_level}, File Level: {log_level}")
-        root_logger.info(f"Main execution log file: {main_log_path}")
-        root_logger.info(f"Python version: {sys.version}")
-        root_logger.info(f"Current working directory: {os.getcwd()}")
-    else:
-         root_logger.info("Root logger already configured.")
+    # Add handlers to the root logger
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(log_level)
 
-    return main_log_path
+    # --- Initial Log Messages --- #
+    root_logger.info(f"Logger configured. Level: {logging.getLevelName(log_level)}") # Use getLevelName
+    root_logger.info(f"Logging to Console and File: {log_file_path}")
+    root_logger.info(f"Python version: {sys.version}")
+    root_logger.info(f"Script execution started at: {datetime.now().isoformat()}")
+
+    return log_file_path
 
 
 def setup_system_logger(run_dir, log_level=logging.INFO):

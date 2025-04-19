@@ -12,7 +12,6 @@ setup(
         "scipy",
         "mdanalysis",
         "jinja2",
-        "python-pptx",
     ],
     entry_points={
         'console_scripts': [

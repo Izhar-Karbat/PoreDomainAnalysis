@@ -1,12 +1,10 @@
-Markdown
-
 # Molecular Dynamics Simulation Analysis Suite (v1.5.0)
 
 **Version:** 1.5.0 (April 14, 2025)
 
 ## Overview
 
-This suite provides a set of Python scripts for analyzing molecular dynamics (MD) simulations, primarily focused on toxin-channel complexes (e.g., Cs1 toxin with K+ channel tetramers). It extracts key metrics related to structural stability, pore dynamics, toxin orientation, interface contacts, ion permeation, and water behavior within the channel cavity.
+This suite provides a set of Python scripts for analyzing molecular dynamics (MD) simulations, primarily focused on toxin-channel complexes (e.g., Cs1 toxin with K+ channel tetramers). It processes a **single simulation run directory** at a time, extracting key metrics related to structural stability, pore dynamics, toxin orientation, interface contacts, ion permeation, and water behavior within the channel cavity.
 
 The analysis includes specialized filtering routines designed to correct artifacts in distance measurements arising from Periodic Boundary Conditions (PBC), including standard unwrapping/smoothing and an advanced multi-level correction method based on Kernel Density Estimation (KDE).
 
@@ -36,8 +34,7 @@ The codebase has been refactored into logical modules for improved maintainabili
     * Calculates water residence times using an exit buffer condition (>5 frames outside cavity).
 * **Reporting:**
     * Generates a comprehensive HTML report per run (when running all analyses) with embedded plots and statistics.
-    * Generates a summary PowerPoint presentation aggregating key plots across multiple runs (optional).
-    * Saves detailed analysis results to CSV and JSON files within each run directory.
+    * Saves detailed analysis results to CSV and JSON files within the processed run directory.
 
 ## Dependencies
 
@@ -48,7 +45,6 @@ The codebase has been refactored into logical modules for improved maintainabili
 * SciPy
 * Matplotlib
 * Seaborn
-* python-pptx (for PowerPoint generation)
 * Jinja2 (for HTML report generation)
 * tqdm (for progress bars)
 
@@ -67,7 +63,11 @@ The codebase has been refactored into logical modules for improved maintainabili
     ```
     Alternatively, install them individually:
     ```bash
-    pip install MDAnalysis numpy pandas scipy matplotlib seaborn python-pptx Jinja2 tqdm
+    pip install MDAnalysis numpy pandas scipy matplotlib seaborn Jinja2 tqdm
+    ```
+    Or, if `setup.py` is present and configured:
+    ```bash
+    pip install .
     ```
 
 ## Project Structure
@@ -75,94 +75,81 @@ The codebase has been refactored into logical modules for improved maintainabili
 The analysis suite is organized into modules:
 
 * `main_analyzer.py`: Main script execution and orchestration.
-* `Analysis/` : Directory containing the analysis library modules.
-    * `__init__.py`: Makes `Analysis` a Python package.
+* `md_analysis/` : Directory containing the analysis library modules.
+    * `__init__.py`: Makes `md_analysis` a Python package.
     * `config.py`: Global configuration parameters (version, FRAMES_PER_NS, cutoffs).
-    * `utils.py`: General utility functions (AA conversion, time conversion, JSON cleaning).
-    * `logger_setup.py`: Functions for configuring logging.
-    * `filtering.py`: Distance data filtering algorithms (PBC correction, smoothing).
-    * `core_analysis.py`: Basic trajectory reading (raw distances), application of filtering, basic distance plots.
-    * `orientation_contacts.py`: Toxin orientation, rotation, and interface contact analysis.
-    * `ion_analysis.py`: K+ ion tracking, binding site calculation, occupancy analysis.
-    * `water_analysis.py`: Cavity water occupancy and residence time analysis.
-    * `summary.py`: Calculation and saving of the final `analysis_summary.json` file per run.
-    * `reporting.py`: Generation of HTML and PowerPoint reports.
+    * `core/`:
+        * `utils.py`: General utility functions (AA conversion, time conversion, JSON cleaning).
+        * `logging.py`: Functions for configuring logging (if `logger_setup.py` is moved here).
+    * `modules/`:
+        * `core_analysis/`: Basic trajectory reading (raw distances), filtering, basic distance plots.
+        * `orientation_contacts/`: Toxin orientation, rotation, and interface contact analysis.
+        * `ion_analysis/`: K+ ion tracking, binding site calculation, occupancy analysis.
+        * `inner_vestibule_analysis/`: Cavity water occupancy and residence time analysis (renamed from `water_analysis`).
+        * `gyration_analysis/`: Carbonyl gyration analysis.
+    * `reporting/`:
+        * `summary.py`: Calculation and saving of the final `analysis_summary.json` file per run.
+        * `html.py`: Generation of the HTML report.
+        * `templates/`: Jinja2 templates for the HTML report.
+* `logger_setup.py`: Functions for configuring logging (can be moved into `core`).
+* `config.py`: Global configuration (can be moved into `md_analysis/core`).
 
 **Expected Input Data Structure:**
 
-The script generally expects input data organized as follows (relative to the `--base_dir` used for batch processing):
+The script operates on a single run directory specified via the `--folder` argument. This directory should ideally contain:
 
-<base_dir>/
-├── System_Name_1/
-│   ├── Run_1/
-│   │   ├── step5_input.psf     # Topology file
-│   │   ├── MD_Aligned.dcd      # Trajectory file (or similar name)
-│   │   └── ... (other simulation files)
-│   ├── Run_2/
-│   │   └── ...
-│   └── ...
-├── System_Name_2/
-│   ├── Run_1/
-│   │   └── ...
-│   └── ...
+<run_directory_path>/
+├── step5_input.psf     # Topology file (or similar name)
+├── MD_Aligned.dcd      # Trajectory file (or similar name)
+└── ... (other simulation files)
 
+The script attempts to infer a "System Name" from the parent directory of the run folder (e.g., if the path is `/path/to/SystemName/RunName`), otherwise, it uses the run folder name as the system name.
 
 ## Usage
 
-Execute the main script (`main_analyzer.py`) from the command line in the directory *containing* `main_analyzer.py` and the `Analysis/` subdirectory.
+Execute the main script (`main_analyzer.py`) from the command line. The primary argument is `--folder`, which specifies the path to the simulation run directory you want to analyze.
 
-**1. Batch Processing (Recommended for multiple runs):**
+**1. Run All Analyses (Default):**
 
-* Navigate to the directory containing `main_analyzer.py` and the `Analysis/` folder. Your simulation data should be in subdirectories relative to this location (or specify with `--base_dir`).
-* Run all analyses and generate individual summaries (HTML report generated):
+* This is the standard mode and generates the HTML report.
     ```bash
-    python main_analyzer.py # Runs all analyses by default if no flags given
+    python main_analyzer.py --folder /path/to/your/run_directory
     ```
     or explicitly:
     ```bash
-    python main_analyzer.py --all
+    python main_analyzer.py --folder /path/to/your/run_directory --all
     ```
-* Run only specific analyses (e.g., COM distance and Ion tracking). HTML report will be **skipped**:
+
+**2. Run Specific Analyses Only:**
+
+* If you only want to run specific parts of the analysis (e.g., Ion and Water analysis), use the corresponding flags. Note that the HTML report will **not** be generated in this case, only the specific output files and the summary JSON.
     ```bash
-    python main_analyzer.py --COM --ions
+    python main_analyzer.py --folder /path/to/your/run_directory --ions --water
     ```
+* Available analysis flags:
+    * `--GG`: G-G distance (pore diameter) analysis.
+    * `--COM`: COM distance (toxin stability) analysis.
+    * `--orientation`: Toxin orientation and contact analysis.
+    * `--ions`: K+ ion tracking and coordination analysis.
+    * `--water`: Cavity Water analysis.
+    * `--gyration`: Carbonyl Gyration analysis.
 
-**2. Single Folder Analysis:**
+**3. Other Options:**
 
-* Analyze a specific run directory (e.g., `/path/to/System_1/Run_1`). The script assumes `main_analyzer.py` is run from its own directory:
-    ```bash
-    python main_analyzer.py --folder /path/to/System_1/Run_1
-    ```
-* Analyze a specific run directory with specific analyses (HTML report skipped):
-    ```bash
-    python main_analyzer.py --folder /path/to/System_1/Run_1 --ions --water
-    ```
-
-**3. Generate PowerPoint Summary Only:**
-
-* Collect results from existing `analysis_summary.json` files under the current directory (or specified `--base_dir`) and create a presentation:
-    ```bash
-    python main_analyzer.py --pptx [--base_dir /path/to/results/base]
-    ```
-    *(Requires analysis to have been run previously)*
-
-**4. Other Options:**
-
-* `--force_rerun`: Reprocess runs even if a summary file exists and matches the current script version.
-* `--box_z <value>`: Provide an estimate for the simulation box Z-dimension (in Å) to aid COM distance filtering.
+* `--force_rerun`: Reprocess the run even if a summary file exists and matches the current script version. Useful if input data or code relevant to the analysis has changed.
+* `--box_z <value>`: Provide an estimate for the simulation box Z-dimension (in Å) to aid COM distance filtering, particularly the multi-level KDE filter.
 * `--log_level <LEVEL>`: Set logging verbosity (DEBUG, INFO, WARNING, ERROR). Default: INFO.
-* `--base_dir <path>`: Specify the base directory containing `System/Run` folders if not running the script from there directly. Also affects where the main log and PPT are saved.
 
-**5. Single Trajectory Mode (Discouraged):**
+**4. Single Trajectory Mode (Discouraged):**
 
-* Use specific topology and trajectory files. Requires `--topology`. Output goes to trajectory directory unless `--output` is specified.
+* This mode is less recommended as it bypasses the organized folder structure. It requires specific topology and trajectory files. Output goes to the trajectory's directory unless `--output` is specified.
     ```bash
     python main_analyzer.py --trajectory traj.dcd --topology topo.psf [--output ./analysis_out] [--all | analysis_flags]
     ```
 
 ## Output Files
 
-Outputs are generated within each processed run directory (`<base_dir>/System/Run/` or the specific folder provided via `--folder` or `--output`).
+Outputs are generated within the processed run directory specified via `--folder` (or `--output` in trajectory mode).
 
 **1. CSV Files:**
 
@@ -177,10 +164,12 @@ Outputs are generated within each processed run directory (`<base_dir>/System/Ru
 * `K_Ion_Occupancy_Per_Frame.csv`: Number of ions in each binding site per frame.
 * `K_Ion_Site_Statistics.csv`: Summary statistics (Mean Occ, Max Occ, % Time Occ) for each binding site.
 * `Cavity_Water_Occupancy.csv`: Water count and indices in the cavity per frame.
+* `Gyration_States.csv`: Frame-by-frame state ('On'/'Off') for G1 and Y residues based on gyration.
+* `Gyration_Summary.csv`: Summary statistics for gyration analysis (mean radius, flips, durations).
 
 **2. JSON Files:**
 
-* `analysis_summary.json`: Overall summary statistics for the run (means, stds, flags, status). **Crucial for aggregation.**
+* `analysis_summary.json`: Overall summary statistics for the run (means, stds, flags, status). **Crucial for later aggregation.**
 * `Cavity_Water_ResidenceTimes.json`: List of calculated water residence times (ns) and buffer used.
 
 **3. Text Files:**
@@ -197,33 +186,45 @@ Outputs are generated within each processed run directory (`<base_dir>/System/Ru
 * Residue Contact Maps (Full, Focused).
 * K+ Ion plots (Binding Site Schematic, Combined Position/Density, Occupancy Heatmap, Average Occupancy).
 * Cavity Water plots (Count vs Time, Residence Time Histogram).
+* Carbonyl Gyration plots (Radius vs Time, State vs Time).
 
 **5. HTML Reports:**
 
-* `<RunName>_analysis_report.html`: Comprehensive report with embedded plots and statistics. *(Generated only when running in 'all analyses' mode)*.
-
-**6. PowerPoint Summary (Optional):**
-
-* `MD_Analysis_Summary.pptx`: Generated in the directory where the script is run using the `--pptx` flag (or `--base_dir`). Aggregates key plots from multiple runs.
+* `<RunName>_analysis_report.html`: Comprehensive report with embedded plots and statistics. *(Generated only when running with `--all` or no specific analysis flags)*.
 
 ## Configuration
 
-Key parameters can be adjusted in `Analysis/config.py`:
+Key parameters can be adjusted in `config.py` (or its new location, e.g., `md_analysis/core/config.py`):
 
 * `FRAMES_PER_NS`: Frames per nanosecond in your trajectory (affects time axis).
 * `DEFAULT_CUTOFF`: Default distance (Å) for atom contacts.
 * `EXIT_BUFFER_FRAMES`: Frames water must be outside cavity for residence time calculation.
+* Filter parameters, Gyration thresholds, etc.
 
 ## Logging
 
-* A main log file (`md_analysis_main_*.log`) is created in the base directory (`--base_dir` or CWD).
-* Each run directory gets a specific log file (`<RunName>_analysis.log`).
+* A main log file (`md_analysis_main_*.log`) is created in the directory where the script is run.
+* Each processed run directory gets a specific log file (`<RunName>_analysis.log`).
 * Logging level can be controlled with `--log_level`.
 
-## Advanced Usage
+## Advanced Usage / Workflow
 
-* **Distributed Computing:** The script (especially in single-folder mode via `--folder`) can be submitted as individual jobs on computing clusters (e.g., using SLURM). Each job processes one run folder.
-* **Aggregation:** After batch processing, use the separate `aggregate_summaries.py` script (if provided/created) to parse all generated `analysis_summary.json` files and create a master CSV summary table across all runs.
+* **Running Multiple Simulations:** Since the script now processes only one folder at a time, you can run multiple instances in parallel or sequentially using a simple shell script or a workflow manager.
+    * **Example Shell Script:**
+        ```bash
+        #!/bin/bash
+        ANALYSIS_SCRIPT="/path/to/main_analyzer.py"
+        BASE_DATA_DIR="/path/to/all/systems"
+
+        # Find all Run directories (e.g., System*/Run*)
+        find "$BASE_DATA_DIR" -mindepth 2 -maxdepth 2 -type d -print0 | while IFS= read -r -d $'\0' run_folder; do
+            echo "Processing: $run_folder"
+            python "$ANALYSIS_SCRIPT" --folder "$run_folder" --all
+            echo "----------------------------------------"
+        done
+        echo "All processing finished."
+        ```
+* **Aggregation:** After processing multiple run directories, use the separate `Aggregate_Summaries.py` script (if provided/created) to parse all generated `analysis_summary.json` files and create a master CSV summary table across all runs.
 
 ## License
 
