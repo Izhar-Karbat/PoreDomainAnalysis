@@ -19,15 +19,15 @@ for details on specific analysis implementations.
 USAGE:
 ------
 1. Single Run Analysis (All Analyses - Default):
-   python -m md_analysis.main --folder /path/to/run_directory [--all]
+   python -m pore_analysis.main --folder /path/to/run_directory [--all]
 
 2. Selective Analysis (Single Run):
-   python -m md_analysis.main --folder /path/to/run --FLAG [--FLAG ...]
+   python -m pore_analysis.main --folder /path/to/run --FLAG [--FLAG ...]
    (e.g., --GG, --COM, --ions, --water, --tyrosine, --conduction)
    NOTE: HTML report only generated with --all or no flags.
 
 3. Discouraged Single Trajectory Mode:
-    python -m md_analysis.main --trajectory <path> --topology <path> [--output <dir>] [analysis_flags]
+    python -m pore_analysis.main --trajectory <path> --topology <path> [--output <dir>] [analysis_flags]
 
 """
 
@@ -44,21 +44,21 @@ import MDAnalysis as mda
 
 # --- Import constants and functions from refactored modules ---
 try:
-    from md_analysis.core.config import Analysis_version
-    from md_analysis.core.utils import frames_to_time, clean_json_data
-    from md_analysis.core.logging import setup_analysis_logger
-    from md_analysis.modules.core_analysis.core import analyze_trajectory, filter_and_save_data
-    from md_analysis.modules.orientation_contacts.orientation_contacts import analyze_toxin_orientation
-    from md_analysis.modules.ion_analysis import track_potassium_ions, analyze_ion_coordination, analyze_ion_conduction
-    from md_analysis.modules.inner_vestibule_analysis import analyze_inner_vestibule as analyze_cavity_water
-    from md_analysis.reporting.summary import calculate_and_save_run_summary
-    from md_analysis.reporting.html import generate_html_report
-    from md_analysis.modules.gyration_analysis.gyration_core import analyze_carbonyl_gyration
-    from md_analysis.modules.tyrosine_analysis import analyze_sf_tyrosine_rotamers
+    from pore_analysis.core.config import Analysis_version
+    from pore_analysis.core.utils import frames_to_time, clean_json_data
+    from pore_analysis.core.logging import setup_analysis_logger
+    from pore_analysis.modules.core_analysis.core import analyze_trajectory, filter_and_save_data
+    from pore_analysis.modules.orientation_contacts.orientation_contacts import analyze_toxin_orientation
+    from pore_analysis.modules.ion_analysis import track_potassium_ions, analyze_ion_coordination, analyze_ion_conduction
+    from pore_analysis.modules.inner_vestibule_analysis import analyze_inner_vestibule as analyze_cavity_water
+    from pore_analysis.reporting.summary import calculate_and_save_run_summary
+    from pore_analysis.reporting.html import generate_html_report
+    from pore_analysis.modules.gyration_analysis.gyration_core import analyze_carbonyl_gyration
+    from pore_analysis.modules.tyrosine_analysis import analyze_sf_tyrosine_rotamers
 
 except ImportError as e:
     print(f"ERROR: Failed to import necessary modules: {e}", file=sys.stderr)
-    print("Please ensure the md_analysis package is properly installed and structured.", file=sys.stderr)
+    print("Please ensure the pore_analysis package is properly installed and structured.", file=sys.stderr)
     sys.exit(1)
 
 def main():
