@@ -28,8 +28,18 @@ GYRATION_FLIP_TOLERANCE_FRAMES = 5
 # Number of consecutive frames water must be outside cavity to confirm exit
 EXIT_BUFFER_FRAMES = 5
 
-# Tolerance: Minimum consecutive frames an ion must occupy a new adjacent site to confirm a transition
-ION_TRANSITION_TOLERANCE_FRAMES = 10
+# --- Ion Analysis Parameters ---
+#: Mode for transition tolerance. Options:
+#:   'strict'   — two-sided penalty (both past and future windows)
+#:   'forward'  — only forward window
+#:   'majority' — majority-rule in both windows
+ION_TRANSITION_TOLERANCE_MODE: str = "strict"
+#: Number of frames in each tolerance window (used for forward and backward checks)
+ION_TRANSITION_TOLERANCE_FRAMES: int = 5
+#: If True, compute per-site thresholds; otherwise use uniform value
+ION_USE_SITE_SPECIFIC_THRESHOLDS: bool = True
+#: Uniform occupancy threshold (Å) if site-specific disabled
+ION_SITE_OCCUPANCY_THRESHOLD_A: float = 2.0
 
 # Add any other system-wide constants or default thresholds here
 # Example:

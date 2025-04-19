@@ -262,146 +262,87 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                 run_summary[key] = None # Set to None for control
             else:
                 run_summary[key] = value # Use retrieved value (could be NaN if calc failed)
+        run_summary.update(percentile_stats) # Directly update from the dict
         logger.debug(f"Incorporated percentile stats: {percentile_stats}")
 
-        # --- Add Orientation Rotation Stats --- (Set to None for control)
-        orient_rot_keys = [
-            'Orient_RotX_Mean', 'Orient_RotX_Std', 'Orient_RotY_Mean',
-            'Orient_RotY_Std', 'Orient_RotZ_Mean', 'Orient_RotZ_Std'
-        ]
-        if not is_control_system:
-            for key in orient_rot_keys:
-                # Use .get() for safety in case the dict is incomplete
-                run_summary[key] = orientation_rotation_stats.get(key, np.nan)
-        else:
-            for key in orient_rot_keys:
-                run_summary[key] = None # Set to None if control system
-        logger.debug(f"Incorporated orientation rotation stats: {orientation_rotation_stats}")
+        # --- Add Orientation Rotation Stats --- (Use values from passed dict)
+        run_summary['Orient_RotX_Mean'] = orientation_rotation_stats.get('Orient_RotX_Mean', None)
+        run_summary['Orient_RotX_Std'] = orientation_rotation_stats.get('Orient_RotX_Std', None)
+        run_summary['Orient_RotY_Mean'] = orientation_rotation_stats.get('Orient_RotY_Mean', None)
+        run_summary['Orient_RotY_Std'] = orientation_rotation_stats.get('Orient_RotY_Std', None)
+        run_summary['Orient_RotZ_Mean'] = orientation_rotation_stats.get('Orient_RotZ_Mean', None)
+        run_summary['Orient_RotZ_Std'] = orientation_rotation_stats.get('Orient_RotZ_Std', None)
+        logger.debug(f"Incorporated orientation stats: {orientation_rotation_stats}")
 
-        # --- Add Ion Transit Stats --- (Always calculated if available)
-        transit_stat_keys = [
-            'MeanTransitTime_ns', 'MedianTransitTime_ns', 'StdTransitTime_ns',
-            'MinTransitTime_ns', 'MaxTransitTime_ns', 'TotalTransitsRecorded', 'IonsWithTransits'
-        ]
-        # Add prefix for clarity in JSON
-        for key in transit_stat_keys:
-            # Use 0.0 as default for counts/stats when no events occurred, NaN otherwise
-            default_val = 0.0 if key in ['TotalTransitsRecorded', 'IonsWithTransits'] else np.nan
-            run_summary[f'IonTransit_{key}'] = ion_transit_stats.get(key, default_val)
-        logger.debug(f"Incorporated ion transit stats: {ion_transit_stats}")
-
-        # --- Add Gyration Stats ---
-        # Extracts gyration radius stats and detailed flip/state stats for G1 and Y
-
-        if gyration_stats and isinstance(gyration_stats, dict) and gyration_stats:
-            logger.debug("Incorporating G1 and Y gyration and state stats into summary.")
-            # Mean/Std Gyration Radius
+        # --- Add Gyration Stats --- (Explicitly map keys)
+        logger.debug(f"Incorporating gyration stats: {gyration_stats}")
+        if gyration_stats and isinstance(gyration_stats, dict):
+            # Map keys from gyration_stats dict to run_summary keys
             run_summary['Gyration_G1_Mean'] = gyration_stats.get('mean_gyration_g1', np.nan)
             run_summary['Gyration_G1_Std'] = gyration_stats.get('std_gyration_g1', np.nan)
             run_summary['Gyration_Y_Mean'] = gyration_stats.get('mean_gyration_y', np.nan)
             run_summary['Gyration_Y_Std'] = gyration_stats.get('std_gyration_y', np.nan)
-
-            # Detailed Flip/State Stats (New)
-            for res_key in ['g1', 'y']:
-                prefix = f"Gyration_{res_key.upper()}_"
-                run_summary[prefix + 'OnFlips'] = gyration_stats.get(f'{res_key}_on_flips', 0)
-                run_summary[prefix + 'OffFlips'] = gyration_stats.get(f'{res_key}_off_flips', 0)
-                run_summary[prefix + 'MeanDuration_ns'] = gyration_stats.get(f'{res_key}_mean_flip_duration_ns', np.nan)
-                run_summary[prefix + 'StdDuration_ns'] = gyration_stats.get(f'{res_key}_std_flip_duration_ns', np.nan)
-                # Optionally store the list of durations? Might make JSON large.
-                # run_summary[prefix + 'Durations_ns'] = gyration_stats.get(f'{res_key}_flip_durations_ns', [])
-
-            # Keep simple total flip count for G1 if needed? (Currently uses on_flips)
-            # run_summary['Gyration_Flips'] = run_summary.get('Gyration_G1_OnFlips', 0)
-
+            run_summary['Gyration_G1_OnFlips'] = gyration_stats.get('g1_on_flips', 0)
+            run_summary['Gyration_G1_OffFlips'] = gyration_stats.get('g1_off_flips', 0)
+            run_summary['Gyration_G1_MeanDuration_ns'] = gyration_stats.get('g1_mean_flip_duration_ns', np.nan)
+            run_summary['Gyration_G1_StdDuration_ns'] = gyration_stats.get('g1_std_flip_duration_ns', np.nan)
+            run_summary['Gyration_Y_OnFlips'] = gyration_stats.get('y_on_flips', 0)
+            run_summary['Gyration_Y_OffFlips'] = gyration_stats.get('y_off_flips', 0)
+            run_summary['Gyration_Y_MeanDuration_ns'] = gyration_stats.get('y_mean_flip_duration_ns', np.nan)
+            run_summary['Gyration_Y_StdDuration_ns'] = gyration_stats.get('y_std_flip_duration_ns', np.nan)
         else:
-            logger.debug("No gyration stats provided, adding NaN placeholders for G1/Y radius and state stats.")
-            run_summary['Gyration_G1_Mean'] = np.nan
-            run_summary['Gyration_G1_Std'] = np.nan
-            run_summary['Gyration_Y_Mean'] = np.nan
-            run_summary['Gyration_Y_Std'] = np.nan
-            for res_key in ['g1', 'y']:
-                prefix = f"Gyration_{res_key.upper()}_"
-                run_summary[prefix + 'OnFlips'] = 0
-                run_summary[prefix + 'OffFlips'] = 0
-                run_summary[prefix + 'MeanDuration_ns'] = np.nan
-                run_summary[prefix + 'StdDuration_ns'] = np.nan
-                # run_summary[prefix + 'Durations_ns'] = []
+            logger.warning("Gyration stats missing or not a dict. Setting defaults.")
+            # Set defaults if gyration_stats is missing/empty
+            keys_to_default = ['Gyration_G1_Mean', 'Gyration_G1_Std', 'Gyration_Y_Mean', 'Gyration_Y_Std',
+                               'Gyration_G1_MeanDuration_ns', 'Gyration_G1_StdDuration_ns',
+                               'Gyration_Y_MeanDuration_ns', 'Gyration_Y_StdDuration_ns']
+            count_keys_to_default = ['Gyration_G1_OnFlips', 'Gyration_G1_OffFlips',
+                                   'Gyration_Y_OnFlips', 'Gyration_Y_OffFlips']
+            for key in keys_to_default: run_summary[key] = np.nan
+            for key in count_keys_to_default: run_summary[key] = 0
 
-        # --- Add SF Tyrosine Stats --- (New Section)
-        tyrosine_stat_keys = [ # Define keys expected from tyrosine analysis
-            'Tyr_DominantRotamerOverall', # Overall most common state (e.g., 'tp')
-            'Tyr_RotamerTransitions',      # Total transitions between states
-            'Tyr_RotamerToleranceFrames', # Add the tolerance frames key
-            # Add duration statistics keys
-            'Tyr_NonDominant_MeanDuration_ns',
-            'Tyr_NonDominant_StdDuration_ns',
-            'Tyr_NonDominant_EventCount'
-        ]
-        if tyrosine_stats and isinstance(tyrosine_stats, dict) and tyrosine_stats:
-            logger.debug("Incorporating SF Tyrosine rotamer stats into summary.")
-            for key in tyrosine_stat_keys:
-                run_summary[key] = tyrosine_stats.get(key, np.nan) # Use np.nan for missing numeric, could use 'N/A' for strings
-                # Handle specific defaults/types
-                if key == 'Tyr_DominantRotamerOverall' and pd.isna(run_summary[key]): # Handle potential string N/A
-                    run_summary[key] = 'N/A'
-                elif key in ['Tyr_RotamerTransitions', 'Tyr_NonDominant_EventCount'] and pd.isna(run_summary[key]):
-                    run_summary[key] = 0 # Default counts to 0
-                elif key == 'Tyr_RotamerToleranceFrames' and pd.isna(run_summary[key]):
-                    run_summary[key] = TYROSINE_ROTAMER_TOLERANCE_FRAMES # Use default if missing
+        # --- Add Tyrosine Stats --- (Explicitly map keys)
+        logger.debug(f"Incorporating tyrosine stats: {tyrosine_stats}")
+        tyrosine_stat_keys = {
+            'Tyr_DominantRotamerOverall': ('Tyr_DominantRotamerOverall', 'N/A'),
+            'Tyr_RotamerTransitions': ('Tyr_RotamerTransitions', 0),
+            'Tyr_RotamerToleranceFrames': ('Tyr_RotamerToleranceFrames', TYROSINE_ROTAMER_TOLERANCE_FRAMES),
+            'Tyr_NonDominant_MeanDuration_ns': ('Tyr_NonDominant_MeanDuration_ns', np.nan),
+            'Tyr_NonDominant_StdDuration_ns': ('Tyr_NonDominant_StdDuration_ns', np.nan),
+            'Tyr_NonDominant_EventCount': ('Tyr_NonDominant_EventCount', 0)
+        }
+        if tyrosine_stats and isinstance(tyrosine_stats, dict):
+            for summary_key, (stats_key, default_val) in tyrosine_stat_keys.items():
+                run_summary[summary_key] = tyrosine_stats.get(stats_key, default_val)
         else:
-            logger.debug("No SF Tyrosine stats provided, adding placeholders.")
-            for key in tyrosine_stat_keys:
-                 # Default values for placeholders
-                 if key in ['Tyr_RotamerTransitions', 'Tyr_NonDominant_EventCount']:
-                      run_summary[key] = 0
-                 elif key == 'Tyr_RotamerToleranceFrames':
-                     run_summary[key] = TYROSINE_ROTAMER_TOLERANCE_FRAMES # Save default if stats missing
-                 elif key in ['Tyr_NonDominant_MeanDuration_ns', 'Tyr_NonDominant_StdDuration_ns']:
-                     run_summary[key] = np.nan # Default durations to NaN
-                 else:
-                      run_summary[key] = 'N/A'
+            logger.warning("Tyrosine stats missing or not a dict. Setting defaults.")
+            for summary_key, (_, default_val) in tyrosine_stat_keys.items():
+                run_summary[summary_key] = default_val
 
-        # --- Add Ion Conduction/Transition Stats --- (New Section)
-        conduction_stat_keys = [
-            'Ion_ConductionEvents_Total', 'Ion_ConductionEvents_Outward', 'Ion_ConductionEvents_Inward',
-            'Ion_Conduction_MeanTransitTime_ns', 'Ion_Conduction_MedianTransitTime_ns', 'Ion_Conduction_StdTransitTime_ns',
-            'Ion_TransitionEvents_Total', 'Ion_TransitionEvents_Upward', 'Ion_TransitionEvents_Downward',
-            'Ion_Transition_ToleranceFrames', # Add tolerance key
-            # Add keys for adjacent site transitions dynamically if needed, or list explicitly
-            # Example explicit listing (ensure these match output keys from analyze_ion_conduction):
-            'Ion_Transition_Cavity_S4', 'Ion_Transition_S4_S3', 'Ion_Transition_S3_S2',
-            'Ion_Transition_S2_S1', 'Ion_Transition_S1_S0'
-        ]
-        if conduction_stats and isinstance(conduction_stats, dict) and conduction_stats:
-            logger.debug("Incorporating ion conduction/transition stats into summary.")
-            for key in conduction_stat_keys:
-                # Check if key exists in the provided stats, otherwise default
-                if key in conduction_stats:
-                    run_summary[key] = conduction_stats[key]
-                else:
-                    # Default logic for potentially missing keys
-                    if 'TransitTime' in key:
-                        run_summary[key] = np.nan
-                    elif key.endswith('_Total') or key.startswith('Ion_Transition_') or '_transitions' in key:
-                        run_summary[key] = 0 # Default counts to 0
-                    else:
-                        run_summary[key] = np.nan # Default other missing stats to NaN
-                    logger.debug(f"Conduction stat key '{key}' not found, using default.")
-            # Handle potential NaN values for counts that should be 0
-            for key in run_summary:
-                 if (key.startswith('Ion_ConductionEvents') or key.startswith('Ion_Transition')) and pd.isna(run_summary[key]):
-                      run_summary[key] = 0
+        # --- Add Ion Conduction / Transition Stats ---
+        logger.debug(f"Incorporating conduction stats: {conduction_stats}")
+        # Keys should now be calculated by ion_conduction.py
+        # Use .get() with defaults just in case the dictionary is missing keys
+        run_summary['Ion_ConductionEvents_Total'] = conduction_stats.get('Ion_ConductionEvents_Total', 0)
+        run_summary['Ion_ConductionEvents_Outward'] = conduction_stats.get('Ion_ConductionEvents_Outward', 0)
+        run_summary['Ion_ConductionEvents_Inward'] = conduction_stats.get('Ion_ConductionEvents_Inward', 0)
+        run_summary['Ion_Conduction_MeanTransitTime_ns'] = conduction_stats.get('Ion_Conduction_MeanTransitTime_ns', np.nan)
+        run_summary['Ion_Conduction_MedianTransitTime_ns'] = conduction_stats.get('Ion_Conduction_MedianTransitTime_ns', np.nan)
+        run_summary['Ion_Conduction_StdTransitTime_ns'] = conduction_stats.get('Ion_Conduction_StdTransitTime_ns', np.nan)
 
-        else:
-            logger.debug("No ion conduction stats provided, adding placeholders.")
-            for key in conduction_stat_keys:
-                 if 'TransitTime' in key:
-                     run_summary[key] = np.nan
-                 elif key == 'Ion_Transition_ToleranceFrames':
-                      run_summary[key] = ION_TRANSITION_TOLERANCE_FRAMES # Default if missing
-                 else: # All counts default to 0
-                     run_summary[key] = 0
+        run_summary['Ion_TransitionEvents_Total'] = conduction_stats.get('Ion_TransitionEvents_Total', 0)
+        run_summary['Ion_TransitionEvents_Upward'] = conduction_stats.get('Ion_TransitionEvents_Upward', 0)
+        run_summary['Ion_TransitionEvents_Downward'] = conduction_stats.get('Ion_TransitionEvents_Downward', 0)
+
+        # Get per-pair counts (expect keys like 'Ion_Transition_Cavity_S4')
+        # Define expected pairs based on site order (adjust if needed)
+        site_order = [s for s in ['Cavity', 'S4', 'S3', 'S2', 'S1', 'S0']]
+        for s1, s2 in zip(site_order[:-1], site_order[1:]):
+            key = f"Ion_Transition_{s1}_{s2}"
+            run_summary[key] = conduction_stats.get(key, 0) # Default to 0 if key missing
+
+        run_summary['Ion_Transition_ToleranceMode'] = conduction_stats.get('Ion_Transition_ToleranceMode', 'N/A')
+        run_summary['Ion_Transition_ToleranceFrames'] = conduction_stats.get('Ion_Transition_ToleranceFrames', np.nan)
 
         # --- Add Config Constants Used (for report reference) ---
         # Explicitly add specific config values that the report might want to display

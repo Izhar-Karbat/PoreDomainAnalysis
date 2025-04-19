@@ -27,10 +27,10 @@ import warnings
 
 # Import from other modules
 try:
-    from md_analysis.core.utils import frames_to_time
-    from md_analysis.modules.ion_analysis import find_filter_residues
-    from md_analysis.core.logging import setup_system_logger
-    from md_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
+    from pore_analysis.core.utils import frames_to_time
+    from pore_analysis.modules.ion_analysis import find_filter_residues
+    from pore_analysis.core.logging import setup_system_logger
+    from pore_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
 except ImportError as e:
     print(f"Error importing dependency modules in gyration_analysis.py: {e}")
     raise

@@ -409,7 +409,28 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             else:
                 logging.warning("Skipping Ion Coordination (missing prerequisites from ion tracking: indices or residues).")
 
-        # 6. Cavity Water (if requested)
+        # 6. Ion Conduction (if requested) - NEW STEP
+        if run_conduction:
+            logging.info("Running Ion Conduction & Transition Analysis...")
+            if results.get('ion_indices') and results.get('filter_sites') and results.get('g1_reference') is not None and results.get('time_points_ions') is not None and results.get('ions_z_abs') is not None:
+                try:
+                    results['conduction_stats'] = analyze_ion_conduction(
+                        run_dir=run_dir,
+                        time_points=results['time_points_ions'], # Use time points corresponding to ion positions
+                        ions_z_positions=results['ions_z_abs'],
+                        ion_indices=results['ion_indices'],
+                        filter_sites=results['filter_sites'],
+                        g1_reference=results['g1_reference']
+                    )
+                    logging.info(f"Ion Conduction Analysis completed. Total Transitions: {results['conduction_stats'].get('Ion_TransitionEvents_Total', 'N/A')}")
+                except Exception as e_conduction:
+                    logging.error(f"Ion Conduction analysis failed: {e_conduction}", exc_info=True)
+                    results['conduction_stats'] = {} # Ensure key exists on error
+            else:
+                logging.warning("Skipping Ion Conduction (missing prerequisites from ion tracking).")
+                results['conduction_stats'] = {} # Ensure key exists
+
+        # 7. Cavity Water (if requested)
         if run_water:
             logging.info("Running Cavity Water Analysis...")
             # Check prerequisites (sites, reference, and the filter_residues dict)
@@ -422,7 +443,7 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             else:
                 logging.warning("Skipping Cavity Water analysis (missing prerequisites: sites, g1_ref, or filter_residues).")
 
-        # 7. Carbonyl Gyration Analysis (if requested)
+        # 8. Carbonyl Gyration Analysis (if requested)
         if run_gyration:
             logging.info("Running Carbonyl Gyration Analysis...")
             # Assume analyze_carbonyl_gyration is defined elsewhere and imported
@@ -443,7 +464,7 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             logging.info("Skipping Carbonyl Gyration analysis (not requested)")
             results['gyration_stats'] = {} # Ensure key exists even if empty
 
-        # 8. SF Tyrosine Rotamer Analysis (if requested) 
+        # 9. SF Tyrosine Rotamer Analysis (if requested) 
         if run_tyrosine:
             logging.info("Running SF Tyrosine Rotamer Analysis...")
             # Assumes analyze_sf_tyrosine_rotamers is imported
@@ -457,34 +478,6 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         else:
             logging.info("Skipping SF Tyrosine analysis (not requested)")
             results['tyrosine_stats'] = {}
-
-        # 9. Ion Conduction / Transition Analysis (if requested) 
-        if run_conduction:
-            logging.info("Running Ion Conduction / Transition Analysis...")
-            # Check prerequisites from ion tracking
-            if (results.get('time_points_ions') is not None and
-                results.get('ions_z_abs') is not None and
-                results.get('ion_indices') is not None and
-                results.get('filter_sites') is not None and
-                results.get('g1_reference') is not None):
-
-                results['conduction_stats'] = analyze_ion_conduction(
-                    run_dir=run_dir,
-                    time_points=results['time_points_ions'],
-                    ions_z_positions=results['ions_z_abs'],
-                    ion_indices=results['ion_indices'],
-                    filter_sites=results['filter_sites'],
-                    g1_reference=results['g1_reference']
-                )
-                total_cond = results['conduction_stats'].get('Ion_ConductionEvents_Total', 0)
-                total_trans = results['conduction_stats'].get('Ion_TransitionEvents_Total', 0)
-                logging.info(f"Completed ion conduction analysis: {total_cond} conduction events, {total_trans} transitions.")
-            else:
-                logging.warning("Skipping Ion Conduction analysis (missing prerequisites from ion tracking). Ensure --ions was run.")
-                results['conduction_stats'] = {} # Ensure key exists
-        else:
-             logging.info("Skipping Ion Conduction analysis (not requested)")
-             results['conduction_stats'] = {}
 
         # --- Post-Analysis ---
 

@@ -4,7 +4,7 @@
 
 ## 1. Purpose & Philosophy
 
-This document outlines the structure, core logic, conventions, and development practices for the MD Analysis Suite. Its primary goal is to ensure code contributions (from humans or AI assistants) maintain the integrity, consistency, and intended workflow of the suite, preventing integration errors and promoting maintainability.
+This document outlines the structure, core logic, conventions, and development practices for the K+ Pore Analysis Suite. Its primary goal is to ensure code contributions (from humans or AI assistants) maintain the integrity, consistency, and intended workflow of the suite, preventing integration errors and promoting maintainability.
 
 **Core Philosophy:**
 

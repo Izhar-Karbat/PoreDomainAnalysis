@@ -1,376 +1,336 @@
 """
-Functions for analyzing ion conduction events and site-to-site transitions.
+Module for analyzing K+ ion conduction and site‐to‐site transitions.
 """
 
 import os
 import logging
+from typing import Dict, Any, List, Optional
+
 import numpy as np
 import pandas as pd
 
-try:
-    from pore_analysis.core.config import FRAMES_PER_NS, ION_TRANSITION_TOLERANCE_FRAMES
-except ImportError:
-    # Fallback if config import fails (should not happen in normal execution)
-    FRAMES_PER_NS = 10.0
-    ION_TRANSITION_TOLERANCE_FRAMES = 10 # Use default if import fails
-    print("Warning: Could not import constants from config. Using defaults.")
+from pore_analysis.core.config import (
+    FRAMES_PER_NS,
+    ION_TRANSITION_TOLERANCE_FRAMES,
+    ION_TRANSITION_TOLERANCE_MODE,
+    ION_USE_SITE_SPECIFIC_THRESHOLDS,
+    ION_SITE_OCCUPANCY_THRESHOLD_A,
+)
 
-# Get a logger for this module
-module_logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
-def save_conduction_data(run_dir, conduction_events, transition_events, stats):
-    """Saves conduction event lists and summary stats to CSV files."""
-    output_dir = os.path.join(run_dir, "ion_analysis") # Save within ion_analysis folder
+
+def save_conduction_data(
+    run_dir: str,
+    conduction_events: List[Dict[str, Any]],
+    transition_events: List[Dict[str, Any]],
+    stats: Dict[str, Any]
+) -> None:
+    """
+    Save detailed conduction and transition events to CSV files.
+
+    Side Effects:
+        Creates (or reuses) directory <run_dir>/ion_analysis/,
+        writes:
+          - ion_conduction_events.csv
+          - ion_transition_events.csv
+    """
+    output_dir = os.path.join(run_dir, "ion_analysis")
     os.makedirs(output_dir, exist_ok=True)
-    logger = module_logger
 
-    # Save Conduction Events
+    # Conduction events
     if conduction_events:
         logger.info("Saving ion conduction events...")
-        df_cond = pd.DataFrame(conduction_events)
-        # Order columns nicely
-        cond_cols = ['ion_idx', 'direction', 'entry_frame', 'exit_frame', 'entry_time', 'exit_time', 'transit_time', 'sites_visited']
-        df_cond = df_cond[[col for col in cond_cols if col in df_cond.columns]] # Ensure columns exist
-        cond_path = os.path.join(output_dir, "ion_conduction_events.csv")
+        dfc = pd.DataFrame(conduction_events)
+        cols = ['ion_idx','direction','entry_frame','exit_frame','entry_time','exit_time','transit_time','sites_visited']
+        dfc = dfc[[c for c in cols if c in dfc.columns]]
+        path = os.path.join(output_dir, "ion_conduction_events.csv")
         try:
-            df_cond.to_csv(cond_path, index=False, float_format='%.3f')
-            logger.info(f"Saved conduction events to {cond_path}")
+            dfc.to_csv(path, index=False, float_format="%.3f")
+            logger.info(f"Conduction events written to {path}")
         except Exception as e:
-            logger.error(f"Failed to save conduction events CSV: {e}")
+            logger.error(f"Failed to write conduction CSV: {e}")
     else:
-        logger.info("No completed ion conduction events detected.")
+        logger.info("No conduction events to save.")
 
-    # Save Transition Events
+    # Transition events
     if transition_events:
-        logger.info("Saving site-to-site transition events...")
-        df_trans = pd.DataFrame(transition_events)
-        trans_cols = ['frame', 'time', 'ion_idx', 'from_site', 'to_site', 'direction', 'z_position']
-        # Add ion_idx if it wasn't explicitly added during collection (it should be added)
-        if 'ion_idx' not in df_trans.columns and conduction_events:
-             # Need to map back - complex. Assume ion_idx is added during collection.
-             logger.warning("Transition events DataFrame missing 'ion_idx'. Check collection logic.")
-
-        df_trans = df_trans[[col for col in trans_cols if col in df_trans.columns]]
-        trans_path = os.path.join(output_dir, "ion_transition_events.csv")
+        logger.info("Saving site-transition events...")
+        dft = pd.DataFrame(transition_events)
+        cols = ['frame','time','ion_idx','from_site','to_site','direction','z_position']
+        dft = dft[[c for c in cols if c in dft.columns]]
+        path = os.path.join(output_dir, "ion_transition_events.csv")
         try:
-            df_trans.to_csv(trans_path, index=False, float_format='%.3f')
-            logger.info(f"Saved transition events to {trans_path}")
+            dft.to_csv(path, index=False, float_format="%.3f")
+            logger.info(f"Transition events written to {path}")
         except Exception as e:
-            logger.error(f"Failed to save transition events CSV: {e}")
+            logger.error(f"Failed to write transition CSV: {e}")
     else:
-        logger.info("No site-to-site transition events detected.")
+        logger.info("No transition events to save.")
 
-    # Save Summary Stats (Optional, as they are returned anyway)
-    # logger.info("Saving conduction/transition summary stats...")
-    # stats_path = os.path.join(output_dir, "ion_conduction_summary.csv")
-    # try:
-    #     pd.Series(stats).reset_index().rename(columns={'index':'Metric', 0:'Value'}).to_csv(stats_path, index=False)
-    #     logger.info(f"Saved conduction summary stats to {stats_path}")
-    # except Exception as e:
-    #     logger.error(f"Failed to save conduction summary stats CSV: {e}")
 
-def create_conduction_plots(run_dir, conduction_events, transition_events, stats, time_points):
-    """Placeholder for creating conduction/transition plots."""
-    logger = module_logger
-    logger.info("Plotting for ion conduction/transitions is not yet implemented.")
-    # Add plotting logic here in the future (e.g., using matplotlib, seaborn, plotly for Sankey)
-    pass
-
-def analyze_ion_conduction(run_dir, time_points, ions_z_positions, ion_indices, filter_sites, g1_reference):
+def analyze_ion_conduction(
+    run_dir: str,
+    time_points: np.ndarray,
+    ions_z_positions: Dict[int, np.ndarray],
+    ion_indices: List[int],
+    filter_sites: Dict[str, float],
+    g1_reference: float
+) -> Dict[str, Any]:
     """
-    Analyze ion conduction and transition events through the channel.
+    Analyze ion conduction (full Cavity↔S0 passes) and adjacent site transitions.
 
     Args:
-        run_dir (str): Directory to save output.
-        time_points (np.ndarray): Array of time points (ns).
-        ions_z_positions (dict): Dictionary {ion_idx: np.array(z_positions)}.
-        ion_indices (list): List of tracked ion indices.
-        filter_sites (dict): Dictionary of filter site labels to G1-centric Z positions (S0-S4, Cavity).
-        g1_reference (float): Absolute Z position of the G1 C-alpha reference plane.
+        run_dir: Path to the simulation run directory.
+        time_points: 1D array of times (ns).
+        ions_z_positions: Mapping ion_idx -> array of Z coordinates.
+        ion_indices: List of ion indices to track.
+        filter_sites: Map site_label -> Z_rel_to_G1 (ns).
+        g1_reference: Absolute Z position of G1 reference (Å).
 
     Returns:
-        dict: Dictionary with conduction and transition statistics.
+        stats: Dictionary containing:
+          - Ion_ConductionEvents_Total, _Outward, _Inward
+          - Ion_Conduction_MeanTransitTime_ns, _MedianTransitTime_ns, _StdTransitTime_ns
+          - Ion_TransitionEvents_Total, _Upward, _Downward
+          - Ion_Transition_<Site1>_<Site2> counts for each adjacent pair
+          - Ion_Transition_ToleranceMode, Ion_Transition_ToleranceFrames
     """
-    logger = module_logger
-    logger.info("Starting Ion Conduction & Transition Analysis...")
+    logger.info("Starting Ion Conduction & Transition Analysis…")
 
-    # Input validation
-    if not all([time_points is not None, ions_z_positions, ion_indices is not None, filter_sites, g1_reference is not None]):
-        logger.error("Missing essential input data for conduction analysis. Aborting.")
-        return {}
-    if len(time_points) == 0:
-        logger.error("Time points array is empty. Aborting conduction analysis.")
+    # -- input checks --
+    if time_points.size == 0 or not ions_z_positions or not ion_indices or len(filter_sites) < 2:
+        logger.error("Insufficient inputs; aborting conduction analysis.")
         return {}
 
-    # Define site order for direction calculation
-    # Ensure Cavity is first (lowest Z) and S0 is last (highest Z)
-    site_order = [s for s in ['Cavity', 'S4', 'S3', 'S2', 'S1', 'S0'] if s in filter_sites]
-    if len(site_order) < 2:
-        logger.error(f"Insufficient filter sites defined ({site_order}) for conduction analysis.")
-        return {}
+    # build ordered list of sites (Cavity lowest Z → S0 highest Z)
+    site_order = [s for s in ['Cavity','S4','S3','S2','S1','S0'] if s in filter_sites]
+    abs_pos = {s: filter_sites[s] + g1_reference for s in site_order}
 
-    # Convert relative site positions to absolute positions
-    try:
-        abs_site_positions = {site: filter_sites[site] + g1_reference for site in site_order}
-        logger.debug(f"Absolute site positions: {abs_site_positions}")
-    except KeyError as e:
-        logger.error(f"Missing site {e} in filter_sites dictionary provided. Aborting.")
-        return {}
-    except Exception as e:
-        logger.error(f"Error calculating absolute site positions: {e}")
-        return {}
+    # compute per-site occupancy thresholds
+    thresholds = {}
+    if ION_USE_SITE_SPECIFIC_THRESHOLDS:
+        for i, site in enumerate(site_order):
+            neighbors = []
+            if i > 0:
+                neighbors.append(abs(abs_pos[site] - abs_pos[site_order[i-1]]))
+            if i < len(site_order)-1:
+                neighbors.append(abs(abs_pos[site_order[i+1]] - abs_pos[site]))
+            thresholds[site] = (min(neighbors)/2.0) if neighbors else ION_SITE_OCCUPANCY_THRESHOLD_A
+    else:
+        for site in site_order:
+            thresholds[site] = ION_SITE_OCCUPANCY_THRESHOLD_A
 
-    # Define site occupancy threshold (adjust if needed)
-    SITE_OCCUPANCY_THRESHOLD_A = 2.0
-    logger.info(f"Using site occupancy threshold: {SITE_OCCUPANCY_THRESHOLD_A} Å")
-
-    # Initialize tracking structures for each ion
-    ion_states = {}
-    for ion_idx in ion_indices:
-        ion_states[ion_idx] = {
-            'current_site': None,
-            'previous_site': None,
-            'in_transit': False,
-            'transit_direction': None, # 'inward', 'outward'
+    # initialize per‑ion state
+    states = {}
+    for idx in ion_indices:
+        states[idx] = {
+            'previous_site':   None,
+            'current_site':    None,
+            'in_transit':      False,
+            'transit_direction': None,
             'transit_entry_frame': None,
-            'transit_entry_time': None,
-            'transit_sites_visited': set(), # Track sites visited during this specific transit
-            'completed_conductions': [], # List to store completed conduction event dicts
-            'site_transitions': []       # List to store site-to-site transition dicts
+            'transit_entry_time':  None,
+            'transit_sites_visited': set(),
+            'conductions':     [],
+            'transitions':     [],
+            'last_bound_site': None,
+            'last_exit_frame': None,
         }
 
     n_frames = len(time_points)
-    logger.info(f"Processing {n_frames} frames for {len(ion_indices)} ions...")
-
-    # --- Process each frame --- #
-    for frame_idx in range(n_frames):
-        t = time_points[frame_idx]
-
+    # iterate frames
+    for fi in range(n_frames):
+        t = time_points[fi]
         for ion_idx in ion_indices:
-            ion_z_array = ions_z_positions.get(ion_idx)
-            if ion_z_array is None or frame_idx >= len(ion_z_array) or np.isnan(ion_z_array[frame_idx]):
-                # Ion doesn't exist, is out of bounds for this frame, or has NaN position
-                # If it was previously in a site, mark it as leaving
-                if ion_states[ion_idx]['current_site'] is not None:
-                    ion_states[ion_idx]['previous_site'] = ion_states[ion_idx]['current_site']
-                    ion_states[ion_idx]['current_site'] = None
-                    ion_states[ion_idx]['in_transit'] = False # Exited the channel region
-                    ion_states[ion_idx]['transit_direction'] = None
-                continue # Skip to next ion
+            zarr = ions_z_positions.get(ion_idx)
+            state = states[ion_idx]
 
-            z_pos = ion_z_array[frame_idx]
-            state = ion_states[ion_idx] # Get current state dict for this ion
-            state['previous_site'] = state['current_site'] # Store last frame's site
+            # handle missing or NaN
+            if zarr is None or fi >= zarr.size or np.isnan(zarr[fi]):
+                state['previous_site'] = state['current_site']
+                state['current_site']  = None
+                state['in_transit']    = False
+                state['transit_sites_visited'].clear()
+                state['last_bound_site'] = None
+                state['last_exit_frame'] = None
+                continue
 
-            # --- Determine current binding site --- #
-            current_site_determined = None
-            min_dist = float('inf')
-            # Find closest site within threshold
-            for site_label, site_z in abs_site_positions.items():
-                dist = abs(z_pos - site_z)
-                if dist < SITE_OCCUPANCY_THRESHOLD_A and dist < min_dist:
-                    min_dist = dist
-                    current_site_determined = site_label
+            z = zarr[fi]
+            state['previous_site'] = state['current_site']
 
-            # If not in a specific site, check if between Cavity and S0 (intermediate)
-            if current_site_determined is None:
-                 # Use actual min/max Z of defined sites as boundaries
-                 min_z_boundary = abs_site_positions[site_order[0]]
-                 max_z_boundary = abs_site_positions[site_order[-1]]
-                 # Ensure min < max
-                 if min_z_boundary > max_z_boundary: min_z_boundary, max_z_boundary = max_z_boundary, min_z_boundary
+            # assign to nearest site or intermediate
+            best_site, best_dist = None, np.inf
+            for site, pos in abs_pos.items():
+                d = abs(z - pos)
+                if d < thresholds[site] and d < best_dist:
+                    best_dist, best_site = d, site
+            if best_site is None:
+                lo, hi = abs_pos[site_order[0]], abs_pos[site_order[-1]]
+                if lo > hi:
+                    lo, hi = hi, lo
+                if lo <= z <= hi:
+                    best_site = 'intermediate'
+            state['current_site'] = best_site
 
-                 if min_z_boundary <= z_pos <= max_z_boundary:
-                     current_site_determined = 'intermediate'
-                 # else: it's outside the S0-Cavity range, current_site_determined remains None
+            # track last real site for smoothing
+            if best_site and best_site != 'intermediate':
+                state['last_bound_site'] = best_site
+                state['last_exit_frame'] = None
+            elif best_site == 'intermediate':
+                prev = state['previous_site']
+                if prev and prev != 'intermediate':
+                    state['last_bound_site'] = prev
+                    state['last_exit_frame'] = fi
 
-            state['current_site'] = current_site_determined
-            previous_site = state['previous_site']
+            # --- detect adjacent site transitions ---
+            prev, curr = state['previous_site'], state['current_site']
+            if prev in site_order and curr in site_order and prev != curr:
+                i_p, i_c = site_order.index(prev), site_order.index(curr)
+                if abs(i_c - i_p) == 1:
+                    # tolerance windows
+                    mode = ION_TRANSITION_TOLERANCE_MODE
+                    tf = ION_TRANSITION_TOLERANCE_FRAMES
+                    # backward check
+                    ok = True
+                    if mode != 'forward':
+                        if fi < tf:
+                            ok = False
+                        else:
+                            hits = 0
+                            for k in range(1, tf):
+                                zp = ions_z_positions[ion_idx][fi-k]
+                                # re-assign site
+                                s_ = None
+                                md = np.inf
+                                for st, pz in abs_pos.items():
+                                    d_ = abs(zp - pz)
+                                    if d_ < thresholds[st] and d_ < md:
+                                        md, s_ = d_, st
+                                if mode == 'strict' and s_ != prev:
+                                    ok = False
+                                    break
+                                if mode == 'majority' and s_ == prev:
+                                    hits += 1
+                            if mode == 'majority' and hits < ((tf-1)//2 + 1):
+                                ok = False
+                    # forward check
+                    if ok:
+                        hits, total = 0, tf
+                        for j in range(tf):
+                            idx2 = fi + j
+                            if idx2 < n_frames:
+                                zp = ions_z_positions[ion_idx][idx2]
+                                s_ = None
+                                md = np.inf
+                                for st, pz in abs_pos.items():
+                                    d_ = abs(zp - pz)
+                                    if d_ < thresholds[st] and d_ < md:
+                                        md, s_ = d_, st
+                                if mode in ('strict','forward') and s_ != curr:
+                                    ok = False
+                                    break
+                                if mode == 'majority' and s_ == curr:
+                                    hits += 1
+                        if mode == 'majority' and hits < (total//2 + 1):
+                            ok = False
+                    if ok:
+                        direction = 'upward' if i_c > i_p else 'downward'
+                        evt = {
+                            'ion_idx': ion_idx,
+                            'frame': fi,
+                            'time': t,
+                            'from_site': prev,
+                            'to_site': curr,
+                            'direction': direction,
+                            'z_position': z
+                        }
+                        state['transitions'].append(evt)
 
-            # --- Site Transition Detection (with 2-sided tolerance) --- #
-            if previous_site != state['current_site'] and previous_site is not None and state['current_site'] is not None:
-                # Check if the transition is between two valid, adjacent, non-intermediate sites
-                if previous_site in site_order and state['current_site'] in site_order:
-                    try:
-                        prev_idx = site_order.index(previous_site)
-                        curr_idx = site_order.index(state['current_site'])
-
-                        if abs(curr_idx - prev_idx) == 1:
-                            # Potential adjacent transition detected at frame_idx.
-                            # Now apply the stricter two-sided tolerance check.
-                            new_site = state['current_site']
-                            is_confirmed_transition = True
-
-                            # 1. Backward Check: Was it stable in previous_site before frame_idx?
-                            if frame_idx < ION_TRANSITION_TOLERANCE_FRAMES:
-                                is_confirmed_transition = False # Not enough history
-                            else:
-                                for k in range(1, ION_TRANSITION_TOLERANCE_FRAMES):
-                                    past_frame_idx = frame_idx - k
-                                    past_z = ions_z_positions.get(ion_idx)[past_frame_idx] if ions_z_positions.get(ion_idx) is not None and past_frame_idx < len(ions_z_positions.get(ion_idx)) else np.nan
-                                    past_site = None
-                                    if not np.isnan(past_z):
-                                        min_past_dist = float('inf')
-                                        for site_label_past, site_z_past in abs_site_positions.items():
-                                            dist_past = abs(past_z - site_z_past)
-                                            if dist_past < SITE_OCCUPANCY_THRESHOLD_A and dist_past < min_past_dist:
-                                                min_past_dist = dist_past
-                                                past_site = site_label_past
-                                    # If any past frame wasn't in the required previous_site, fail the check
-                                    if past_site != previous_site:
-                                        is_confirmed_transition = False
-                                        break
-
-                            # 2. Forward Check: Does it stay stable in new_site from frame_idx onwards?
-                            if is_confirmed_transition: # Only check forward if backward passed
-                                if frame_idx + ION_TRANSITION_TOLERANCE_FRAMES > n_frames:
-                                    is_confirmed_transition = False # Not enough future frames
-                                else:
-                                    for j in range(ION_TRANSITION_TOLERANCE_FRAMES): # Check from frame_idx itself up to tolerance-1 ahead
-                                        future_frame_idx = frame_idx + j
-                                        future_z = ions_z_positions.get(ion_idx)[future_frame_idx] if ions_z_positions.get(ion_idx) is not None and future_frame_idx < len(ions_z_positions.get(ion_idx)) else np.nan
-                                        future_site = None
-                                        if not np.isnan(future_z):
-                                            min_future_dist = float('inf')
-                                            for site_label_future, site_z_future in abs_site_positions.items():
-                                                dist_future = abs(future_z - site_z_future)
-                                                if dist_future < SITE_OCCUPANCY_THRESHOLD_A and dist_future < min_future_dist:
-                                                    min_future_dist = dist_future
-                                                    future_site = site_label_future
-                                        # If the site at any point in the window doesn't match the new site, fail the check
-                                        if future_site != new_site:
-                                            is_confirmed_transition = False
-                                            break
-
-                            # Record the transition only if both backward and forward checks passed
-                            if is_confirmed_transition:
-                                direction = 'upward' if curr_idx > prev_idx else 'downward'
-                                transition = {
-                                    'ion_idx': ion_idx,
-                                    'frame': frame_idx,
-                                    'time': t,
-                                    'from_site': previous_site,
-                                    'to_site': new_site,
-                                    'direction': direction,
-                                    'z_position': z_pos
-                                }
-                                state['site_transitions'].append(transition)
-                                # Note: We don't skip frames here, as subsequent frames might start
-                                # the backward check for a potential transition back.
-
-                    except ValueError:
-                         logger.warning(f"Site {previous_site} or {state['current_site']} not found in site_order list during transition check.")
-
-            # --- Conduction Event Logic --- #
-            # Entering the channel region?
-            if previous_site is None and state['current_site'] is not None and state['current_site'] != 'intermediate':
-                if state['current_site'] == site_order[0]: # Entered at Cavity end
-                    state['in_transit'] = True
-                    state['transit_direction'] = 'outward'
-                    state['transit_entry_frame'] = frame_idx
-                    state['transit_entry_time'] = t
-                    state['transit_sites_visited'] = {state['current_site']} # Start with entry site
-                elif state['current_site'] == site_order[-1]: # Entered at S0 end
-                    state['in_transit'] = True
-                    state['transit_direction'] = 'inward'
-                    state['transit_entry_frame'] = frame_idx
-                    state['transit_entry_time'] = t
-                    state['transit_sites_visited'] = {state['current_site']}
-
-            # Exiting the channel region?
-            elif previous_site is not None and state['current_site'] is None:
-                state['in_transit'] = False # Exited channel
-                state['transit_direction'] = None
-                state['transit_sites_visited'] = set() # Reset visited sites on exit
-
-            # Continuing a transit?
+            # --- conduction event detection ---
+            # start transit
+            if prev is None and curr in (site_order[0], site_order[-1]):
+                state['in_transit'] = True
+                state['transit_direction'] = 'outward' if curr == site_order[0] else 'inward'
+                state['transit_entry_frame'] = fi
+                state['transit_entry_time'] = t
+                state['transit_sites_visited'] = {curr}
+            # exit channel region
+            elif prev and curr is None:
+                state['in_transit'] = False
+                state['transit_sites_visited'].clear()
+            # update transit
             elif state['in_transit']:
-                # Add newly visited site (if valid)
-                if state['current_site'] is not None and state['current_site'] != 'intermediate':
-                    state['transit_sites_visited'].add(state['current_site'])
-
-                # Check for completion
-                sf_sites_visited = any(s in ['S1','S2','S3','S4'] for s in state['transit_sites_visited'])
-
-                # Completed outward conduction (Cavity -> S0)?
-                if state['transit_direction'] == 'outward' and state['current_site'] == site_order[-1]:
-                    if sf_sites_visited: # Must have visited at least one SF site (S1-S4)
-                        conduction = {
-                            'ion_idx': ion_idx,
-                            'direction': 'outward',
-                            'entry_frame': state['transit_entry_frame'],
-                            'exit_frame': frame_idx,
-                            'entry_time': state['transit_entry_time'],
-                            'exit_time': t,
-                            'transit_time': t - state['transit_entry_time'],
-                            'sites_visited': sorted(list(state['transit_sites_visited']), key=site_order.index)
-                        }
-                        state['completed_conductions'].append(conduction)
-                    # Reset transit state regardless of whether it counted
+                if curr and curr != 'intermediate':
+                    state['transit_sites_visited'].add(curr)
+                # check for completion
+                visited_sf = any(s in site_order[1:-1] for s in state['transit_sites_visited'])
+                if state['transit_direction']=='outward' and curr==site_order[-1] and visited_sf:
+                    transit_time = t - state['transit_entry_time']
+                    evt = {
+                        'ion_idx': ion_idx,
+                        'direction': 'outward',
+                        'entry_frame': state['transit_entry_frame'],
+                        'exit_frame': fi,
+                        'entry_time': state['transit_entry_time'],
+                        'exit_time': t,
+                        'transit_time': transit_time,
+                        'sites_visited': sorted(state['transit_sites_visited'], key=site_order.index)
+                    }
+                    state['conductions'].append(evt)
                     state['in_transit'] = False
-                    state['transit_direction'] = None
-                    state['transit_sites_visited'] = set()
-
-                # Completed inward conduction (S0 -> Cavity)?
-                elif state['transit_direction'] == 'inward' and state['current_site'] == site_order[0]:
-                    if sf_sites_visited: # Must have visited at least one SF site (S1-S4)
-                        conduction = {
-                            'ion_idx': ion_idx,
-                            'direction': 'inward',
-                            'entry_frame': state['transit_entry_frame'],
-                            'exit_frame': frame_idx,
-                            'entry_time': state['transit_entry_time'],
-                            'exit_time': t,
-                            'transit_time': t - state['transit_entry_time'],
-                            'sites_visited': sorted(list(state['transit_sites_visited']), key=site_order.index, reverse=True)
-                        }
-                        state['completed_conductions'].append(conduction)
-                    # Reset transit state
+                    state['transit_sites_visited'].clear()
+                elif state['transit_direction']=='inward' and curr==site_order[0] and visited_sf:
+                    transit_time = t - state['transit_entry_time']
+                    evt = {
+                        'ion_idx': ion_idx,
+                        'direction': 'inward',
+                        'entry_frame': state['transit_entry_frame'],
+                        'exit_frame': fi,
+                        'entry_time': state['transit_entry_time'],
+                        'exit_time': t,
+                        'transit_time': transit_time,
+                        'sites_visited': sorted(state['transit_sites_visited'],
+                                                key=site_order.index, reverse=True)
+                    }
+                    state['conductions'].append(evt)
                     state['in_transit'] = False
-                    state['transit_direction'] = None
-                    state['transit_sites_visited'] = set()
+                    state['transit_sites_visited'].clear()
 
-    # --- Compile statistics --- #
-    logger.info("Compiling conduction and transition statistics...")
-    all_conduction_events = []
-    all_transition_events = []
+    # compile across all ions
+    all_trans  = [e for s in states.values() for e in s['transitions']]
+    all_cond   = [e for s in states.values() for e in s['conductions']]
 
-    for ion_idx, state in ion_states.items():
-        all_conduction_events.extend(state['completed_conductions'])
-        all_transition_events.extend(state['site_transitions'])
+    # compute summary stats
+    stats: Dict[str, Any] = {}
+    # conduction counts
+    stats['Ion_ConductionEvents_Total'] = len(all_cond)
+    stats['Ion_ConductionEvents_Outward'] = sum(1 for e in all_cond if e['direction']=='outward')
+    stats['Ion_ConductionEvents_Inward']  = sum(1 for e in all_cond if e['direction']=='inward')
+    times = [e['transit_time'] for e in all_cond]
+    stats['Ion_Conduction_MeanTransitTime_ns']   = float(np.mean(times))   if times else np.nan
+    stats['Ion_Conduction_MedianTransitTime_ns'] = float(np.median(times)) if times else np.nan
+    stats['Ion_Conduction_StdTransitTime_ns']    = float(np.std(times))    if times else np.nan
 
-    # Calculate summary statistics
-    stats = {}
-    stats['Ion_ConductionEvents_Total'] = len(all_conduction_events)
-    stats['Ion_ConductionEvents_Outward'] = sum(1 for e in all_conduction_events if e['direction'] == 'outward')
-    stats['Ion_ConductionEvents_Inward'] = sum(1 for e in all_conduction_events if e['direction'] == 'inward')
-    transit_times = [e['transit_time'] for e in all_conduction_events if e['transit_time'] is not None]
-    stats['Ion_Conduction_MeanTransitTime_ns'] = np.mean(transit_times) if transit_times else np.nan
-    stats['Ion_Conduction_MedianTransitTime_ns'] = np.median(transit_times) if transit_times else np.nan
-    stats['Ion_Conduction_StdTransitTime_ns'] = np.std(transit_times) if transit_times else np.nan
+    # transition counts
+    stats['Ion_TransitionEvents_Total']   = len(all_trans)
+    stats['Ion_TransitionEvents_Upward']  = sum(1 for e in all_trans if e['direction']=='upward')
+    stats['Ion_TransitionEvents_Downward']= sum(1 for e in all_trans if e['direction']=='downward')
 
-    stats['Ion_TransitionEvents_Total'] = len(all_transition_events)
-    stats['Ion_TransitionEvents_Upward'] = sum(1 for e in all_transition_events if e['direction'] == 'upward')
-    stats['Ion_TransitionEvents_Downward'] = sum(1 for e in all_transition_events if e['direction'] == 'downward')
+    # per‐pair adjacent counts
+    for s1, s2 in zip(site_order[:-1], site_order[1:]):
+        key = f"Ion_Transition_{s1}_{s2}"
+        stats[key] = sum(
+            1 for e in all_trans
+            if (e['from_site']==s1 and e['to_site']==s2)
+            or (e['from_site']==s2 and e['to_site']==s1)
+        )
 
-    # Site-specific transitions (adjacent only)
-    site_pairs = list(zip(site_order[:-1], site_order[1:]))
-    for site1, site2 in site_pairs:
-        key = f'Ion_Transition_{site1}_{site2}'
-        # Count transitions FROM the saved list, which now only contains confirmed transitions
-        count = sum(1 for e in all_transition_events if (e['from_site']==site1 and e['to_site']==site2) or (e['from_site']==site2 and e['to_site']==site1))
-        stats[key] = count
+    # record tolerance settings
+    stats['Ion_Transition_ToleranceMode']   = ION_TRANSITION_TOLERANCE_MODE
+    stats['Ion_Transition_ToleranceFrames'] = ION_TRANSITION_TOLERANCE_FRAMES
 
-    stats['Ion_Transition_ToleranceFrames'] = ION_TRANSITION_TOLERANCE_FRAMES # Add tolerance to stats
-
-    logger.info(f"Found {stats['Ion_ConductionEvents_Total']} conduction events ({stats['Ion_ConductionEvents_Outward']} outward, {stats['Ion_ConductionEvents_Inward']} inward).")
-    logger.info(f"Found {stats['Ion_TransitionEvents_Total']} confirmed adjacent site transitions (Tolerance: {ION_TRANSITION_TOLERANCE_FRAMES} frames; {stats['Ion_TransitionEvents_Upward']} upward, {stats['Ion_TransitionEvents_Downward']} downward).")
-
-    # Save data to CSV files
-    save_conduction_data(run_dir, all_conduction_events, all_transition_events, stats)
-
-    # Create visualizations (Placeholder)
-    create_conduction_plots(run_dir, all_conduction_events, all_transition_events, stats, time_points)
-
-    logger.info("Ion Conduction & Transition Analysis complete.")
+    # dump CSVs
+    save_conduction_data(run_dir, all_cond, all_trans, stats)
+    logger.info("Ion conduction & transition analysis complete.")
     return stats 

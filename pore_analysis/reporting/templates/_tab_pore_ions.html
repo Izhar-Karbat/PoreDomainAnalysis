@@ -56,48 +56,76 @@
     {% endif %}
 
     <h3>Ion Conduction & Site Transition Statistics</h3>
-    {% if run_summary.get('Ion_ConductionEvents_Total') is not none %}
-        <table class="stats-table">
-            <thead>
-                <tr><th>Metric</th><th>Value</th><th>Metric</th><th>Value</th></tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Total Conduction Events</td><td>{{ run_summary.Ion_ConductionEvents_Total }}</td>
-                    <td>Total Site Transitions (Adj.)</td><td>{{ run_summary.Ion_TransitionEvents_Total }}</td>
-                </tr>
-                <tr>
-                    <td>Outward Conduction Events</td><td>{{ run_summary.Ion_ConductionEvents_Outward }}</td>
-                    <td>Upward Site Transitions</td><td>{{ run_summary.Ion_TransitionEvents_Upward }}</td>
-                </tr>
-                <tr>
-                    <td>Inward Conduction Events</td><td>{{ run_summary.Ion_ConductionEvents_Inward }}</td>
-                    <td>Downward Site Transitions</td><td>{{ run_summary.Ion_TransitionEvents_Downward }}</td>
-                </tr>
-                <tr>
-                    <td>Mean Conduction Time (ns)</td><td>{{ "%.3f"|format(run_summary.Ion_Conduction_MeanTransitTime_ns) if run_summary.Ion_Conduction_MeanTransitTime_ns is not none and not run_summary.Ion_Conduction_MeanTransitTime_ns is nan else 'N/A' }}</td>
-                    <td>Transitions Cavity &lt;-&gt; S4</td><td>{{ run_summary.get('Ion_Transition_Cavity_S4', 'N/A') }}</td>
-                </tr>
-                 <tr>
-                    <td>Median Conduction Time (ns)</td><td>{{ "%.3f"|format(run_summary.Ion_Conduction_MedianTransitTime_ns) if run_summary.Ion_Conduction_MedianTransitTime_ns is not none and not run_summary.Ion_Conduction_MedianTransitTime_ns is nan else 'N/A' }}</td>
-                    <td>Transitions S4 &lt;-&gt; S3</td><td>{{ run_summary.get('Ion_Transition_S4_S3', 'N/A') }}</td>
-                </tr>
-                 <tr>
-                    <td>Std Dev Conduction Time (ns)</td><td>{{ "%.3f"|format(run_summary.Ion_Conduction_StdTransitTime_ns) if run_summary.Ion_Conduction_StdTransitTime_ns is not none and not run_summary.Ion_Conduction_StdTransitTime_ns is nan else 'N/A' }}</td>
-                    <td>Transitions S3 &lt;-&gt; S2</td><td>{{ run_summary.get('Ion_Transition_S3_S2', 'N/A') }}</td>
-                </tr>
-                 <tr>
-                    <td></td><td></td> {# Placeholder for alignment #}
-                    <td>Transitions S2 &lt;-&gt; S1</td><td>{{ run_summary.get('Ion_Transition_S2_S1', 'N/A') }}</td>
-                </tr>
-                 <tr>
-                    <td></td><td></td> {# Placeholder for alignment #}
-                    <td>Transitions S1 &lt;-&gt; S0</td><td>{{ run_summary.get('Ion_Transition_S1_S0', 'N/A') }}</td>
-                </tr>
-            </tbody>
-        </table>
-        <p class="info-box">Conduction requires passage from Cavity to S0 (or vice versa) visiting S1-S4. Transitions count movements between adjacent listed sites, confirmed only if the ion stays in the new site for > {{ run_summary.get('Ion_Transition_ToleranceFrames', 'N/A') }} frames.</p>
+    {% if run_summary.Ion_TransitionEvents_Total is defined %}
+    <table class="stats-table">
+        <thead>
+            <tr><th>Metric</th><th>Value</th><th>Metric</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Total Conduction Events</td>
+                <td>{{ run_summary.Ion_ConductionEvents_Total }}</td>
+                <td>Total Site Transitions</td>
+                <td>{{ run_summary.Ion_TransitionEvents_Total }}</td>
+            </tr>
+            <tr>
+                <td>Outward Conduction</td>
+                <td>{{ run_summary.Ion_ConductionEvents_Outward }}</td>
+                <td>Upward Transitions</td>
+                <td>{{ run_summary.Ion_TransitionEvents_Upward }}</td>
+            </tr>
+            <tr>
+                <td>Inward Conduction</td>
+                <td>{{ run_summary.Ion_ConductionEvents_Inward }}</td>
+                <td>Downward Transitions</td>
+                <td>{{ run_summary.Ion_TransitionEvents_Downward }}</td>
+            </tr>
+            <tr>
+                <td>Mean Transit Time (ns)</td>
+                <td>
+                    {{ "%.3f"|format(run_summary.Ion_Conduction_MeanTransitTime_ns)
+                        if run_summary.Ion_Conduction_MeanTransitTime_ns is not none else 'N/A' }}
+                </td>
+                <td>Cavity ↔ S4</td>
+                <td>{{ run_summary.Ion_Transition_Cavity_S4 }}</td>
+            </tr>
+            <tr>
+                <td>Median Transit Time (ns)</td>
+                <td>
+                    {{ "%.3f"|format(run_summary.Ion_Conduction_MedianTransitTime_ns)
+                        if run_summary.Ion_Conduction_MedianTransitTime_ns is not none else 'N/A' }}
+                </td>
+                <td>S4 ↔ S3</td>
+                <td>{{ run_summary.Ion_Transition_S4_S3 }}</td>
+            </tr>
+            <tr>
+                <td>Std Dev Transit Time (ns)</td>
+                <td>
+                    {{ "%.3f"|format(run_summary.Ion_Conduction_StdTransitTime_ns)
+                        if run_summary.Ion_Conduction_StdTransitTime_ns is not none else 'N/A' }}
+                </td>
+                <td>S3 ↔ S2</td>
+                <td>{{ run_summary.Ion_Transition_S3_S2 }}</td>
+            </tr>
+            <tr>
+                <td></td><td></td>
+                <td>S2 ↔ S1</td>
+                <td>{{ run_summary.Ion_Transition_S2_S1 }}</td>
+            </tr>
+            <tr>
+                <td></td><td></td>
+                <td>S1 ↔ S0</td>
+                <td>{{ run_summary.Ion_Transition_S1_S0 }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p class="info-box">
+        Transition tolerance:
+        {{ run_summary.Ion_Transition_ToleranceFrames }} frames,
+        mode="{{ run_summary.Ion_Transition_ToleranceMode }}".
+    </p>
     {% else %}
-        <p class="unavailable">Ion conduction/transition analysis not performed or data unavailable.</p>
+        <p>No conduction/transition data available for this run.</p>
     {% endif %}
 </div> 
