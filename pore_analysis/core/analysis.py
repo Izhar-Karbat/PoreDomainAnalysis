@@ -16,9 +16,9 @@ from scipy.signal import find_peaks  # Ensure this is imported for peak detectio
 
 # Import from other modules
 try:
-    from md_analysis.core.utils import OneLetter, frames_to_time
-    from md_analysis.core.filtering import auto_select_filter  # Import the main filtering function
-    from md_analysis.core.logging import setup_system_logger
+    from pore_analysis.core.utils import OneLetter, frames_to_time
+    from pore_analysis.core.filtering import auto_select_filter  # Import the main filtering function
+    from pore_analysis.core.logging import setup_system_logger
 except ImportError as e:
     # Handle potential import errors if modules are not found
     # This might happen if running a module standalone without proper path setup
