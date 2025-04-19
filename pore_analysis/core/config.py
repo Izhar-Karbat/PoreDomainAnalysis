@@ -47,4 +47,11 @@ ION_SITE_OCCUPANCY_THRESHOLD_A: float = 2.0
 
 # --- Constants for Tyrosine Analysis ---
 # Tolerance: Minimum frames a new rotamer state must persist to be counted as a transition
-TYROSINE_ROTAMER_TOLERANCE_FRAMES = 10
+TYROSINE_ROTAMER_TOLERANCE_FRAMES = 5
+
+# --- Ion Conduction / Transition Analysis ---
+ION_TRANSITION_TOLERANCE_FRAMES = 10 # Frames an ion must stay in a site to count as entry
+ION_TRANSITION_TOLERANCE_MODE = 'entry' # Alternative: 'exit', 'midpoint'
+
+# --- DW Gate Analysis ---
+DW_GATE_TOLERANCE_FRAMES = 5 # Frames a DW gate must stay open/closed to count as a confirmed event
