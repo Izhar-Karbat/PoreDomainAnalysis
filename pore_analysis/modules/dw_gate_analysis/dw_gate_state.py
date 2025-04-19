@@ -52,6 +52,151 @@ def save_plot(fig, path, dpi=200):
     finally:
         plt.close(fig)
 
+# --- New Improved Duration Plot Function (User Provided) ---
+def plot_improved_duration_distribution(open_durations_by_chain, closed_durations_by_chain, valid_chain_ids, output_dir):
+    """Create an improved duration distribution visualization with separate subplots and CDFs."""
+
+    # Create a figure with 2 rows (open/closed) and 2 columns (histogram/CDF)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+
+    # Get all durations for proper bin scaling
+    all_open_durations = [dur for subdurs in open_durations_by_chain.values() for dur in subdurs]
+    all_closed_durations = [dur for subdurs in closed_durations_by_chain.values() for dur in subdurs]
+
+    # Handle cases with no data for one state type gracefully
+    if not all_open_durations and not all_closed_durations:
+        logger.warning("Insufficient data for duration distribution plot - no open or closed events found.")
+        plt.close(fig) # Close the empty figure
+        return
+
+    # Determine overall min/max for consistent binning, handle empty lists
+    all_durations_flat = all_open_durations + all_closed_durations
+    min_dur = max(0.01, min(all_durations_flat) if all_durations_flat else 0.01)
+    max_dur = max(1.0, max(all_durations_flat) if all_durations_flat else 1.0)
+    bins = np.logspace(np.log10(min_dur), np.log10(max_dur), num=25)
+
+    # Color map for chains
+    colors = plt.cm.get_cmap('tab10')
+    chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
+
+    # --- Plot Open States --- #
+    ax_open_hist = axes[0, 0]
+    ax_open_cdf = axes[0, 1]
+    plotted_open = False
+    open_handles, open_labels = [], [] # For legend
+
+    for i, chain_char in enumerate(chain_chars_plot):
+        chain_color = colors(i / len(chain_chars_plot))
+        chain_open_durs = open_durations_by_chain.get(chain_char, [])
+        if chain_open_durs:
+            plotted_open = True
+            # Histogram
+            counts, _, patches = ax_open_hist.hist(
+                chain_open_durs,
+                bins=bins,
+                alpha=0.7,
+                color=chain_color,
+                label=f'Chain {chain_char}',
+                density=True
+            )
+            open_handles.append(patches[0]) # Add patch for legend
+            open_labels.append(f'Chain {chain_char}')
+
+            # Add mean/median markers
+            mean_val = np.mean(chain_open_durs)
+            median_val = np.median(chain_open_durs)
+            if counts.size > 0: y_height = max(counts) * 0.9 # Only if hist has counts
+            else: y_height = ax_open_hist.get_ylim()[1] * 0.9
+            ax_open_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8, label=f'_nolegend_mean_{chain_char}')
+            ax_open_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8, label=f'_nolegend_median_{chain_char}')
+
+            # CDF
+            data_sorted = np.sort(chain_open_durs)
+            y = np.arange(1, len(data_sorted) + 1) / len(data_sorted)
+            ax_open_cdf.step(data_sorted, y, label=f'Chain {chain_char}', color=chain_color)
+
+    ax_open_hist.set_title('Open State Duration Distribution')
+    ax_open_hist.set_xlabel('Duration (ns)')
+    ax_open_hist.set_ylabel('Probability Density')
+    ax_open_hist.set_xscale('log')
+    ax_open_hist.grid(True, which='both', linestyle='--', alpha=0.6)
+
+    ax_open_cdf.set_title('Open State Duration CDF')
+    ax_open_cdf.set_xlabel('Duration (ns)')
+    ax_open_cdf.set_ylabel('Cumulative Probability')
+    ax_open_cdf.set_xscale('log')
+    ax_open_cdf.grid(True, which='both', linestyle='--', alpha=0.6)
+
+    if not plotted_open:
+        ax_open_hist.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', verticalalignment='center', transform=ax_open_hist.transAxes)
+        ax_open_cdf.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', verticalalignment='center', transform=ax_open_cdf.transAxes)
+
+    # --- Plot Closed States --- #
+    ax_closed_hist = axes[1, 0]
+    ax_closed_cdf = axes[1, 1]
+    plotted_closed = False
+    closed_handles, closed_labels = [], [] # For legend
+
+    for i, chain_char in enumerate(chain_chars_plot):
+        chain_color = colors(i / len(chain_chars_plot))
+        chain_closed_durs = closed_durations_by_chain.get(chain_char, [])
+        if chain_closed_durs:
+            plotted_closed = True
+            # Histogram
+            counts, _, patches = ax_closed_hist.hist(
+                chain_closed_durs,
+                bins=bins,
+                alpha=0.7,
+                color=chain_color,
+                label=f'Chain {chain_char}',
+                density=True
+            )
+            closed_handles.append(patches[0]) # Add patch for legend
+            closed_labels.append(f'Chain {chain_char}')
+
+            # Add mean/median markers
+            mean_val = np.mean(chain_closed_durs)
+            median_val = np.median(chain_closed_durs)
+            if counts.size > 0: y_height = max(counts) * 0.9
+            else: y_height = ax_closed_hist.get_ylim()[1] * 0.9
+            ax_closed_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8, label=f'_nolegend_mean_{chain_char}')
+            ax_closed_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8, label=f'_nolegend_median_{chain_char}')
+
+            # CDF
+            data_sorted = np.sort(chain_closed_durs)
+            y = np.arange(1, len(data_sorted) + 1) / len(data_sorted)
+            ax_closed_cdf.step(data_sorted, y, label=f'Chain {chain_char}', color=chain_color)
+
+    ax_closed_hist.set_title('Closed State Duration Distribution')
+    ax_closed_hist.set_xlabel('Duration (ns)')
+    ax_closed_hist.set_ylabel('Probability Density')
+    ax_closed_hist.set_xscale('log')
+    ax_closed_hist.grid(True, which='both', linestyle='--', alpha=0.6)
+
+    ax_closed_cdf.set_title('Closed State Duration CDF')
+    ax_closed_cdf.set_xlabel('Duration (ns)')
+    ax_closed_cdf.set_ylabel('Cumulative Probability')
+    ax_closed_cdf.set_xscale('log')
+    ax_closed_cdf.grid(True, which='both', linestyle='--', alpha=0.6)
+
+    if not plotted_closed:
+        ax_closed_hist.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', verticalalignment='center', transform=ax_closed_hist.transAxes)
+        ax_closed_cdf.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', verticalalignment='center', transform=ax_closed_cdf.transAxes)
+
+    # Add legend (use combined handles/labels if desired, or rely on individual axes)
+    # ax_open_hist.legend(handles=open_handles, labels=open_labels, title="Open States", fontsize='small')
+    # ax_closed_hist.legend(handles=closed_handles, labels=closed_labels, title="Closed States", fontsize='small')
+    # Let's add a figure legend instead for less clutter
+    if open_handles or closed_handles:
+        fig.legend(handles=open_handles + closed_handles, labels=open_labels + closed_labels, loc='center right', fontsize='medium', bbox_to_anchor=(1.0, 0.5))
+
+    # Add layout improvements
+    fig.suptitle('DW Gate Event Duration Analysis', fontsize=16, y=0.98)
+    # plt.tight_layout(rect=[0, 0, 0.9, 0.96])  # Adjust for legend and suptitle
+
+    # Save the figure
+    save_plot(fig, os.path.join(output_dir, "dw_gate_duration_analysis.png"), dpi=300)
+
 # --- Main Analysis Function ---
 def analyse_dw_gates(
     run_dir: str,
@@ -399,46 +544,16 @@ def analyse_dw_gates(
     except Exception as e:
         logger.error(f"Failed to generate closed fraction bar plot: {e}", exc_info=True)
 
-    # 4. Event Duration Histogram (Per Chain - NEW)
+    # 4. Improved Event Duration Plot (NEW)
     try:
-        # Check if there is any duration data across all chains
-        all_durations_flat = [dur for subdurs in open_durations_by_chain.values() for dur in subdurs] + \
-                           [dur for subdurs in closed_durations_by_chain.values() for dur in subdurs]
-
-        if all_durations_flat:
-            fig4, ax4 = setup_plot(figsize=(10, 6)) # Slightly larger plot
-            min_dur = max(0.01, min(all_durations_flat)) # Avoid log(0)
-            max_dur = max(1, max(all_durations_flat))
-            bins = np.logspace(np.log10(min_dur), np.log10(max_dur), num=25) # Log bins based on overall range
-
-            # Define consistent colors for chains (use seaborn or default cycle)
-            colors = plt.cm.get_cmap('tab10') # Use a colormap
-
-            chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
-            for i, chain_char in enumerate(chain_chars_plot):
-                chain_color = colors(i / len(chain_chars_plot)) # Assign color per chain
-
-                open_durs = open_durations_by_chain.get(chain_char, [])
-                closed_durs = closed_durations_by_chain.get(chain_char, [])
-
-                # Plot histograms only if data exists for that chain/state
-                if open_durs:
-                    ax4.hist(open_durs, bins=bins, alpha=0.6, label=f'Chain {chain_char} Open', color=chain_color, density=True, histtype='step', linewidth=1.5)
-                if closed_durs:
-                    ax4.hist(closed_durs, bins=bins, alpha=0.8, label=f'Chain {chain_char} Closed', color=chain_color, density=True, histtype='step', linewidth=1.5, linestyle='--')
-
-            ax4.set_xscale('log')
-            ax4.set_xlabel("Event Duration (ns)")
-            ax4.set_ylabel("Probability Density")
-            ax4.set_title(f"DW Gate Event Duration Distribution (Tolerance: {DW_GATE_TOLERANCE_FRAMES} frames)")
-            ax4.legend(fontsize='small', ncol=2) # Adjust legend
-            ax4.grid(True, which="both", ls="--", alpha=0.6)
-
-            save_plot(fig4, os.path.join(output_dir, "dw_gate_duration_histogram.png"))
-        else:
-            logger.warning("Skipping event duration histogram: No confirmed open or closed events found across all chains.")
+        plot_improved_duration_distribution(
+            open_durations_by_chain,
+            closed_durations_by_chain,
+            valid_chain_ids,
+            output_dir
+        )
     except Exception as e:
-        logger.error(f"Failed to generate event duration histogram plot: {e}", exc_info=True)
+        logger.error(f"Failed to generate improved event duration plot: {e}", exc_info=True)
 
     logger.info(f"--- DW-Gate Analysis Finished ---")
     return final_stats 
