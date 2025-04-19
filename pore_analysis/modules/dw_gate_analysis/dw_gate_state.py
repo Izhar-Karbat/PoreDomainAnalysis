@@ -290,7 +290,7 @@ def analyse_dw_gates(
         ax1.legend(fontsize='small')
         ax1.grid(True, axis='y', linestyle=':', alpha=0.7)
         ax1.set_ylim(bottom=0)
-        save_plot(fig1, os.path.join(run_dir, "dw_distance_timeseries.png"))
+        save_plot(fig1, os.path.join(output_dir, "dw_distance_timeseries.png"))
     except Exception as e:
          logger.error(f"Failed to generate distance timeseries plot: {e}", exc_info=True)
 
@@ -313,7 +313,7 @@ def analyse_dw_gates(
             ax2.set_title("DW Gate State (Closed=Blue, Open=LightBlue)")
             cbar = fig2.colorbar(im, ax=ax2, ticks=[-1, 0, 1], orientation='vertical', fraction=0.05, pad=0.04)
             cbar.ax.set_yticklabels(['Missing', 'Open', 'Closed'], fontsize='small')
-            save_plot(fig2, os.path.join(run_dir, "dw_gate_state_heatmap.png"))
+            save_plot(fig2, os.path.join(output_dir, "dw_gate_state_heatmap.png"))
         else:
             logger.warning("Skipping DW Gate heatmap plot: Pivoted DataFrame is empty.")
     except Exception as e:
@@ -334,7 +334,7 @@ def analyse_dw_gates(
              ax3.set_title("DW Gate Closed Fraction")
              ax3.set_ylim(0, 1)
              ax3.legend()
-             save_plot(fig3, os.path.join(run_dir, "dw_gate_closed_fraction_bar.png"))
+             save_plot(fig3, os.path.join(output_dir, "dw_gate_closed_fraction_bar.png"))
         else:
              logger.warning("Skipping closed fraction bar plot: No valid fraction data.")
     except Exception as e:
