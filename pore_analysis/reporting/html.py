@@ -21,7 +21,7 @@ import seaborn as sns # Keep for plot style consistency settings if applied here
 
 # Import from other modules
 try:
-    from md_analysis.core.utils import fig_to_base64 # Corrected import path
+    from pore_analysis.core.utils import fig_to_base64 # Corrected import path
     # Plotting functions are no longer called directly here for HTML report
     # from core_analysis import plot_pore_diameter, plot_com_positions, plot_filtering_comparison, plot_kde_analysis
 except ImportError as e:
@@ -117,27 +117,27 @@ HTML_TEMPLATE = """
 
         <!-- Tab Content Containers -->
         <div id="tab-overview" class="tab-content active">
-            {% include 'md_analysis/reporting/templates/_tab_overview.html' %}
+            {% include 'pore_analysis/reporting/templates/_tab_overview.html' %}
         </div>
 
         <div id="tab-toxin" class="tab-content">
-            {% include 'md_analysis/reporting/templates/_tab_toxin.html' %}
+            {% include 'pore_analysis/reporting/templates/_tab_toxin.html' %}
         </div>
 
         <div id="tab-pore-ions" class="tab-content">
-            {% include 'md_analysis/reporting/templates/_tab_pore_ions.html' %}
+            {% include 'pore_analysis/reporting/templates/_tab_pore_ions.html' %}
         </div>
 
         <div id="tab-inner-vestibule" class="tab-content">
-            {% include 'md_analysis/reporting/templates/_tab_inner_vestibule.html' %}
+            {% include 'pore_analysis/reporting/templates/_tab_inner_vestibule.html' %}
         </div>
 
         <div id="tab-carbonyl" class="tab-content">
-            {% include 'md_analysis/reporting/templates/_tab_carbonyl.html' %}
+            {% include 'pore_analysis/reporting/templates/_tab_carbonyl.html' %}
         </div>
 
         <div id="tab-tyrosine" class="tab-content">
-            {% include 'md_analysis/reporting/templates/_tab_tyrosine.html' %}
+            {% include 'pore_analysis/reporting/templates/_tab_tyrosine.html' %}
         </div>
 
         <div class="footer">End of Report</div>
@@ -199,7 +199,7 @@ def generate_html_report(run_dir, run_summary):
     # --- Add config values to summary for template access ---
     # (Do this carefully, only add what's needed by the template)
     try:
-        from md_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
+        from pore_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
         run_summary['GYRATION_FLIP_THRESHOLD'] = GYRATION_FLIP_THRESHOLD
         run_summary['GYRATION_FLIP_TOLERANCE_FRAMES'] = GYRATION_FLIP_TOLERANCE_FRAMES
         run_summary['FRAMES_PER_NS'] = FRAMES_PER_NS
@@ -271,9 +271,12 @@ def generate_html_report(run_dir, run_summary):
         # Assuming the script runs from the workspace root or similar
         # Adjust the path if necessary, e.g., based on __file__
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        workspace_root = os.path.dirname(os.path.dirname(script_dir)) # Go up two levels (reporting -> md_analysis -> root)
+        # workspace_root = os.path.dirname(os.path.dirname(script_dir)) # Go up two levels (reporting -> pore_analysis -> root)
+        # ^^^ This assumes script is in reporting/. Workspace root is likely run_dir's parent or grandparent?
+        # Let's load templates relative to this script's location instead.
+        templates_dir = os.path.join(script_dir, 'templates')
         env = jinja2.Environment(
-            loader=jinja2.FileSystemLoader(workspace_root),
+            loader=jinja2.FileSystemLoader(templates_dir),
             autoescape=jinja2.select_autoescape(['html', 'xml'])
         )
         # Load the base template directly from the string variable
