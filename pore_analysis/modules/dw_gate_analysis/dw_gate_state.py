@@ -19,6 +19,7 @@ try:
     from ..ion_analysis.filter_structure import find_filter_residues # For identifying chains
     from .residue_identification import find_gate_residues_for_chain, GateResidues
     from ...core.utils import frames_to_time # Navigate up two levels to core
+    from ...core.config import DW_GATE_TOLERANCE_FRAMES # Import tolerance constant
 except ImportError as e:
     print(f"Error importing dependencies in dw_gate_state.py: {e}")
     # Re-raise to ensure failure if imports are broken
@@ -229,7 +230,12 @@ def analyse_dw_gates(
             logger.warning(f"No data found for chain {chain_char} after processing.")
             raw_stats[f'Mean_DW_Distance_{chain_char}'] = np.nan
             per_subunit_fractions[chain_char] = np.nan
-            raw_stats[f'Mean_Closed_Dwell_ms_{chain_char}'] = np.nan
+            raw_stats[f'DW_OpenEvents_{chain_char}'] = np.nan
+            raw_stats[f'DW_ClosedEvents_{chain_char}'] = np.nan
+            raw_stats[f'DW_MeanOpenTime_ns_{chain_char}'] = np.nan
+            raw_stats[f'DW_StdOpenTime_ns_{chain_char}'] = np.nan
+            raw_stats[f'DW_MeanClosedTime_ns_{chain_char}'] = np.nan
+            raw_stats[f'DW_StdClosedTime_ns_{chain_char}'] = np.nan
             continue
 
         raw_stats[f'Mean_DW_Distance_{chain_char}'] = float(df_chain["distance"].mean())
@@ -240,39 +246,77 @@ def analyse_dw_gates(
         per_subunit_fractions[chain_char] = float(closed_fraction)
         all_closed_fractions.append(closed_fraction)
 
-        # Mean Closed Dwell Time calculation (simplified from backup)
-        dwell_times_frames = []
-        in_closed_block = False
-        current_dwell = 0
-        for state in df_chain["state"]:
-            if state == CLOSED_STATE:
-                if not in_closed_block:
-                    in_closed_block = True
-                    current_dwell = 1
-                else:
-                    current_dwell += 1
-            else:
-                if in_closed_block:
-                    dwell_times_frames.append(current_dwell)
-                    in_closed_block = False
-                    current_dwell = 0
-        if in_closed_block and current_dwell > 0:
-            dwell_times_frames.append(current_dwell)
+        # --- Event Duration Analysis (Using Tolerance) ---
+        logger.debug(f"Analyzing event durations for chain {chain_char} with tolerance {DW_GATE_TOLERANCE_FRAMES} frames...")
+        states = df_chain["state"].to_numpy()
+        open_durations_frames = []
+        closed_durations_frames = []
+        current_state = None
+        current_duration = 0
 
-        if dwell_times_frames:
-            dwell_times_ns = np.array(dwell_times_frames) * stride * dt_ns
-            dwell_times_ms = dwell_times_ns * 1000.0
-            raw_stats[f'Mean_Closed_Dwell_ms_{chain_char}'] = float(np.mean(dwell_times_ms))
+        for state in states:
+            if state == current_state:
+                current_duration += 1
+            else:
+                # End of a block, check if it met tolerance
+                if current_state is not None and current_duration >= DW_GATE_TOLERANCE_FRAMES:
+                    if current_state == OPEN_STATE:
+                        open_durations_frames.append(current_duration)
+                    elif current_state == CLOSED_STATE:
+                        closed_durations_frames.append(current_duration)
+
+                # Start of a new block
+                current_state = state
+                current_duration = 1
+
+        # Check the last block at the end of the series
+        if current_state is not None and current_duration >= DW_GATE_TOLERANCE_FRAMES:
+            if current_state == OPEN_STATE:
+                open_durations_frames.append(current_duration)
+            elif current_state == CLOSED_STATE:
+                closed_durations_frames.append(current_duration)
+
+        # Calculate statistics from durations
+        n_open_events = len(open_durations_frames)
+        n_closed_events = len(closed_durations_frames)
+
+        time_per_frame_ns = stride * dt_ns
+        if open_durations_frames:
+            open_durations_ns = np.array(open_durations_frames) * time_per_frame_ns
+            mean_open_ns = float(np.mean(open_durations_ns))
+            std_open_ns = float(np.std(open_durations_ns))
         else:
-            raw_stats[f'Mean_Closed_Dwell_ms_{chain_char}'] = 0.0
+            mean_open_ns = 0.0
+            std_open_ns = 0.0
+
+        if closed_durations_frames:
+            closed_durations_ns = np.array(closed_durations_frames) * time_per_frame_ns
+            mean_closed_ns = float(np.mean(closed_durations_ns))
+            std_closed_ns = float(np.std(closed_durations_ns))
+        else:
+            mean_closed_ns = 0.0
+            std_closed_ns = 0.0
+
+        # Store results in raw_stats (to be added to final_stats later)
+        raw_stats[f'DW_OpenEvents_{chain_char}'] = n_open_events
+        raw_stats[f'DW_ClosedEvents_{chain_char}'] = n_closed_events
+        raw_stats[f'DW_MeanOpenTime_ns_{chain_char}'] = mean_open_ns
+        raw_stats[f'DW_StdOpenTime_ns_{chain_char}'] = std_open_ns
+        raw_stats[f'DW_MeanClosedTime_ns_{chain_char}'] = mean_closed_ns
+        raw_stats[f'DW_StdClosedTime_ns_{chain_char}'] = std_closed_ns
+
+        logger.debug(f"Chain {chain_char}: Open Events={n_open_events}, Mean(ns)={mean_open_ns:.3f} +/- {std_open_ns:.3f}")
+        logger.debug(f"Chain {chain_char}: Closed Events={n_closed_events}, Mean(ns)={mean_closed_ns:.3f} +/- {std_closed_ns:.3f}")
 
     # --- Combine Final Stats --- 
     final_stats = {
         'DWhbond_closed_per_subunit': per_subunit_fractions,
         'DWhbond_closed_global': float(np.mean(all_closed_fractions)) if all_closed_fractions else np.nan
     }
-    # Optionally add other raw stats if needed downstream
-    # final_stats.update(raw_stats)
+    # Add the new event stats to the final dictionary
+    final_stats.update(raw_stats)
+    # Add tolerance value used
+    final_stats['DW_GATE_TOLERANCE_FRAMES'] = DW_GATE_TOLERANCE_FRAMES
 
     # --- Generate Plots (Save directly to run_dir) --- 
     logger.info("Generating DW Gate plots...")
