@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from md_analysis.core.config import FRAMES_PER_NS, ION_TRANSITION_TOLERANCE_FRAMES
+    from pore_analysis.core.config import FRAMES_PER_NS, ION_TRANSITION_TOLERANCE_FRAMES
 except ImportError:
     # Fallback if config import fails (should not happen in normal execution)
     FRAMES_PER_NS = 10.0
