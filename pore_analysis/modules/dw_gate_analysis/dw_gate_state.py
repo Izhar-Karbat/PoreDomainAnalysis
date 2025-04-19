@@ -13,6 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import seaborn as sns # Import seaborn
 
 try:
     # Relative imports within the pore_analysis package
@@ -75,9 +76,10 @@ def plot_improved_duration_distribution(open_durations_by_chain, closed_duration
     max_dur = max(1.0, max(all_durations_flat) if all_durations_flat else 1.0)
     bins = np.logspace(np.log10(min_dur), np.log10(max_dur), num=25)
 
-    # Color map for chains
-    colors = plt.cm.get_cmap('tab10')
-    chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
+    # Color map for chains - Use seaborn pastel
+    # colors = plt.cm.get_cmap('tab10') # Old colormap
+    sns_pastel = sns.color_palette("pastel", n_colors=max(4, len(valid_chain_ids))) # Get at least 4 pastel colors
+    chain_color_map = {chain_id[-1]: color for chain_id, color in zip(sorted(valid_chain_ids), sns_pastel)}
 
     # --- Plot Open States --- #
     ax_open_hist = axes[0, 0]
@@ -86,7 +88,8 @@ def plot_improved_duration_distribution(open_durations_by_chain, closed_duration
     open_handles, open_labels = [], [] # For legend
 
     for i, chain_char in enumerate(chain_chars_plot):
-        chain_color = colors(i / len(chain_chars_plot))
+        # chain_color = colors(i / len(chain_chars_plot)) # Old color assignment
+        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]) # Get specific color
         chain_open_durs = open_durations_by_chain.get(chain_char, [])
         if chain_open_durs:
             plotted_open = True
@@ -138,7 +141,8 @@ def plot_improved_duration_distribution(open_durations_by_chain, closed_duration
     closed_handles, closed_labels = [], [] # For legend
 
     for i, chain_char in enumerate(chain_chars_plot):
-        chain_color = colors(i / len(chain_chars_plot))
+        # chain_color = colors(i / len(chain_chars_plot)) # Old color assignment
+        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]) # Get specific color
         chain_closed_durs = closed_durations_by_chain.get(chain_char, [])
         if chain_closed_durs:
             plotted_closed = True
