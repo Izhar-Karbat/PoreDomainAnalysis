@@ -1,5 +1,5 @@
 <!-- DW Gate Analysis Tab -->
-{# Use run_summary to check if data exists, img_data for plots #}
+{# Use run_summary to check if data exists, plots for plot images #}
 {% if run_summary.DWhbond_closed_global is defined %}
 <div class="section">
     <h3>DW Gate Analysis</h3>
@@ -47,8 +47,8 @@
         <!-- DW Distance Timeseries -->
         <div class="column plot-container">
             <h5>DW Gate H-bond Distance Timeseries</h5>
-            {% if img_data.get('dw_distance_timeseries') %}
-                <img src="data:image/png;base64,{{ img_data.dw_distance_timeseries }}" alt="DW Gate H-bond Distance Timeseries">
+            {% if plots.get('dw_distance_timeseries') %}
+                <img src="data:image/png;base64,{{ plots.dw_distance_timeseries }}" alt="DW Gate H-bond Distance Timeseries">
                 <p class="plot-description">Timeseries showing the minimum hydrogen bond distance between D/E (OD1/OD2) and W (NE1) for each subunit. The dashed line indicates the H-bond distance cutoff ({{ DISTANCE_THRESHOLD }} Å).</p>
             {% else %}
                 <p><i>Plot not available (dw_distance_timeseries.png missing).</i></p>
@@ -58,8 +58,8 @@
         <!-- DW Gate State Heatmap -->
         <div class="column plot-container">
             <h5>DW Gate State Heatmap</h5>
-            {% if img_data.get('dw_gate_state_heatmap') %}
-                <img src="data:image/png;base64,{{ img_data.dw_gate_state_heatmap }}" alt="DW Gate State Heatmap">
+            {% if plots.get('dw_gate_state_heatmap') %}
+                <img src="data:image/png;base64,{{ plots.dw_gate_state_heatmap }}" alt="DW Gate State Heatmap">
                 <p class="plot-description">Heatmap showing the state (open/closed) of the DW gate for each subunit over time. Closed states are typically indicated by one color (e.g., dark blue) and open states by another (e.g., light blue).</p>
             {% else %}
                 <p><i>Plot not available (dw_gate_state_heatmap.png missing).</i></p>
@@ -69,8 +69,8 @@
     {# Bar plot below the two columns #}
     <div class="plot-container">
         <h5>DW Gate Closed Fraction</h5>
-        {% if img_data.get('dw_gate_closed_fraction_bar') %}
-            <img src="data:image/png;base64,{{ img_data.dw_gate_closed_fraction_bar }}" alt="DW Gate Closed Fraction Bar Plot">
+        {% if plots.get('dw_gate_closed_fraction_bar') %}
+            <img src="data:image/png;base64,{{ plots.dw_gate_closed_fraction_bar }}" alt="DW Gate Closed Fraction Bar Plot">
             <p class="plot-description">Bar plot showing the fraction of time each subunit's DW gate is closed, along with the global average closed fraction.</p>
         {% else %}
             <p><i>Plot not available (dw_gate_closed_fraction_bar.png missing).</i></p>

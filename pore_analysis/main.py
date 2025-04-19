@@ -78,6 +78,14 @@ except ImportError as e:
     print("Please ensure the pore_analysis package is properly installed and structured.", file=sys.stderr)
     sys.exit(1)
 
+# Try importing DW Gate separately
+try:
+    from pore_analysis.modules.dw_gate_analysis import analyse_dw_gates
+except ImportError as e:
+    # Log this specific failure but allow continuation
+    logging.warning(f"Could not import dw_gate_analysis module: {e}. DW gate analysis will be skipped.")
+    analyse_dw_gates = None # Define as None so checks later don't fail
+
 def main():
     """
     Main execution function: parses arguments and orchestrates the analysis workflow.
@@ -93,7 +101,7 @@ def main():
     parser.add_argument("--folder", required=True, help="Path to the specific run folder containing PSF/DCD (required).")
     parser.add_argument("--force_rerun", action="store_true", help="Force reprocessing of ALL modules, ignoring existing summary.")
 
-    # --- Analysis Selection Flags --- (Added tyrosine, conduction)
+    # --- Analysis Selection Flags --- (Added tyrosine, conduction, dwgates)
     analysis_group = parser.add_argument_group('Selective Analysis Flags (run only specified modules)')
     analysis_group.add_argument("--GG", action="store_true", help="Run G-G distance analysis.")
     analysis_group.add_argument("--COM", action="store_true", help="Run COM distance analysis.")
@@ -103,6 +111,7 @@ def main():
     analysis_group.add_argument("--gyration", action="store_true", help="Run Carbonyl Gyration analysis.")
     analysis_group.add_argument("--tyrosine", action="store_true", help="Run SF Tyrosine rotamer analysis.")
     analysis_group.add_argument("--conduction", action="store_true", help="Run Ion Conduction/Transition analysis.")
+    analysis_group.add_argument("--dwgates", action="store_true", help="Run DW-Gate analysis.")
 
     # --- Other Options / Report Control ---
     other_group = parser.add_argument_group('Other Options')
@@ -118,7 +127,7 @@ def main():
     root_log_level = log_level_map.get(args.log_level.upper(), logging.INFO)
 
     # --- Determine Which Analyses to Run ---
-    specific_flags_set = args.GG or args.COM or args.orientation or args.ions or args.water or args.gyration or args.tyrosine or args.conduction
+    specific_flags_set = args.GG or args.COM or args.orientation or args.ions or args.water or args.gyration or args.tyrosine or args.conduction or args.dwgates
     run_all_initially = not specific_flags_set # Run all if no specific flags are given
 
     run_gg = args.GG or run_all_initially
@@ -130,6 +139,7 @@ def main():
     run_gyration = args.gyration or run_all_initially
     run_tyrosine = args.tyrosine or run_all_initially
     run_conduction = args.conduction or run_all_initially
+    run_dwgates = args.dwgates or run_all_initially
 
     # If --force_rerun, ensure all run flags are True
     if args.force_rerun:
@@ -143,6 +153,7 @@ def main():
         run_gyration = True
         run_tyrosine = True
         run_conduction = True
+        run_dwgates = True
         run_all_initially = True # Treat force_rerun as running all
         specific_flags_set = False # Treat force_rerun as NOT selective
 
@@ -160,7 +171,7 @@ def main():
 
 
     run_any_core_analysis = (run_gg or run_com or run_orientation or run_ion_tracking or
-                             run_water or run_gyration or run_tyrosine or run_conduction)
+                             run_water or run_gyration or run_tyrosine or run_conduction or run_dwgates)
 
     # If somehow no analysis flags are set (shouldn't happen with current logic, but safety check)
     if not run_any_core_analysis and not args.trajectory:
@@ -200,6 +211,7 @@ def main():
                 run_ion_tracking=run_ion_tracking, run_ion_coordination=run_ion_coordination,
                 run_water=run_water, run_gyration=run_gyration, run_tyrosine=run_tyrosine,
                 run_conduction=run_conduction, # Pass conduction flag
+                run_dwgates=run_dwgates,           # Pass dwgates flag
                 specific_analyses_requested=specific_flags_set, # Pass this info
                 generate_html=generate_html,
                 box_z=args.box_z,
@@ -257,6 +269,7 @@ def main():
             run_ion_tracking=run_ion_tracking, run_ion_coordination=run_ion_coordination,
             run_water=run_water, run_gyration=run_gyration, run_tyrosine=run_tyrosine,
             run_conduction=run_conduction, # Pass conduction flag
+            run_dwgates=run_dwgates,           # Pass dwgates flag
             specific_analyses_requested=specific_flags_set, # Pass this info
             generate_html=generate_html,
             box_z=args.box_z,
@@ -275,8 +288,9 @@ def main():
 def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
                            run_gg, run_com, run_orientation, run_ion_tracking,
                            run_ion_coordination, run_water, run_gyration, run_tyrosine,
-                           run_conduction, # Added conduction
-                           specific_analyses_requested, # Added
+                           run_conduction,
+                           run_dwgates, # Add dwgates
+                           specific_analyses_requested,
                            generate_html,
                            box_z=None, force_rerun=False):
     """
@@ -339,7 +353,8 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         'is_control_system': False, # Flag: Is this a control system?
         'gyration_stats': {},
         'tyrosine_stats': {},
-        'conduction_stats': {} # New key for conduction results
+        'conduction_stats': {}, # Key for conduction results
+        'dw_gate_stats': {}    # New key for DW gate results
     }
 
     # --- Execute Analyses ---
@@ -350,7 +365,9 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
         # 1. Core Trajectory Analysis (G-G, COM Raw) - Always run if needed by subsequent steps
         # We run this if any of GG, COM, Orientation, IonTracking, Water, Gyration, Tyrosine needs it
         # Or if it's a full analysis run.
-        core_needed = run_gg or run_com or run_orientation or run_ion_tracking or run_water or run_gyration or run_tyrosine
+        core_needed = (run_gg or run_com or run_orientation or run_ion_tracking or
+                       run_water or run_gyration or run_tyrosine or
+                       run_conduction or run_dwgates) # Added conduction and dwgates
         if core_needed:
              logging.info("Running Core Trajectory Analysis (required for other modules)...")
              results['dist_ac'], results['dist_bd'], results['com_distances'], results['time_points'], _, results['is_control_system'] = \
@@ -553,9 +570,44 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
              results['tyrosine_stats'] = {}
 
 
+        # 10. DW Gate Analysis (if requested)
+        if run_dwgates:
+            # Check if the function was imported and prerequisites are met
+            if analyse_dw_gates is None:
+                logging.warning("Skipping DW Gate Analysis: Module/function could not be imported.")
+                results['dw_gate_stats'] = {'Error': 'Module not imported'}
+            elif results.get('time_points') is not None:
+                 logging.info("Running DW Gate Analysis...")
+                 try:
+                     # Assuming default stride=1 for now, add stride param if needed
+                     dw_stats = analyse_dw_gates(
+                         run_dir=run_dir,
+                         psf_file=psf_file,
+                         dcd_file=dcd_file,
+                         time_points=results['time_points'],
+                         # stride=1 # Pass explicit stride if needed
+                     )
+                     results['dw_gate_stats'] = dw_stats
+                     # Log a key result if available
+                     global_closed = dw_stats.get('DWhbond_closed_global')
+                     if global_closed is not None:
+                         logging.info(f"DW Gate Analysis completed. Global Closed Fraction: {global_closed:.3f}")
+                     else:
+                         logging.info(f"DW Gate Analysis completed. Status: {dw_stats.get('Error', 'OK')}")
+                 except FileNotFoundError:
+                     logging.error("DW Gate: PSF or DCD file not found. Cannot load Universe.")
+                     results['dw_gate_stats'] = {'Error': 'Input file not found'}
+                 except Exception as e_dwg:
+                     logging.error(f"DW Gate Analysis failed: {e_dwg}", exc_info=True)
+                     results['dw_gate_stats'] = {'Error': str(e_dwg)}
+            else:
+                 logging.warning("Skipping DW Gate Analysis (--dwgates flag set, but time_points missing).")
+                 results['dw_gate_stats'] = {'Error': 'Prerequisite time_points missing'}
+
+
         # --- Post-Analysis ---
 
-        # 10. Calculate and Save Final Summary JSON
+        # 11. Calculate and Save Final Summary JSON
         # This runs regardless of specific flags, using whatever data is in results
         logging.info("Calculating and saving summary JSON...")
         # ... (calculate_and_save_run_summary call remains the same) ...
@@ -572,11 +624,12 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
             gyration_stats=results.get('gyration_stats', {}),
             tyrosine_stats=results.get('tyrosine_stats', {}),
             conduction_stats=results.get('conduction_stats', {}),
+            dw_gate_stats=results.get('dw_gate_stats', {}),
             is_control_system=results.get('is_control_system', False)
         )
 
 
-        # 11. Generate HTML Report (if requested by generate_html flag)
+        # 12. Generate HTML Report (if requested by generate_html flag)
         if generate_html:
             logging.info("Generating HTML Report...")
             # Load the freshly saved summary to pass to HTML generator
