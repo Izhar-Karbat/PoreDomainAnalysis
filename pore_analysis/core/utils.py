@@ -12,7 +12,7 @@ from datetime import datetime
 # Import necessary constants from the config module
 try:
     # Assumes config.py is in the same directory or Python path
-    from md_analysis.core.config import FRAMES_PER_NS
+    from pore_analysis.core.config import FRAMES_PER_NS
 except ImportError:
     # Fallback if running utils.py standalone or config is missing
     print("Warning: Could not import FRAMES_PER_NS from config. Using default: 10")
