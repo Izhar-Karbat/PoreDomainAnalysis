@@ -33,10 +33,11 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                                    percentile_stats={}, orientation_rotation_stats={},
                                    ion_transit_stats={}, gyration_stats={}, tyrosine_stats={},
                                    conduction_stats={},
+                                   dw_gate_stats={},
                                    is_control_system=False):
     """
     Calculates summary stats by reading analysis output files from a specific run
-    (including ion, water, raw distance, percentile, orientation, ion transit, gyration, tyrosine, and conduction stats)
+    (including ion, water, raw distance, percentile, orientation, ion transit, gyration, tyrosine, conduction, and dw_gate stats)
     and saves the combined summary to 'analysis_summary.json'. Handles control systems.
 
     Args:
@@ -54,6 +55,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
         gyration_stats (dict, optional): Dictionary with carbonyl gyration statistics. Defaults to {}.
         tyrosine_stats (dict, optional): Dictionary with tyrosine analysis statistics. Defaults to {}.
         conduction_stats (dict, optional): Dictionary with ion conduction statistics. Defaults to {}.
+        dw_gate_stats (dict, optional): Dictionary with DW gate statistics. Defaults to {}.
         is_control_system (bool, optional): Flag indicating if this is a control system (no toxin). Defaults to False.
     """
     logger.info(f"Calculating final summary statistics for {system_name}/{run_name}...")
@@ -362,6 +364,21 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             run_summary.setdefault('TYROSINE_ROTAMER_TOLERANCE_FRAMES', TYROSINE_ROTAMER_TOLERANCE_FRAMES) # Use imported default
             run_summary.setdefault('ION_TRANSITION_TOLERANCE_FRAMES', ION_TRANSITION_TOLERANCE_FRAMES) # Add ion tolerance here too
 
+        # --- DW Gate Stats --- (NEW)
+        try:
+            if isinstance(dw_gate_stats, dict) and dw_gate_stats:
+                run_summary['DWhbond_closed_global'] = dw_gate_stats.get('DWhbond_closed_global', np.nan)
+                run_summary['DWhbond_closed_per_subunit'] = dw_gate_stats.get('DWhbond_closed_per_subunit') # Can be dict or None
+            else:
+                logger.debug("No DW Gate stats provided or empty dict, setting keys to None/NaN.")
+                run_summary['DWhbond_closed_global'] = np.nan
+                run_summary['DWhbond_closed_per_subunit'] = None # Or perhaps {}?
+                if not dw_gate_stats: stats_collection_errors.append("DWGateStats_Missing")
+            logger.info("Added DW Gate stats to summary.")
+        except Exception as e:
+            logger.error(f"Error processing DW Gate stats: {e}", exc_info=True)
+            stats_collection_errors.append(f"DWGateStats_Error: {e}")
+
         # --- Finalize Status ---
         # More granular status based on errors
         if not stats_collection_errors:
@@ -435,3 +452,15 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
                 json.dump(error_summary, f_json, indent=4)
         except Exception as e_save:
             logger.error(f"Failed even to save minimal error summary JSON: {e_save}")
+
+    return run_summary['AnalysisStatus'].startswith('Success')
+
+def load_existing_summary(run_dir):
+    # ... (function remains the same) ...
+    pass
+
+
+# --- Example Usage --- (optional)
+if __name__ == '__main__':
+    # ... (example remains the same) ...
+    pass
