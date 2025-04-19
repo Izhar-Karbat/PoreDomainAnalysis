@@ -117,27 +117,27 @@ HTML_TEMPLATE = """
 
         <!-- Tab Content Containers -->
         <div id="tab-overview" class="tab-content active">
-            {% include 'pore_analysis/reporting/templates/_tab_overview.html' %}
+            {% include '_tab_overview.html' %}
         </div>
 
         <div id="tab-toxin" class="tab-content">
-            {% include 'pore_analysis/reporting/templates/_tab_toxin.html' %}
+            {% include '_tab_toxin.html' %}
         </div>
 
         <div id="tab-pore-ions" class="tab-content">
-            {% include 'pore_analysis/reporting/templates/_tab_pore_ions.html' %}
+            {% include '_tab_pore_ions.html' %}
         </div>
 
         <div id="tab-inner-vestibule" class="tab-content">
-            {% include 'pore_analysis/reporting/templates/_tab_inner_vestibule.html' %}
+            {% include '_tab_inner_vestibule.html' %}
         </div>
 
         <div id="tab-carbonyl" class="tab-content">
-            {% include 'pore_analysis/reporting/templates/_tab_carbonyl.html' %}
+            {% include '_tab_carbonyl.html' %}
         </div>
 
         <div id="tab-tyrosine" class="tab-content">
-            {% include 'pore_analysis/reporting/templates/_tab_tyrosine.html' %}
+            {% include '_tab_tyrosine.html' %}
         </div>
 
         <div class="footer">End of Report</div>
