@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="md_analysis",
-    version="0.1.0",
+    name="pore_analysis",
+    version="1.6.1",
     packages=find_packages(),
     install_requires=[
         "numpy",
@@ -15,7 +15,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'md_analysis=md_analysis.main:main',
+            'pore_analysis=pore_analysis.main:main',
         ],
     },
 ) 
