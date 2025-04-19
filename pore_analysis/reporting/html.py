@@ -113,6 +113,7 @@ HTML_TEMPLATE = """
             <li><a href="#tab-inner-vestibule" class="tab-link">Inner Vestibule</a></li>
             <li><a href="#tab-carbonyl" class="tab-link">Carbonyl Dynamics</a></li>
             <li><a href="#tab-tyrosine" class="tab-link">SF Tyrosine</a></li>
+            <li><a href="#tab-dw-gate" class="tab-link">DW Gate</a></li>
         </ul>
 
         <!-- Tab Content Containers -->
@@ -138,6 +139,10 @@ HTML_TEMPLATE = """
 
         <div id="tab-tyrosine" class="tab-content">
             {% include '_tab_tyrosine.html' %}
+        </div>
+
+        <div id="tab-dw-gate" class="tab-content">
+            {% include '_tab_dw_gates.html' %}
         </div>
 
         <div class="footer">End of Report</div>
@@ -246,6 +251,10 @@ def generate_html_report(run_dir, run_summary):
         "SF_Tyrosine_Dihedrals": "tyrosine_analysis/SF_Tyrosine_Dihedrals.png",
         "SF_Tyrosine_Rotamer_Scatter": "tyrosine_analysis/SF_Tyrosine_Rotamer_Scatter.png",
         "SF_Tyrosine_Rotamer_Population": "tyrosine_analysis/SF_Tyrosine_Rotamer_Population.png",
+        # DW Gate analysis plots (NEW)
+        "dw_distance_timeseries": "dw_gate_analysis/dw_distance_timeseries.png",
+        "dw_gate_state_heatmap": "dw_gate_analysis/dw_gate_state_heatmap.png",
+        "dw_gate_closed_fraction_bar": "dw_gate_analysis/dw_gate_closed_fraction_bar.png",
     }
 
     logger.debug("Loading images for HTML report...")
@@ -287,9 +296,10 @@ def generate_html_report(run_dir, run_summary):
         # Prepare context for rendering
         render_context = {
             'run_summary': run_summary,
-            'plots': img_data,
+            'img_data': img_data,
             'binding_site_data': binding_site_data,
-            'generation_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            'generation_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'DISTANCE_THRESHOLD': run_summary.get('DWhbond_threshold', 3.5)
         }
 
         rendered_html = template.render(render_context)

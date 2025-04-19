@@ -1,0 +1,84 @@
+<!-- DW Gate Analysis Tab -->
+{# Use run_summary to check if data exists, img_data for plots #}
+{% if run_summary.DWhbond_closed_global is defined %}
+<div class="section">
+    <h3>DW Gate Analysis</h3>
+    <p>Analysis of the DW Gate dynamics, focusing on hydrogen bonding between the identified Asp/Glu and Trp residues.</p>
+
+    <!-- Statistics Table -->
+    <h4>Key Statistics</h4>
+    <table class="stats-table">
+        <thead>
+            <tr>
+                <th>Metric</th>
+                <th>Value</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Global Closed Fraction</td>
+                <td>{{ '%.3f' | format(run_summary.DWhbond_closed_global) if run_summary.DWhbond_closed_global is not none else 'N/A' }}</td>
+                <td>Fraction of simulation time where the DW gate (at least one subunit) is considered closed based on D/E-W H-bonding (≤ {{ DISTANCE_THRESHOLD }} Å).</td>
+            </tr>
+            {% if run_summary.DWhbond_closed_per_subunit %}
+            <tr>
+                <td>Closed Fraction per Subunit</td>
+                <td>
+                    {% for subunit, fraction in run_summary.DWhbond_closed_per_subunit.items() %}
+                        {{ subunit }}: {{ '%.3f' | format(fraction) if fraction is not none else 'N/A' }}{% if not loop.last %}<br>{% endif %}
+                    {% endfor %}
+                </td>
+                <td>Fraction of simulation time each subunit's DW gate is considered closed.</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td>Closed Fraction per Subunit</td>
+                <td>Not Calculated</td>
+                <td>Per-subunit analysis likely encountered issues.</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+
+    <!-- Plots Section -->
+    <h4>Plots</h4>
+    <div class="two-column"> {# Use two-column for first two plots #}
+        <!-- DW Distance Timeseries -->
+        <div class="column plot-container">
+            <h5>DW Gate H-bond Distance Timeseries</h5>
+            {% if img_data.get('dw_distance_timeseries') %}
+                <img src="data:image/png;base64,{{ img_data.dw_distance_timeseries }}" alt="DW Gate H-bond Distance Timeseries">
+                <p class="plot-description">Timeseries showing the minimum hydrogen bond distance between D/E (OD1/OD2) and W (NE1) for each subunit. The dashed line indicates the H-bond distance cutoff ({{ DISTANCE_THRESHOLD }} Å).</p>
+            {% else %}
+                <p><i>Plot not available (dw_distance_timeseries.png missing).</i></p>
+            {% endif %}
+        </div>
+
+        <!-- DW Gate State Heatmap -->
+        <div class="column plot-container">
+            <h5>DW Gate State Heatmap</h5>
+            {% if img_data.get('dw_gate_state_heatmap') %}
+                <img src="data:image/png;base64,{{ img_data.dw_gate_state_heatmap }}" alt="DW Gate State Heatmap">
+                <p class="plot-description">Heatmap showing the state (open/closed) of the DW gate for each subunit over time. Closed states are typically indicated by one color (e.g., dark blue) and open states by another (e.g., light blue).</p>
+            {% else %}
+                <p><i>Plot not available (dw_gate_state_heatmap.png missing).</i></p>
+            {% endif %}
+        </div>
+    </div>
+    {# Bar plot below the two columns #}
+    <div class="plot-container">
+        <h5>DW Gate Closed Fraction</h5>
+        {% if img_data.get('dw_gate_closed_fraction_bar') %}
+            <img src="data:image/png;base64,{{ img_data.dw_gate_closed_fraction_bar }}" alt="DW Gate Closed Fraction Bar Plot">
+            <p class="plot-description">Bar plot showing the fraction of time each subunit's DW gate is closed, along with the global average closed fraction.</p>
+        {% else %}
+            <p><i>Plot not available (dw_gate_closed_fraction_bar.png missing).</i></p>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+<div class="section unavailable">
+    <p><i>DW Gate analysis not performed or data unavailable.</i></p>
+</div>
+{% endif %} 
