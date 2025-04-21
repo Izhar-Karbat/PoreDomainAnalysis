@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest MDAnalysis  # ensure MDAnalysis is installed for full traj
+
+      - name: Prepare test data
+        # Copy your large test files from a secure location or artifact
+        # For demonstration, assume they're checked in (if private, replace this)
+        run: |
+          ls tests/data | grep -E 'test\.(dcd|psf)' || exit 1
+
+      - name: Cleanup & smoke-test
+        run: ./tests/run_samples.py
+
+      - name: Run pytest
+        run: pytest -q
