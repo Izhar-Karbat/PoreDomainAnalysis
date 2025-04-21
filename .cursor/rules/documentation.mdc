@@ -1,0 +1,25 @@
+---
+description: USE WHEN writing documentation or explanatory comments
+globs:
+  - "**/*.py"
+  - "README.md"
+alwaysApply: false
+---
+# Documentation Guidelines
+
+- **Docstrings:**  
+  - Use numpy‑style (Parameters / Returns / Raises) in every public function.  
+  - Include a one‑sentence summary, followed by detailed parameter descriptions.  
+  - Note side effects (e.g., file outputs, logging).
+
+- **README & Markdown:**  
+  - When adding or changing features, update `README.md` with usage examples.  
+  - Include CLI invocation examples for new flags or scripts.  
+  - Keep prose concise and use bullet lists for steps.
+
+- **Inline Comments:**  
+  - Add comments for any non‑obvious logic, especially scientific calculations or workarounds.  
+  - Avoid redundant comments—only explain “why,” not “what.”
+
+- **Example Blocks:**  
+  - Provide small code snippets in rules or docs if it clarifies usage patterns.
