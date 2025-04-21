@@ -1,0 +1,26 @@
+---
+description: USE WHEN adding new features or refactoring code
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+# Feature‑Request Workflow
+
+1. **Plan**  
+   - Outline the change in pseudo‑code or bullet points before writing any code.  
+   - Specify the function, its inputs, outputs, and where it integrates in the existing workflow.
+
+2. **Implement**  
+   - Write or modify code to meet the plan.  
+   - Add type hints and a numpy‑style docstring describing purpose, args, returns, and side effects.  
+   - Place new modules under `pore_analysis/modules/<feature>/`.
+
+3. **Integrate**  
+   - Insert calls in `_run_analysis_workflow` or the appropriate entry point, guarded by a new CLI flag (e.g., `--myflag`).  
+   - Update `calculate_and_save_run_summary` or HTML templates if needed.
+
+4. **Verify**  
+   - Run the sample data check: process `tests/data/test.psf` & `tests/data/test.dcd`, and compare results to baseline.  
+   - Think through edge cases: invalid inputs, empty data, and toxin vs. control branches.
+
+**Do not** break existing functionality—any change must preserve all current tests and sample‑data outputs unless you explicitly instruct otherwise.
