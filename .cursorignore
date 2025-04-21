@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+env/
+.MDA/
+.env/
+tests/data/*.dcd
+tests/data/*.psf
+*.log
+*.html
+*.png
+*.csv
+*.json
+.DS_Store
+Thumbs.db
