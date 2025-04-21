@@ -9,8 +9,10 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Check out code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -20,16 +22,25 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest MDAnalysis  # ensure MDAnalysis is installed for full traj
+          # install your package plus test/runtime deps
+          pip install . 
+          pip install pytest MDAnalysis
 
-      - name: Prepare test data
-        # Copy your large test files from a secure location or artifact
-        # For demonstration, assume they're checked in (if private, replace this)
+      - name: Download test data from Box
         run: |
-          ls tests/data | grep -E 'test\.(dcd|psf)' || exit 1
+          mkdir -p tests/data
+          curl -L "https://weizmann.box.com/s/p1uohi0f9fowk33bm55p3qs7tmfbrf8d?dl=1" \
+            -o tests/data/step5_input.psf
+          curl -L "https://weizmann.box.com/s/uph9a74zmx7z24yh3ulafwcl8xj4kod2?dl=1" \
+            -o tests/data/MD_Aligned.dcd
 
-      - name: Cleanup & smoke-test
+      - name: Cache test data
+        uses: actions/cache@v3
+        with:
+          path: tests/data
+          key: ${{ runner.os }}-poredata-v1
+
+      - name: Cleanup & smoke‑test
         run: ./tests/run_samples.py
 
       - name: Run pytest
