@@ -22,8 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # install your package plus test/runtime deps
-          pip install . 
+          pip install .
           pip install pytest MDAnalysis
 
       - name: Download test data from Box
@@ -41,7 +40,7 @@ jobs:
           key: ${{ runner.os }}-poredata-v1
 
       - name: Cleanup & smoke‑test
-        run: ./tests/run_samples.py
+        run: python3 -u tests/run_samples.py
 
       - name: Run pytest
         run: pytest -q
