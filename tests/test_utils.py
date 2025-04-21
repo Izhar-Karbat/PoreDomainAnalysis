@@ -37,7 +37,8 @@ def test_fig_to_base64():
     b64 = fig_to_base64(fig)
     assert isinstance(b64, str) and len(b64) > 0
     data = base64.b64decode(b64)
-    assert data[:8] == b'\\x89PNG\\r\\n\\x1a\\n'
+    # PNG files start with the byte signature 89 50 4E 47 0D 0A 1A 0A
+    assert data[:8] == b'\x89PNG\r\n\x1a\n'
 
 def test_clean_json_data():
     data = {
