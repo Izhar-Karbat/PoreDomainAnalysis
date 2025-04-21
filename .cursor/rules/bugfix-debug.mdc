@@ -1,0 +1,26 @@
+---
+description: USE WHEN diagnosing or fixing a persistent bug
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+# Bugfix & Debug Workflow
+
+1. **Reproduce**  
+   - Ask for steps to reproduce the error, including minimal code snippets or CLI commands.  
+   - Verify the bug with the sample data (`tests/data/test.psf` & `tests/data/test.dcd`).
+
+2. **Analyze**  
+   - Examine relevant modules/functions: search for where the failing key or variable is defined and used.  
+   - Consider dependencies (e.g., `results` dict keys, logging calls, conditional branches).
+
+3. **Propose Fix**  
+   - Describe the root cause in a sentence.  
+   - Suggest targeted code changes (with line numbers if possible) to resolve the issue.  
+   - Add any additional logging or validation to catch similar errors.
+
+4. **Validate**  
+   - Re-run reproduction steps; confirm the error no longer occurs.  
+   - Ensure no new errors or side effects on toxin vs. control branches.
+
+**Do not** remove existing validation or logging without explicit instruction.
