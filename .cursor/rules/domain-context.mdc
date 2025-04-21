@@ -1,0 +1,28 @@
+---
+description: USE WHEN reasoning about pore‑domain analysis concepts
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+# Pore‑Domain Analysis Context
+
+## Systems
+- Toxin–channel complexes (e.g. Cs1 + K⁺ channel) and control channels alone.
+- Focus on water‑mediated pore modulation: toxins disrupt H‑bond networks controlling water access.
+
+## Key Metrics
+- **G–G Distances:** Cα distances A–C and B–D as proxies for pore diameter/collapse.  
+- **Ion Occupancy & Conduction:** K⁺ sites (S0–S4, Cavity) and conduction events.  
+- **D‑W Gate Dynamics:** H‑bond network (D447–W434) controlling peripheral water access.  
+- **Toxin Orientation & Contacts:** COM distances, orientation angles, and contact frequencies (toxin only).  
+- **Carbonyl Flipping:** Backbone flips at G444/Y445 via gyration analysis.  
+- **Water Dynamics:** Flow patterns and residence times in cavities and central pore.  
+- **Tyrosine Rotamers:** Conformational states of filter‑adjacent tyrosine residues.
+
+## Coding Conventions
+- Handle toxin and control systems with conditional logic for toxin‑specific analyses.  
+- Use the established `results` dict to pass data between steps.  
+- Preserve module‑specific output directories as per the project structure.  
+- Employ MDAnalysis for trajectory I/O and numpy/scipy for all array ops—no manual loops.  
+- Maintain SI units (Å, ps) and existing variable names.  
+- All functions require numpy‑style docstrings that note side effects (file outputs).

@@ -1,0 +1,20 @@
+---
+description: Core PoreDomainAnalysis conventions (always apply)
+globs:
+  - "**/*.py"
+alwaysApply: true
+---
+# Foundation — Core Project Conventions
+
+1. **Naming & Structure**
+   - All pore-related modules and functions use the prefix `pore_`.
+   - Entry point is `pore_analysis/main.py` (invoked via `python -m pore_analysis.main --folder <path>`).
+2. **Maintain Logic Integrity**
+   - Do not alter scientific calculations (e.g., tolerance thresholds, formula implementations) without explicit prompt.
+   - Preserve all existing validation and logging calls.
+3. **Style & Quality**
+   - Follow PEP8 conventions and Black formatting.
+   - Every new or modified function must include type hints and a numpy‑style docstring.
+4. **Testing Awareness**
+   - After changes, manually verify core functionality with `tests/data/test.psf` & `tests/data/test.dcd`.
+   - Do not remove or rename the sample data files.
