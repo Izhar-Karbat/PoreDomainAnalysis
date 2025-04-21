@@ -369,6 +369,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             if isinstance(dw_gate_stats, dict) and dw_gate_stats:
                 run_summary['DWhbond_closed_global'] = dw_gate_stats.get('DWhbond_closed_global', np.nan)
                 run_summary['DWhbond_closed_per_subunit'] = dw_gate_stats.get('DWhbond_closed_per_subunit') # Can be dict or None
+                run_summary.update(dw_gate_stats)
             else:
                 logger.debug("No DW Gate stats provided or empty dict, setting keys to None/NaN.")
                 run_summary['DWhbond_closed_global'] = np.nan

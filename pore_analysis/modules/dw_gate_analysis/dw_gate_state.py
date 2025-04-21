@@ -77,20 +77,24 @@ def plot_improved_duration_distribution(open_durations_by_chain, closed_duration
     bins = np.logspace(np.log10(min_dur), np.log10(max_dur), num=25)
 
     # Color map for chains - Use seaborn pastel
-    # colors = plt.cm.get_cmap('tab10') # Old colormap
     sns_pastel = sns.color_palette("pastel", n_colors=max(4, len(valid_chain_ids))) # Get at least 4 pastel colors
-    chain_color_map = {chain_id[-1]: color for chain_id, color in zip(sorted(valid_chain_ids), sns_pastel)}
+    chain_color_map = {chain_id[-1]: color for chain_id, color in zip(valid_chain_ids, sns_pastel)}
     chain_chars_plot = sorted([c[-1] for c in valid_chain_ids]) # Define the list of chain chars to iterate over
+
+    # Ensure consistent x-axis ranges
+    x_min = min_dur * 0.9
+    x_max = max_dur * 1.1
+
+    # Create legend handles & labels for the consolidated legend
+    legend_handles, legend_labels = [], []
 
     # --- Plot Open States --- #
     ax_open_hist = axes[0, 0]
     ax_open_cdf = axes[0, 1]
     plotted_open = False
-    open_handles, open_labels = [], [] # For legend
 
     for i, chain_char in enumerate(chain_chars_plot):
-        # chain_color = colors(i / len(chain_chars_plot)) # Old color assignment
-        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]) # Get specific color
+        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)])
         chain_open_durs = open_durations_by_chain.get(chain_char, [])
         if chain_open_durs:
             plotted_open = True
@@ -103,47 +107,62 @@ def plot_improved_duration_distribution(open_durations_by_chain, closed_duration
                 label=f'Chain {chain_char}',
                 density=True
             )
-            open_handles.append(patches[0]) # Add patch for legend
-            open_labels.append(f'Chain {chain_char}')
+            # Store for legend
+            if chain_char not in [label.split()[-1] for label in legend_labels]:
+                legend_handles.append(patches[0])
+                legend_labels.append(f'Chain {chain_char}')
 
-            # Add mean/median markers
+            # Add mean/median markers with annotations
             mean_val = np.mean(chain_open_durs)
             median_val = np.median(chain_open_durs)
-            if counts.size > 0: y_height = max(counts) * 0.9 # Only if hist has counts
-            else: y_height = ax_open_hist.get_ylim()[1] * 0.9
-            ax_open_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8, label=f'_nolegend_mean_{chain_char}')
-            ax_open_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8, label=f'_nolegend_median_{chain_char}')
+            
+            # Add mean line with annotation
+            ax_open_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8)
+            ax_open_hist.text(mean_val*1.1, 0.9*ax_open_hist.get_ylim()[1], 
+                              f'Mean: {mean_val:.2f} ns', color=chain_color, 
+                              fontsize=8, ha='left', rotation=45, va='top')
+            
+            # Add median line with different style
+            ax_open_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8)
 
             # CDF
             data_sorted = np.sort(chain_open_durs)
             y = np.arange(1, len(data_sorted) + 1) / len(data_sorted)
-            ax_open_cdf.step(data_sorted, y, label=f'Chain {chain_char}', color=chain_color)
+            ax_open_cdf.step(data_sorted, y, color=chain_color)
+            
+            # Add median marker on CDF (where y=0.5)
+            ax_open_cdf.plot(median_val, 0.5, 'o', color=chain_color, markersize=5, alpha=0.7)
 
     ax_open_hist.set_title('Open State Duration Distribution')
     ax_open_hist.set_xlabel('Duration (ns)')
     ax_open_hist.set_ylabel('Probability Density')
     ax_open_hist.set_xscale('log')
-    ax_open_hist.grid(True, which='both', linestyle='--', alpha=0.6)
+    # Lighter grid for less distraction
+    ax_open_hist.grid(True, which='major', linestyle='--', alpha=0.3)
+    ax_open_hist.grid(False, which='minor')
+    ax_open_hist.set_xlim(x_min, x_max)
 
     ax_open_cdf.set_title('Open State Duration CDF')
     ax_open_cdf.set_xlabel('Duration (ns)')
     ax_open_cdf.set_ylabel('Cumulative Probability')
     ax_open_cdf.set_xscale('log')
-    ax_open_cdf.grid(True, which='both', linestyle='--', alpha=0.6)
+    ax_open_cdf.grid(True, which='major', linestyle='--', alpha=0.3)
+    ax_open_cdf.grid(False, which='minor')
+    ax_open_cdf.set_xlim(x_min, x_max)
 
     if not plotted_open:
-        ax_open_hist.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', verticalalignment='center', transform=ax_open_hist.transAxes)
-        ax_open_cdf.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', verticalalignment='center', transform=ax_open_cdf.transAxes)
+        ax_open_hist.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', 
+                          verticalalignment='center', transform=ax_open_hist.transAxes)
+        ax_open_cdf.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', 
+                         verticalalignment='center', transform=ax_open_cdf.transAxes)
 
     # --- Plot Closed States --- #
     ax_closed_hist = axes[1, 0]
     ax_closed_cdf = axes[1, 1]
     plotted_closed = False
-    closed_handles, closed_labels = [], [] # For legend
 
     for i, chain_char in enumerate(chain_chars_plot):
-        # chain_color = colors(i / len(chain_chars_plot)) # Old color assignment
-        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]) # Get specific color
+        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)])
         chain_closed_durs = closed_durations_by_chain.get(chain_char, [])
         if chain_closed_durs:
             plotted_closed = True
@@ -153,54 +172,157 @@ def plot_improved_duration_distribution(open_durations_by_chain, closed_duration
                 bins=bins,
                 alpha=0.7,
                 color=chain_color,
-                label=f'Chain {chain_char}',
                 density=True
             )
-            closed_handles.append(patches[0]) # Add patch for legend
-            closed_labels.append(f'Chain {chain_char}')
 
-            # Add mean/median markers
+            # Add mean/median markers with annotations
             mean_val = np.mean(chain_closed_durs)
             median_val = np.median(chain_closed_durs)
-            if counts.size > 0: y_height = max(counts) * 0.9
-            else: y_height = ax_closed_hist.get_ylim()[1] * 0.9
-            ax_closed_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8, label=f'_nolegend_mean_{chain_char}')
-            ax_closed_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8, label=f'_nolegend_median_{chain_char}')
+            
+            # Add mean line with annotation
+            ax_closed_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8)
+            ax_closed_hist.text(mean_val*1.1, 0.9*ax_closed_hist.get_ylim()[1], 
+                                f'Mean: {mean_val:.2f} ns', color=chain_color, 
+                                fontsize=8, ha='left', rotation=45, va='top')
+            
+            # Add median line with different style
+            ax_closed_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8)
 
             # CDF
             data_sorted = np.sort(chain_closed_durs)
             y = np.arange(1, len(data_sorted) + 1) / len(data_sorted)
-            ax_closed_cdf.step(data_sorted, y, label=f'Chain {chain_char}', color=chain_color)
+            ax_closed_cdf.step(data_sorted, y, color=chain_color)
+            
+            # Add median marker on CDF (where y=0.5)
+            ax_closed_cdf.plot(median_val, 0.5, 'o', color=chain_color, markersize=5, alpha=0.7)
 
     ax_closed_hist.set_title('Closed State Duration Distribution')
     ax_closed_hist.set_xlabel('Duration (ns)')
     ax_closed_hist.set_ylabel('Probability Density')
     ax_closed_hist.set_xscale('log')
-    ax_closed_hist.grid(True, which='both', linestyle='--', alpha=0.6)
+    ax_closed_hist.grid(True, which='major', linestyle='--', alpha=0.3)
+    ax_closed_hist.grid(False, which='minor')
+    ax_closed_hist.set_xlim(x_min, x_max)
 
     ax_closed_cdf.set_title('Closed State Duration CDF')
     ax_closed_cdf.set_xlabel('Duration (ns)')
     ax_closed_cdf.set_ylabel('Cumulative Probability')
     ax_closed_cdf.set_xscale('log')
-    ax_closed_cdf.grid(True, which='both', linestyle='--', alpha=0.6)
+    ax_closed_cdf.grid(True, which='major', linestyle='--', alpha=0.3)
+    ax_closed_cdf.grid(False, which='minor')
+    ax_closed_cdf.set_xlim(x_min, x_max)
 
     if not plotted_closed:
-        ax_closed_hist.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', verticalalignment='center', transform=ax_closed_hist.transAxes)
-        ax_closed_cdf.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', verticalalignment='center', transform=ax_closed_cdf.transAxes)
+        ax_closed_hist.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', 
+                            verticalalignment='center', transform=ax_closed_hist.transAxes)
+        ax_closed_cdf.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', 
+                           verticalalignment='center', transform=ax_closed_cdf.transAxes)
 
-    # Add legend (use combined handles/labels if desired, or rely on individual axes)
-    # ax_open_hist.legend(handles=open_handles, labels=open_labels, title="Open States", fontsize='small')
-    # ax_closed_hist.legend(handles=closed_handles, labels=closed_labels, title="Closed States", fontsize='small')
-    # Let's add a figure legend instead for less clutter
-    if open_handles or closed_handles:
-        fig.legend(handles=open_handles + closed_handles, labels=open_labels + closed_labels, loc='center right', fontsize='medium', bbox_to_anchor=(1.0, 0.5))
+    # Add consolidated legend with chain information
+    if legend_handles:
+        fig.legend(
+            handles=legend_handles, 
+            labels=legend_labels, 
+            loc='center right', 
+            fontsize='medium', 
+            title="Chains",
+            bbox_to_anchor=(1.0, 0.5)
+        )
+        
+    # Add explanatory note for line styles
+    line_styles_ax = fig.add_axes([0.85, 0.3, 0.1, 0.1])  # [left, bottom, width, height]
+    line_styles_ax.axis('off')
+    line_styles_ax.plot([0.1, 0.4], [0.7, 0.7], 'k-', label='Mean')
+    line_styles_ax.plot([0.1, 0.4], [0.3, 0.3], 'k:', label='Median')
+    line_styles_ax.legend(loc='center', fontsize='small', title="Statistics")
 
     # Add layout improvements
     fig.suptitle('DW Gate Event Duration Analysis', fontsize=16, y=0.98)
-    # plt.tight_layout(rect=[0, 0, 0.9, 0.96])  # Adjust for legend and suptitle
 
     # Save the figure
     save_plot(fig, os.path.join(output_dir, "dw_gate_duration_analysis.png"), dpi=300)
+
+# --- New Plot Function: Idealized vs Actual Distance ---
+def plot_dw_distance_vs_state(df_timeseries, valid_chain_ids, DISTANCE_THRESHOLD, chain_color_map, sns_pastel, output_dir):
+    """Generates a stacked plot showing raw distance vs. idealized state for each chain."""
+    logger.info("Generating DW Gate distance vs. state plot...")
+    n_chains = len(valid_chain_ids)
+    if n_chains == 0 or df_timeseries.empty:
+        logger.warning("Skipping distance vs state plot: No valid chains or timeseries data.")
+        return
+
+    try:
+        fig, axes = plt.subplots(n_chains, 1, figsize=(10, 2 * n_chains), sharex=True, constrained_layout=True)
+        if n_chains == 1:
+            axes = [axes]
+
+        chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
+        min_time = df_timeseries["time_ns"].min()
+        max_time = df_timeseries["time_ns"].max()
+
+        # Define Y-positions for idealized states (adjust offset if needed)
+        state_y_pos = {CLOSED_STATE: DISTANCE_THRESHOLD, OPEN_STATE: DISTANCE_THRESHOLD + 0.5}
+        state_colors = {CLOSED_STATE: 'darkred', OPEN_STATE: 'darkgreen'}
+
+        for i, chain_char in enumerate(chain_chars_plot):
+            ax = axes[i]
+            df_ch = df_timeseries[df_timeseries["chain"] == chain_char].copy()
+
+            if not df_ch.empty:
+                # Plot raw distance (actual)
+                ax.plot(df_ch["time_ns"], df_ch["distance"],
+                        label="Actual Distance", lw=0.8, alpha=0.6,
+                        color=chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]))
+
+                # Plot idealized state
+                # Group by consecutive states
+                df_ch['state_block'] = (df_ch['state'] != df_ch['state'].shift()).cumsum()
+                for _, block in df_ch.groupby('state_block'):
+                    start_time = block['time_ns'].iloc[0]
+                    end_time = block['time_ns'].iloc[-1]
+                    state = block['state'].iloc[0]
+                    y_val = state_y_pos[state]
+                    color = state_colors[state]
+                    # Plot a thicker horizontal line segment for the state duration
+                    ax.plot([start_time, end_time], [y_val, y_val], lw=3, color=color, solid_capstyle='butt')
+
+                # Add threshold line
+                ax.axhline(DISTANCE_THRESHOLD, color='grey', linestyle=':', lw=1.0, label=f'Threshold ({DISTANCE_THRESHOLD}Å)')
+
+                # Axis labels and limits
+                ax.set_ylabel(f"Chain {chain_char} Dist (Å)")
+                ax.set_ylim(bottom=0)
+                # Determine reasonable upper ylim
+                max_dist = df_ch["distance"].max()
+                ax.set_ylim(top=max(max_dist * 1.1, DISTANCE_THRESHOLD + 2.0))
+                ax.grid(True, axis='y', linestyle=':', alpha=0.5)
+            else:
+                ax.text(0.5, 0.5, f'No data for Chain {chain_char}', ha='center', va='center', transform=ax.transAxes)
+
+            # Remove x-tick labels for all but the bottom plot
+            if i < n_chains - 1:
+                ax.tick_params(labelbottom=False)
+
+        # Common X label
+        axes[-1].set_xlabel("Time (ns)")
+        fig.suptitle("DW Gate Distance (Actual vs. Idealized State)", y=1.02)
+
+        # Create a custom legend for the figure
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], color='gray', lw=0.8, alpha=0.6, label='Actual Distance'),
+            Line2D([0], [0], color=state_colors[CLOSED_STATE], lw=3, label='Idealized Closed'),
+            Line2D([0], [0], color=state_colors[OPEN_STATE], lw=3, label='Idealized Open'),
+            Line2D([0], [0], color='grey', linestyle=':', lw=1.0, label=f'Threshold ({DISTANCE_THRESHOLD}Å)')
+        ]
+        fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.1, 0.95), fontsize='small')
+
+        # Save plot
+        plot_filename = "dw_distance_state_overlay.png"
+        save_plot(fig, os.path.join(output_dir, plot_filename))
+
+    except Exception as e:
+        logger.error(f"Failed to generate distance vs state plot: {e}", exc_info=True)
 
 # --- Main Analysis Function ---
 def analyse_dw_gates(
@@ -314,6 +436,10 @@ def analyse_dw_gates(
 
     valid_chain_ids = sorted(valid_gates.keys())
 
+    # --- Define consistent color mapping for plots ---
+    sns_pastel = sns.color_palette("pastel", n_colors=max(4, len(valid_chain_ids)))
+    chain_color_map = {chain_id[-1]: color for chain_id, color in zip(valid_chain_ids, sns_pastel)}
+
     # --- Process Trajectory --- 
     timeseries_data = []
     frame_indices_analyzed = np.arange(0, n_frames_total, stride)
@@ -372,8 +498,10 @@ def analyse_dw_gates(
     all_closed_fractions = []
     open_durations_by_chain = defaultdict(list) # New dict for per-chain data
     closed_durations_by_chain = defaultdict(list) # New dict for per-chain data
+    event_summary_data = [] # List to hold data for the event summary CSV
+    all_events_data = [] # New list to hold data for ALL individual events
 
-    logger.info("Calculating DW Gate summary statistics...")
+    logger.info("Calculating DW Gate summary statistics and individual events...")
     for chain_id_full in valid_chain_ids:
         chain_char = chain_id_full[-1]
         df_chain = df_timeseries[df_timeseries["chain"] == chain_char]
@@ -400,39 +528,89 @@ def analyse_dw_gates(
 
         # --- Event Duration Analysis (Using Tolerance) ---
         logger.debug(f"Analyzing event durations for chain {chain_char} with tolerance {DW_GATE_TOLERANCE_FRAMES} frames...")
-        states = df_chain["state"].to_numpy()
         open_durations_frames = []
         closed_durations_frames = []
         current_state = None
         current_duration = 0
+        current_start_frame = None
+        current_start_time_ns = None
+        prev_frame = None
+        prev_time_ns = None
 
-        for state in states:
+        time_per_frame_ns = stride * dt_ns # Calculate once per chain
+
+        for row in df_chain.itertuples(): # Iterate over rows to get frame/time info
+            frame = row.frame
+            time_ns = row.time_ns
+            state = row.state
+
             if state == current_state:
                 current_duration += 1
             else:
-                # End of a block, check if it met tolerance
+                # End of a block, check if it met tolerance and record if so
                 if current_state is not None and current_duration >= DW_GATE_TOLERANCE_FRAMES:
+                    # Calculate end frame/time (use previous row's data)
+                    end_frame = prev_frame
+                    end_time_ns = prev_time_ns
+                    duration_frames = current_duration
+                    duration_ns = duration_frames * time_per_frame_ns
+
+                    # Append to the list for detailed event CSV
+                    all_events_data.append({
+                        'chain': chain_char,
+                        'state': current_state,
+                        'start_frame': current_start_frame,
+                        'end_frame': end_frame,
+                        'start_time_ns': current_start_time_ns,
+                        'end_time_ns': end_time_ns,
+                        'duration_frames': duration_frames,
+                        'duration_ns': duration_ns
+                    })
+
+                    # Append duration to lists for summary stats/plotting
                     if current_state == OPEN_STATE:
-                        open_durations_frames.append(current_duration)
+                        open_durations_frames.append(duration_frames)
                     elif current_state == CLOSED_STATE:
-                        closed_durations_frames.append(current_duration)
+                        closed_durations_frames.append(duration_frames)
 
                 # Start of a new block
                 current_state = state
                 current_duration = 1
+                current_start_frame = frame
+                current_start_time_ns = time_ns
 
-        # Check the last block at the end of the series
+            # Store current frame/time for the next iteration's 'end' calculation
+            prev_frame = frame
+            prev_time_ns = time_ns
+
+        # Check the last block at the end of the series for this chain
         if current_state is not None and current_duration >= DW_GATE_TOLERANCE_FRAMES:
-            if current_state == OPEN_STATE:
-                open_durations_frames.append(current_duration)
-            elif current_state == CLOSED_STATE:
-                closed_durations_frames.append(current_duration)
+            end_frame = prev_frame # The last frame processed
+            end_time_ns = prev_time_ns # The last time point processed
+            duration_frames = current_duration
+            duration_ns = duration_frames * time_per_frame_ns
 
-        # Calculate statistics from durations
+            all_events_data.append({
+                'chain': chain_char,
+                'state': current_state,
+                'start_frame': current_start_frame,
+                'end_frame': end_frame,
+                'start_time_ns': current_start_time_ns,
+                'end_time_ns': end_time_ns,
+                'duration_frames': duration_frames,
+                'duration_ns': duration_ns
+            })
+
+            if current_state == OPEN_STATE:
+                open_durations_frames.append(duration_frames)
+            elif current_state == CLOSED_STATE:
+                closed_durations_frames.append(duration_frames)
+
+        # --- Calculate summary statistics from the collected valid durations ---
         n_open_events = len(open_durations_frames)
         n_closed_events = len(closed_durations_frames)
 
-        time_per_frame_ns = stride * dt_ns
+        # time_per_frame_ns = stride * dt_ns # Moved calculation up
         open_durations_ns = None # Initialize as None
         if open_durations_frames: # Check the list before converting
             open_durations_ns_array = np.array(open_durations_frames) * time_per_frame_ns
@@ -463,6 +641,8 @@ def analyse_dw_gates(
              closed_durations_by_chain[chain_char].extend(closed_durations_ns)
 
         # Store results in raw_stats (to be added to final_stats later)
+        # Keep these for compatibility or direct access if needed, but primary detailed
+        # event data will go to the CSV.
         raw_stats[f'DW_OpenEvents_{chain_char}'] = n_open_events
         raw_stats[f'DW_ClosedEvents_{chain_char}'] = n_closed_events
         raw_stats[f'DW_MeanOpenTime_ns_{chain_char}'] = mean_open_ns
@@ -470,10 +650,52 @@ def analyse_dw_gates(
         raw_stats[f'DW_MeanClosedTime_ns_{chain_char}'] = mean_closed_ns
         raw_stats[f'DW_StdClosedTime_ns_{chain_char}'] = std_closed_ns
 
+        # Append structured data for the event summary CSV
+        event_summary_data.append({
+            'chain': chain_char,
+            'state': OPEN_STATE,
+            'event_count': n_open_events,
+            'mean_duration_ns': mean_open_ns,
+            'std_duration_ns': std_open_ns
+        })
+        event_summary_data.append({
+            'chain': chain_char,
+            'state': CLOSED_STATE,
+            'event_count': n_closed_events,
+            'mean_duration_ns': mean_closed_ns,
+            'std_duration_ns': std_closed_ns
+        })
+
         logger.debug(f"Chain {chain_char}: Open Events={n_open_events}, Mean(ns)={mean_open_ns:.3f} +/- {std_open_ns:.3f}")
         logger.debug(f"Chain {chain_char}: Closed Events={n_closed_events}, Mean(ns)={mean_closed_ns:.3f} +/- {std_closed_ns:.3f}")
 
-    # --- Combine Final Stats --- 
+    # --- Save Event Summary Data --- 
+    if event_summary_data:
+        df_event_summary = pd.DataFrame(event_summary_data)
+        event_csv_path = os.path.join(output_dir, "dw_gate_event_summary.csv")
+        try:
+            df_event_summary.to_csv(event_csv_path, index=False, float_format="%.3f")
+            logger.info(f"Saved DW Gate event summary data to {event_csv_path}")
+        except Exception as e:
+            logger.error(f"Failed to save DW Gate event summary CSV: {e}")
+    else:
+        logger.warning("No event summary data generated to save.")
+
+    # --- Save All Individual Events Data --- 
+    if all_events_data:
+        df_all_events = pd.DataFrame(all_events_data)
+        # Sort by start time for better readability
+        df_all_events = df_all_events.sort_values(by='start_time_ns').reset_index(drop=True)
+        all_events_csv_path = os.path.join(output_dir, "dw_gate_events.csv")
+        try:
+            df_all_events.to_csv(all_events_csv_path, index=False, float_format="%.3f")
+            logger.info(f"Saved all individual DW Gate events data to {all_events_csv_path}")
+        except Exception as e:
+            logger.error(f"Failed to save all DW Gate events CSV: {e}")
+    else:
+        logger.warning("No individual event data generated to save.")
+
+    # --- Combine Final Stats (for return value) --- 
     final_stats = {
         'DWhbond_closed_per_subunit': per_subunit_fractions,
         'DWhbond_closed_global': float(np.mean(all_closed_fractions)) if all_closed_fractions else np.nan
@@ -485,23 +707,64 @@ def analyse_dw_gates(
 
     # --- Generate Plots (Save directly to run_dir) --- 
     logger.info("Generating DW Gate plots...")
-    # 1. Distance Timeseries
+    # 1. Distance Timeseries (Stacked Layout)
     try:
-        fig1, ax1 = setup_plot(figsize=(10, 4))
-        for chain_char in sorted([c[-1] for c in valid_chain_ids]):
-            df_ch = df_timeseries[df_timeseries["chain"] == chain_char]
-            if not df_ch.empty:
-                 ax1.plot(df_ch["time_ns"], df_ch["distance"], label=f"Chain {chain_char}", lw=1)
-        ax1.axhline(DISTANCE_THRESHOLD, color='grey', linestyle='--', lw=1.5, label=f'{DISTANCE_THRESHOLD}Å Threshold')
-        ax1.set_xlabel("Time (ns)")
-        ax1.set_ylabel("DW Distance (Å)")
-        ax1.set_title("DW Gate Distance Over Time")
-        ax1.legend(fontsize='small')
-        ax1.grid(True, axis='y', linestyle=':', alpha=0.7)
-        ax1.set_ylim(bottom=0)
-        save_plot(fig1, os.path.join(output_dir, "dw_distance_timeseries.png"))
+        n_chains = len(valid_chain_ids)
+        if n_chains > 0:
+            # Create stacked subplots, sharing the x-axis
+            fig1, axes1 = plt.subplots(n_chains, 1, figsize=(10, 2 * n_chains), sharex=True, constrained_layout=True)
+            # If only one chain, axes1 might not be an array, handle this
+            if n_chains == 1:
+                axes1 = [axes1]
+
+            chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
+
+            for i, chain_char in enumerate(chain_chars_plot):
+                ax = axes1[i]
+                df_ch = df_timeseries[df_timeseries["chain"] == chain_char]
+                if not df_ch.empty:
+                     # Plot the distance data for the current chain
+                     ax.plot(df_ch["time_ns"], df_ch["distance"], label=f"Chain {chain_char}", lw=1, color=chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]))
+                     # Add the threshold line to each subplot
+                     ax.axhline(DISTANCE_THRESHOLD, color='grey', linestyle='--', lw=1.5)
+                     # Set y-axis label specific to the chain
+                     ax.set_ylabel(f"Chain {chain_char} Dist (Å)")
+                     # Set y-limits (optional: customize based on data range?)
+                     ax.set_ylim(bottom=0)
+                     ax.grid(True, axis='y', linestyle=':', alpha=0.7)
+                else:
+                    ax.text(0.5, 0.5, f'No data for Chain {chain_char}', 
+                            horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+
+                # Remove x-tick labels for all but the bottom plot
+                if i < n_chains - 1:
+                    ax.tick_params(labelbottom=False)
+
+            # Set common x-axis label on the bottom plot
+            axes1[-1].set_xlabel("Time (ns)")
+            # Set a main title for the figure
+            fig1.suptitle("DW Gate Distance Over Time (Stacked)", y=1.0) # Adjust y if needed
+            # Add threshold label once, maybe to the last axis or in the title?
+            # Let's add it near the line on the last plot for clarity
+            axes1[-1].text(time_points_analyzed.max()*0.9, DISTANCE_THRESHOLD + 0.2, f'{DISTANCE_THRESHOLD}Å Threshold', 
+                           color='grey', va='bottom', ha='right', fontsize='small')
+            # No need for a legend now as chains are identified by axes
+            # fig1.legend(fontsize='small')
+            save_plot(fig1, os.path.join(output_dir, "dw_distance_timeseries.png"))
+        else:
+             logger.warning("Skipping distance timeseries plot: No valid chains found.")
     except Exception as e:
-         logger.error(f"Failed to generate distance timeseries plot: {e}", exc_info=True)
+         logger.error(f"Failed to generate stacked distance timeseries plot: {e}", exc_info=True)
+
+    # 1b. Idealized vs Actual Distance Plot (NEW)
+    plot_dw_distance_vs_state(
+        df_timeseries,
+        valid_chain_ids,
+        DISTANCE_THRESHOLD,
+        chain_color_map,
+        sns_pastel,
+        output_dir
+    )
 
     # 2. State Heatmap
     try:

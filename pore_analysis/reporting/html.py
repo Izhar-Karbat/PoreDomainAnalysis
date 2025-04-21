@@ -12,11 +12,14 @@ import numpy as np
 import pandas as pd
 import json # <<< Add json import
 import jinja2 # For HTML templating
-from pptx import Presentation
-from pptx.util import Inches, Pt
 from collections import defaultdict
 import matplotlib.pyplot as plt # Keep for plt.close if needed, though plots are loaded now
 import seaborn as sns # Keep for plot style consistency settings if applied here
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from ..domain.models import DomainCalculationResult, ResidueDomainAffiliation
+from ..config import config
+from ..utils.plotly_utils import format_fig
 
 
 # Import from other modules
@@ -255,6 +258,8 @@ def generate_html_report(run_dir, run_summary):
         "dw_distance_timeseries": "dw_gate_analysis/dw_distance_timeseries.png",
         "dw_gate_state_heatmap": "dw_gate_analysis/dw_gate_state_heatmap.png",
         "dw_gate_closed_fraction_bar": "dw_gate_analysis/dw_gate_closed_fraction_bar.png",
+        "dw_duration_analysis": "dw_gate_analysis/dw_gate_duration_analysis.png",
+        "dw_distance_state_overlay": "dw_gate_analysis/dw_distance_state_overlay.png",
     }
 
     logger.debug("Loading images for HTML report...")

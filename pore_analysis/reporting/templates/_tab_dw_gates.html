@@ -43,30 +43,43 @@
 
     <!-- Plots Section -->
     <h4>Plots</h4>
-    <div class="two-column"> {# Use two-column for first two plots #}
-        <!-- DW Distance Timeseries -->
+    {# --- Top Row: Distance Plots --- #}
+    <div class="two-column">
+        <!-- Stacked DW Distance Timeseries -->
         <div class="column plot-container">
-            <h5>DW Gate H-bond Distance Timeseries</h5>
+            <h5>DW Gate Distance Over Time (Stacked)</h5> {# Updated Title #}
             {% if plots.get('dw_distance_timeseries') %}
-                <img src="data:image/png;base64,{{ plots.dw_distance_timeseries }}" alt="DW Gate H-bond Distance Timeseries">
-                <p class="plot-description">Timeseries showing the minimum hydrogen bond distance between D/E (OD1/OD2) and W (NE1) for each subunit. The dashed line indicates the H-bond distance cutoff ({{ DISTANCE_THRESHOLD }} Å).</p>
+                <img src="data:image/png;base64,{{ plots.dw_distance_timeseries }}" alt="DW Gate H-bond Distance Timeseries (Stacked)">
+                <p class="plot-description">Timeseries showing the minimum hydrogen bond distance (D/E-W) for each subunit in separate panels. The dashed line indicates the H-bond distance cutoff ({{ DISTANCE_THRESHOLD }} Å).</p>
             {% else %}
                 <p><i>Plot not available (dw_distance_timeseries.png missing).</i></p>
             {% endif %}
         </div>
 
-        <!-- DW Gate State Heatmap -->
+        <!-- Idealized vs Actual DW Distance Timeseries (NEW) -->
         <div class="column plot-container">
-            <h5>DW Gate State Heatmap</h5>
-            {% if plots.get('dw_gate_state_heatmap') %}
-                <img src="data:image/png;base64,{{ plots.dw_gate_state_heatmap }}" alt="DW Gate State Heatmap">
-                <p class="plot-description">Heatmap showing the state (open/closed) of the DW gate for each subunit over time. Closed states are typically indicated by one color (e.g., dark blue) and open states by another (e.g., light blue).</p>
+            <h5>DW Gate Distance (Actual vs. Idealized State)</h5>
+            {% if plots.get('dw_distance_state_overlay') %}
+                <img src="data:image/png;base64,{{ plots.dw_distance_state_overlay }}" alt="DW Gate Distance Actual vs Idealized State">
+                <p class="plot-description">Comparison of the raw D/E-W distance (thin line) against the derived idealized state (thick horizontal lines: closed at threshold, open slightly above) for each subunit.</p>
             {% else %}
-                <p><i>Plot not available (dw_gate_state_heatmap.png missing).</i></p>
+                <p><i>Plot not available (dw_distance_state_overlay.png missing).</i></p>
             {% endif %}
         </div>
     </div>
-    {# Bar plot below the two columns #}
+
+    {# --- Second Row: Heatmap --- #}
+    <div class="plot-container"> {# Heatmap now in its own full-width container #}
+        <h5>DW Gate State Heatmap</h5>
+        {% if plots.get('dw_gate_state_heatmap') %}
+            <img src="data:image/png;base64,{{ plots.dw_gate_state_heatmap }}" alt="DW Gate State Heatmap">
+            <p class="plot-description">Heatmap showing the state (open/closed) of the DW gate for each subunit over time. Closed states are typically indicated by one color (e.g., dark blue) and open states by another (e.g., light blue).</p>
+        {% else %}
+            <p><i>Plot not available (dw_gate_state_heatmap.png missing).</i></p>
+        {% endif %}
+    </div>
+
+    {# --- Third Row: Bar plot --- #}
     <div class="plot-container">
         <h5>DW Gate Closed Fraction</h5>
         {% if plots.get('dw_gate_closed_fraction_bar') %}
@@ -76,6 +89,59 @@
             <p><i>Plot not available (dw_gate_closed_fraction_bar.png missing).</i></p>
         {% endif %}
     </div>
+
+    {# New Event Duration Plot Below #}
+    <div class="plot-container">
+        <h5>DW Gate Event Duration Analysis</h5>
+        {% if plots.get('dw_duration_analysis') %}
+            <img src="data:image/png;base64,{{ plots.dw_duration_analysis }}" alt="DW Gate Event Duration Analysis Plot">
+            <p class="plot-description">Analysis of the duration of open and closed events for the DW gate in each subunit. Shows distribution histograms and cumulative distribution functions (CDFs) on a logarithmic time scale, with markers for mean and median durations.</p>
+        {% else %}
+            <p><i>Plot not available (dw_gate_duration_analysis.png missing).</i></p>
+        {% endif %}
+    </div>
+
+    <!-- Event Statistics Table -->
+    <h4>Event Statistics Summary</h4>
+    <p>Summary of open and closed event durations calculated using a tolerance of {{ run_summary.DW_GATE_TOLERANCE_FRAMES }} frames.</p>
+    <table class="stats-table">
+        <thead>
+            <tr>
+                <th>Chain</th>
+                <th>State</th>
+                <th>Event Count</th>
+                <th>Mean Duration (ns)</th>
+                <th>Std Dev Duration (ns)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {# Iterate through the chains for which per-subunit data exists #}
+            {% if run_summary.DWhbond_closed_per_subunit %}
+                {% for chain_char in run_summary.DWhbond_closed_per_subunit.keys() | sort %}
+                    {# Row for Open State #}
+                    <tr>
+                        <td rowspan="2">{{ chain_char }}</td> {# Span row for chain ID #}
+                        <td>Open</td>
+                        <td>{{ run_summary.get('DW_OpenEvents_' + chain_char, 'N/A') }}</td>
+                        <td>{{ '%.2f' | format(run_summary.get('DW_MeanOpenTime_ns_' + chain_char, 0)) if run_summary.get('DW_MeanOpenTime_ns_' + chain_char) is not none else 'N/A' }}</td>
+                        <td>{{ '%.2f' | format(run_summary.get('DW_StdOpenTime_ns_' + chain_char, 0)) if run_summary.get('DW_StdOpenTime_ns_' + chain_char) is not none else 'N/A' }}</td>
+                    </tr>
+                    {# Row for Closed State #}
+                    <tr>
+                        <td>Closed</td>
+                        <td>{{ run_summary.get('DW_ClosedEvents_' + chain_char, 'N/A') }}</td>
+                        <td>{{ '%.2f' | format(run_summary.get('DW_MeanClosedTime_ns_' + chain_char, 0)) if run_summary.get('DW_MeanClosedTime_ns_' + chain_char) is not none else 'N/A' }}</td>
+                        <td>{{ '%.2f' | format(run_summary.get('DW_StdClosedTime_ns_' + chain_char, 0)) if run_summary.get('DW_StdClosedTime_ns_' + chain_char) is not none else 'N/A' }}</td>
+                    </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="5">Event statistics not available (per-subunit data missing).</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+
 </div>
 {% else %}
 <div class="section unavailable">
