@@ -96,7 +96,7 @@ def main():
 
     Command-Line Arguments:
         --folder (str, required): Path to the specific run folder containing PSF/DCD files.
-        --force_rerun (bool, optional): If True, forces reprocessing of all modules, ignoring any existing summary file.
+        --force_rerun (bool, optional): If True, forces reprocessing of all modules, ignoring any existing summary.
         --GG (bool, optional): Flag to selectively run only G-G distance analysis.
         --COM (bool, optional): Flag to selectively run only COM distance analysis.
         --orientation (bool, optional): Flag to selectively run only Toxin orientation and contact analysis.
@@ -614,16 +614,22 @@ def _run_analysis_workflow(run_dir, system_name, run_name, psf_file, dcd_file,
                  logging.info("Running DW Gate Analysis...")
                  try:
                      # Assuming default stride=1 for now, add stride param if needed
+                     # Pass config dict and results dict instead of time_points
                      dw_stats = analyse_dw_gates(
                          run_dir=run_dir,
                          psf_file=psf_file,
                          dcd_file=dcd_file,
-                         time_points=results['time_points'],
+                         results=results # Pass the results dictionary
+                         # time_points=results['time_points'], # REMOVED
                          # stride=1 # Pass explicit stride if needed
                      )
-                     results['dw_gate_stats'] = dw_stats
-                     # Log a key result if available
-                     global_closed = dw_stats.get('DWhbond_closed_global')
+                     # Unpack the returned dictionary correctly
+                     actual_dw_stats = dw_stats.get('dw_gate_stats', {})
+                     # plot_paths = dw_stats.get('dw_gate_plots', {}) # Plot paths aren't directly used later, just store stats
+                     results['dw_gate_stats'] = actual_dw_stats # Store the inner stats dict
+                     
+                     # Log a key result if available from summary stats within actual_dw_stats
+                     global_closed = actual_dw_stats.get('DW_Global_Closed_Fraction') # Check new key if needed
                      if global_closed is not None:
                          logging.info(f"DW Gate Analysis completed. Global Closed Fraction: {global_closed:.3f}")
                      else:

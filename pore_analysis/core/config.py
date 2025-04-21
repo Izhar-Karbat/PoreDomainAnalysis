@@ -55,3 +55,7 @@ ION_TRANSITION_TOLERANCE_MODE = 'entry' # Alternative: 'exit', 'midpoint'
 
 # --- DW Gate Analysis ---
 DW_GATE_TOLERANCE_FRAMES = 5 # Frames a DW gate must stay open/closed to count as a confirmed event
+# NEW DW Gate parameters:
+DW_GATE_AUTO_DETECT_REFS: bool = True # If True, use KDE+KMeans to find refs; else use defaults below
+DW_GATE_DEFAULT_CLOSED_REF_DIST: float = 2.70 # Default reference distance (Å) for CLOSED state if auto-detect fails
+DW_GATE_DEFAULT_OPEN_REF_DIST: float = 4.70 # Default reference distance (Å) for OPEN state if auto-detect fails

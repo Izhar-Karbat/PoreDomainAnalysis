@@ -186,31 +186,41 @@ def _load_image_base64(image_path):
             logger.warning(f"Error loading image {image_path}: {e}")
     return None
 
-def generate_html_report(run_dir, run_summary):
+def generate_html_report(run_dir, run_summary, full_analysis_results=None):
     """
     Generates a comprehensive HTML report for a single run.
-
-    Relies on existing plot files and the summary dictionary.
 
     Args:
         run_dir (str): Path to the specific run directory.
         run_summary (dict): Dictionary containing summary statistics for the run,
                             loaded from 'analysis_summary.json'.
+        full_analysis_results (dict, optional): The full 'results' dictionary from the
+                                               main analysis workflow, potentially containing
+                                               DataFrames or other objects not saved in JSON.
+                                               Defaults to None.
 
     Returns:
         str | None: Path to the generated HTML report, or None on failure.
     """
     logger.info(f"Generating HTML report for {run_summary.get('RunName', 'Unknown Run')}...")
+    if full_analysis_results is None:
+        full_analysis_results = {} # Ensure it's a dict
 
     # --- Add config values to summary for template access ---
     # (Do this carefully, only add what's needed by the template)
     try:
+        from pore_analysis.core.config import DEFAULT_CUTOFF, DW_GATE_TOLERANCE_FRAMES # Add DW tolerance
+        # Add necessary config values directly to run_summary if not already present
+        # (summary.py might not add all config values)
+        run_summary.setdefault('DEFAULT_CUTOFF', DEFAULT_CUTOFF)
+        run_summary.setdefault('DW_Gate_ToleranceFrames', DW_GATE_TOLERANCE_FRAMES)
+        # Add others as needed by templates (e.g., GYRATION...)
         from pore_analysis.core.config import GYRATION_FLIP_THRESHOLD, GYRATION_FLIP_TOLERANCE_FRAMES, FRAMES_PER_NS
-        run_summary['GYRATION_FLIP_THRESHOLD'] = GYRATION_FLIP_THRESHOLD
-        run_summary['GYRATION_FLIP_TOLERANCE_FRAMES'] = GYRATION_FLIP_TOLERANCE_FRAMES
-        run_summary['FRAMES_PER_NS'] = FRAMES_PER_NS
+        run_summary.setdefault('GYRATION_FLIP_THRESHOLD', GYRATION_FLIP_THRESHOLD)
+        run_summary.setdefault('GYRATION_FLIP_TOLERANCE_FRAMES', GYRATION_FLIP_TOLERANCE_FRAMES)
+        run_summary.setdefault('FRAMES_PER_NS', FRAMES_PER_NS)
     except ImportError:
-        logger.warning("Could not import config values for HTML template.")
+        logger.warning("Could not import/add config values for HTML template.")
 
     # --- Load Base64 Encoded Images ---
     img_data = {}
@@ -252,12 +262,20 @@ def generate_html_report(run_dir, run_summary):
         "SF_Tyrosine_Dihedrals": "tyrosine_analysis/SF_Tyrosine_Dihedrals.png",
         "SF_Tyrosine_Rotamer_Scatter": "tyrosine_analysis/SF_Tyrosine_Rotamer_Scatter.png",
         "SF_Tyrosine_Rotamer_Population": "tyrosine_analysis/SF_Tyrosine_Rotamer_Population.png",
-        # DW Gate analysis plots (NEW)
-        "dw_distance_timeseries": "dw_gate_analysis/dw_distance_timeseries.png",
-        "dw_gate_state_heatmap": "dw_gate_analysis/dw_gate_state_heatmap.png",
-        "dw_gate_closed_fraction_bar": "dw_gate_analysis/dw_gate_closed_fraction_bar.png",
-        "dw_duration_analysis": "dw_gate_analysis/dw_gate_duration_analysis.png",
-        "dw_distance_state_overlay": "dw_gate_analysis/dw_distance_state_overlay.png",
+        
+        # --- DW Gate analysis plots (Updated Paths and Keys) ---
+        "dw_distance_distribution": "dw_gate_analysis/dw_gate_distance_distribution.png", # KDE + Ref Dist Plot
+        "dw_distance_vs_state": "dw_gate_analysis/dw_gate_distance_vs_state.png",       # Distance vs Debounced State
+        "dw_open_probability": "dw_gate_analysis/dw_gate_open_probability.png",        # Open Probability Bar Chart
+        "dw_state_heatmap": "dw_gate_analysis/dw_gate_state_heatmap.png",           # State Heatmap
+        "dw_duration_distributions": "dw_gate_analysis/dw_gate_duration_distributions.png" # Duration Violin/Box/Swarm Plot
+        
+        # REMOVED Old DW Gate Keys:
+        # "dw_distance_timeseries": "dw_gate_analysis/dw_distance_timeseries.png",
+        # "dw_gate_state_heatmap": "dw_gate_analysis/dw_gate_state_heatmap.png", # Duplicate path, removed key
+        # "dw_gate_closed_fraction_bar": "dw_gate_analysis/dw_gate_closed_fraction_bar.png",
+        # "dw_duration_analysis": "dw_gate_analysis/dw_gate_duration_analysis.png",
+        # "dw_distance_state_overlay": "dw_gate_analysis/dw_distance_state_overlay.png",
     }
 
     logger.debug("Loading images for HTML report...")
@@ -277,6 +295,21 @@ def generate_html_report(run_dir, run_summary):
             logger.debug("Loaded binding site position data.")
         except Exception as e:
             logger.warning(f"Error reading binding site data from {binding_site_path}: {e}")
+
+    # --- Extract DW Gate DataFrames from full_analysis_results --- 
+    dw_gate_render_data = {}
+    # Get the stats dict directly from the results key where main.py stored it
+    dw_gate_stats_dict = full_analysis_results.get('dw_gate_stats', {})
+    if dw_gate_stats_dict:
+        logger.debug("Extracting DW Gate DataFrames for report rendering.")
+        dw_gate_render_data['summary_df'] = dw_gate_stats_dict.get('summary_stats_df')
+        dw_gate_render_data['probability_df'] = dw_gate_stats_dict.get('probability_df')
+        dw_gate_render_data['mannwhitney_df'] = dw_gate_stats_dict.get('mannwhitney_tests_df')
+        # Also pass simple stats dicts
+        dw_gate_render_data['chi2_test'] = dw_gate_stats_dict.get('chi2_test')
+        dw_gate_render_data['kruskal_test'] = dw_gate_stats_dict.get('kruskal_test')
+    else:
+        logger.warning("DW Gate analysis stats not found in full_analysis_results or is empty.")
 
     # --- Render HTML ---
     try:
@@ -302,7 +335,8 @@ def generate_html_report(run_dir, run_summary):
             'plots': img_data,
             'binding_site_data': binding_site_data,
             'generation_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'DISTANCE_THRESHOLD': run_summary.get('DWhbond_threshold', 3.5)
+            'DISTANCE_THRESHOLD': run_summary.get('DWhbond_threshold', 3.5),
+            'dw_gate_data': dw_gate_render_data
         }
 
         rendered_html = template.render(render_context)

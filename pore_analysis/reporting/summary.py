@@ -23,6 +23,9 @@ except ImportError as e:
     print(f"Error importing dependency modules in reporting/summary.py: {e}")
     raise
 
+# Constants for DW Gate analysis
+CLOSED_STATE = 'closed'  # State value from dw_gate_state.py
+
 # Get a logger for this module
 logger = logging.getLogger(__name__)
 
@@ -364,21 +367,125 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             run_summary.setdefault('TYROSINE_ROTAMER_TOLERANCE_FRAMES', TYROSINE_ROTAMER_TOLERANCE_FRAMES) # Use imported default
             run_summary.setdefault('ION_TRANSITION_TOLERANCE_FRAMES', ION_TRANSITION_TOLERANCE_FRAMES) # Add ion tolerance here too
 
-        # --- DW Gate Stats --- (NEW)
+        # --- DW Gate Stats --- (NEW - Updated for DataFrame structure)
         try:
+            # Check if the main dict and the expected raw_stats dict inside exist
             if isinstance(dw_gate_stats, dict) and dw_gate_stats:
-                run_summary['DWhbond_closed_global'] = dw_gate_stats.get('DWhbond_closed_global', np.nan)
-                run_summary['DWhbond_closed_per_subunit'] = dw_gate_stats.get('DWhbond_closed_per_subunit') # Can be dict or None
-                run_summary.update(dw_gate_stats)
+                logger.info("Processing DW Gate stats...")
+
+                # Extract key quantitative metrics for the JSON summary
+                summary_df = dw_gate_stats.get('summary_stats_df')
+                prob_df = dw_gate_stats.get('probability_df')
+
+                # --- Calculate Global Closed Fraction --- 
+                # Use probability_df if available (derived from time_sum_df)
+                global_closed_fraction = np.nan # Default
+                if prob_df is not None and not prob_df.empty and 'total_time_ns' in prob_df.columns and CLOSED_STATE in prob_df.columns:
+                    total_closed_time = (prob_df[CLOSED_STATE] * prob_df['total_time_ns']).sum()
+                    total_overall_time = prob_df['total_time_ns'].sum()
+                    if total_overall_time > 0:
+                        global_closed_fraction = total_closed_time / total_overall_time
+                elif summary_df is not None and not summary_df.empty:
+                    # Fallback: Calculate from summary_df if prob_df failed
+                    logger.debug("Calculating global closed fraction from summary_df (fallback).")
+                    time_sum_df = summary_df.pivot(index='chain', columns='state', values='Total_Duration_ns').fillna(0)
+                    if OPEN_STATE not in time_sum_df.columns: time_sum_df[OPEN_STATE] = 0.0
+                    if CLOSED_STATE not in time_sum_df.columns: time_sum_df[CLOSED_STATE] = 0.0
+                    total_time_per_chain = time_sum_df.sum(axis=1)
+                    total_closed_time = time_sum_df[CLOSED_STATE].sum()
+                    total_overall_time = total_time_per_chain.sum()
+                    if total_overall_time > 0:
+                        global_closed_fraction = total_closed_time / total_overall_time
+                
+                run_summary['DW_Global_Closed_Fraction'] = global_closed_fraction
+
+                # --- Add Per-Chain Metrics (Means, Counts) from summary_df ---
+                if summary_df is not None and not summary_df.empty:
+                    try:
+                        mean_times = summary_df.pivot(index='chain', columns='state', values='Mean_ns').fillna(np.nan)
+                        counts = summary_df.pivot(index='chain', columns='state', values='Count').fillna(0)
+                        chains = summary_df['chain'].unique()
+                        for chain in chains:
+                            run_summary[f'DW_MeanOpenTime_ns_{chain}'] = mean_times.loc[chain].get(OPEN_STATE, np.nan)
+                            run_summary[f'DW_MeanClosedTime_ns_{chain}'] = mean_times.loc[chain].get(CLOSED_STATE, np.nan)
+                            run_summary[f'DW_OpenEvents_{chain}'] = int(counts.loc[chain].get(OPEN_STATE, 0))
+                            run_summary[f'DW_ClosedEvents_{chain}'] = int(counts.loc[chain].get(CLOSED_STATE, 0))
+                    except Exception as e:
+                         logger.warning(f"Could not extract per-chain DW gate stats from summary_df: {e}")
+                         # Add placeholders? Depends on requirements.
+
+                else:
+                    logger.warning("DW Gate summary_stats_df not found. Cannot add per-chain metrics.")
+
+                # --- Add p-values from test results ---
+                chi2_results = dw_gate_stats.get('chi2_test')
+                if chi2_results: run_summary['DW_StateVsChain_Chi2_pvalue'] = chi2_results.get('p_value', np.nan)
+                kruskal_results = dw_gate_stats.get('kruskal_test')
+                if kruskal_results: run_summary['DW_OpenDurationVsChain_Kruskal_pvalue'] = kruskal_results.get('p_value', np.nan)
+
+                # Add tolerance frame value used (assuming it might be stored, otherwise get from config)
+                # This assumes dw_gate_stats might contain the config used. If not, get from global config.
+                # Let's try getting from global config directly as dw_gate_stats structure was simplified.
+                try:
+                    from pore_analysis.core.config import DW_GATE_TOLERANCE_FRAMES
+                    run_summary['DW_Gate_ToleranceFrames'] = DW_GATE_TOLERANCE_FRAMES
+                except ImportError:
+                    run_summary['DW_Gate_ToleranceFrames'] = dw_gate_stats.get('tolerance_frames', np.nan) # Fallback if stored
+
+                # Log completion for this section
+                logger.info("Extracted key DW Gate metrics for summary.")
+
+                # Generate HTML for summary and probability tables with formatted numbers
+                if summary_df is not None and not summary_df.empty:
+                    try:
+                        # Format numeric values: up to 2 decimals, drop trailing zeros
+                        summary_fmt = summary_df.copy()
+                        def _fmt(val):
+                            if pd.isnull(val):
+                                return ''
+                            if isinstance(val, (int, np.integer)):
+                                return str(int(val))
+                            try:
+                                s = f"{float(val):.2f}".rstrip('0').rstrip('.')
+                                return s
+                            except:
+                                return str(val)
+                        for col in summary_fmt.columns:
+                            if col not in ['chain', 'state']:
+                                summary_fmt[col] = summary_fmt[col].apply(_fmt)
+                        html_summary = summary_fmt.to_html(index=False, classes='stats-table')
+                        run_summary.setdefault('dw_gate_stats', {})['summary_table_html'] = html_summary
+                    except Exception as e:
+                        logger.warning(f"Could not generate HTML for summary_stats_df: {e}")
+                        run_summary.setdefault('dw_gate_stats', {})['summary_table_html'] = None
+                else:
+                    run_summary.setdefault('dw_gate_stats', {})['summary_table_html'] = None
+
+                if prob_df is not None and not prob_df.empty:
+                    try:
+                        prob_fmt = prob_df.copy()
+                        for col in prob_fmt.columns:
+                            if col != 'chain':
+                                prob_fmt[col] = prob_fmt[col].apply(_fmt)
+                        html_prob = prob_fmt.to_html(index=False, classes='stats-table')
+                        run_summary.setdefault('dw_gate_stats', {})['probability_table_html'] = html_prob
+                    except Exception as e:
+                        logger.warning(f"Could not generate HTML for probability_df: {e}")
+                        run_summary.setdefault('dw_gate_stats', {})['probability_table_html'] = None
+                else:
+                    run_summary.setdefault('dw_gate_stats', {})['probability_table_html'] = None
+
             else:
-                logger.debug("No DW Gate stats provided or empty dict, setting keys to None/NaN.")
-                run_summary['DWhbond_closed_global'] = np.nan
-                run_summary['DWhbond_closed_per_subunit'] = None # Or perhaps {}?
+                logger.debug("No DW Gate stats provided or empty/unrecognized dict structure.")
+                run_summary['DW_Global_Closed_Fraction'] = np.nan # Ensure key exists if module ran
+                run_summary['DW_Gate_ToleranceFrames'] = np.nan # Ensure key exists if module ran
                 if not dw_gate_stats: stats_collection_errors.append("DWGateStats_Missing")
-            logger.info("Added DW Gate stats to summary.")
+
         except Exception as e:
             logger.error(f"Error processing DW Gate stats: {e}", exc_info=True)
             stats_collection_errors.append(f"DWGateStats_Error: {e}")
+            run_summary['DW_Global_Closed_Fraction'] = np.nan # Ensure key exists on error
+            run_summary['DW_Gate_ToleranceFrames'] = np.nan # Ensure key exists on error
 
         # --- Finalize Status ---
         # More granular status based on errors

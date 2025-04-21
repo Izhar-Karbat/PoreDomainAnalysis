@@ -1,827 +1,1496 @@
 """
-DW-Gate State Analysis: Calculate distances, determine state, and derive kinetics.
+DW-Gate State Analysis: Calculate distances, identify states via KDE, apply RLE debouncing,
+build events, calculate statistics, and generate comprehensive plots.
 """
 
 import os
 import logging
 from collections import defaultdict
-from typing import Dict, Any
+from dataclasses import dataclass
+from typing import Dict, Any, List, Tuple, Optional # Added Optional
 
 import MDAnalysis as mda
+from MDAnalysis.lib.distances import distance_array # Added
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import seaborn as sns # Import seaborn
+import matplotlib.colors as mcolors # Keep if needed elsewhere, maybe remove
+import seaborn as sns
+from scipy.stats import chi2_contingency, kruskal, mannwhitneyu # Added
+from scipy.signal import find_peaks # Added
+from sklearn.cluster import KMeans # Added
+from itertools import combinations # Added
 
 try:
     # Relative imports within the pore_analysis package
-    from ..ion_analysis.filter_structure import find_filter_residues # For identifying chains
-    from .residue_identification import find_gate_residues_for_chain, GateResidues
-    from ...core.utils import frames_to_time # Navigate up two levels to core
-    from ...core.config import DW_GATE_TOLERANCE_FRAMES # Import tolerance constant
+    from ..ion_analysis.filter_structure import find_filter_residues # KEEP for initial chain ID
+    from .residue_identification import find_gate_residues_for_chain, GateResidues # KEEP for residue ID
+    from ...core.utils import frames_to_time # KEEP if needed, maybe replace with dt_ns logic
+    # Import specific config values needed
+    from ...core.config import (
+        DW_GATE_TOLERANCE_FRAMES,
+        DEFAULT_CUTOFF,
+        FRAMES_PER_NS, # Use this to derive dt_ns
+        DW_GATE_AUTO_DETECT_REFS, # New config
+        DW_GATE_DEFAULT_CLOSED_REF_DIST, # New config
+        DW_GATE_DEFAULT_OPEN_REF_DIST, # New config
+    )
 except ImportError as e:
-    print(f"Error importing dependencies in dw_gate_state.py: {e}")
+    # Use specific logger name if available, else basic config
+    try:
+        logger = logging.getLogger(__name__)
+    except NameError:
+        logging.basicConfig()
+        logger = logging.getLogger()
+    logger.error(f"Error importing dependencies in dw_gate_state.py: {e}")
     # Re-raise to ensure failure if imports are broken
     raise
 
+# --- Logger Setup ---
+# Module-specific logger. Configuration is handled by the main script's setup.
 logger = logging.getLogger(__name__)
 
-# Define constants
-DISTANCE_THRESHOLD = 3.5 # Angstrom
+# --- Constants Derived from Config ---
+# Use the config values instead of module-level constants
+# DISTANCE_THRESHOLD = DEFAULT_CUTOFF # Set inside class init from config
+DT_NS = 1.0 / FRAMES_PER_NS if FRAMES_PER_NS > 0 else 0.1 # Calculate dt_ns from config
+
+# Define state names consistently
 CLOSED_STATE = "closed"
 OPEN_STATE = "open"
 
-# --- Plotting Helpers (Minimalist, adapt if plot_utils exist elsewhere) ---
-def setup_plot(figsize=(8, 3)):
-    """Basic plot setup."""
-    fig, ax = plt.subplots(figsize=figsize)
-    return fig, ax
-
-def save_plot(fig, path, dpi=200):
-    """Save plot with error handling."""
+# --- Plotting Helpers (Minimalist, adapted) ---
+# Keep save_plot, remove setup_plot as figures are created within methods
+def save_plot(fig, path, dpi=300): # Increased default DPI
+    """Save plot with error handling and directory creation."""
     try:
-        # Ensure the plot directory exists if it's not the current one
-        # plot_dir = os.path.dirname(path)
-        # if plot_dir:
-        #      os.makedirs(plot_dir, exist_ok=True)
+        plot_dir = os.path.dirname(path)
+        if plot_dir:
+             os.makedirs(plot_dir, exist_ok=True) # Ensure dir exists
         fig.savefig(path, dpi=dpi, bbox_inches='tight')
         logger.info(f"Saved plot: {path}")
     except Exception as e:
         logger.error(f"Failed to save plot {path}: {e}")
     finally:
-        plt.close(fig)
+        plt.close(fig) # Ensure plot is closed
 
-# --- New Improved Duration Plot Function (User Provided) ---
-def plot_improved_duration_distribution(open_durations_by_chain, closed_durations_by_chain, valid_chain_ids, output_dir):
-    """Create an improved duration distribution visualization with separate subplots and CDFs."""
+# --- NEW DWGateAnalysis Class ---
+@dataclass
+class GateIndices:
+    """Dataclass to hold atom indices for a DW gate in one chain."""
+    od1: int
+    od2: int
+    ne1: int
 
-    # Create a figure with 2 rows (open/closed) and 2 columns (histogram/CDF)
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+class DWGateAnalysis:
+    """
+    Performs DW-gate analysis including KDE reference distance detection,
+    RLE debouncing, event building, statistical analysis, and plotting.
+    Designed to be integrated into the PoreAnalysis suite.
+    """
+    def __init__(self, universe: mda.Universe, gate_residues: Dict[str, GateResidues],
+                 output_dir: str):
+        """
+        Initialize the DWGateAnalysis.
 
-    # Get all durations for proper bin scaling
-    all_open_durations = [dur for subdurs in open_durations_by_chain.values() for dur in subdurs]
-    all_closed_durations = [dur for subdurs in closed_durations_by_chain.values() for dur in subdurs]
+        Args:
+            universe (mda.Universe): The MDAnalysis Universe object.
+            gate_residues (Dict[str, GateResidues]): Dictionary mapping segid to
+                                                    identified GateResidues objects.
+            output_dir (str): Directory to save plots and intermediate data.
+        """
+        self.universe = universe
+        self.gate_residues = gate_residues # Store the identified residues
+        self.output_dir = output_dir # Directory for saving outputs
 
-    # Handle cases with no data for one state type gracefully
-    if not all_open_durations and not all_closed_durations:
-        logger.warning("Insufficient data for duration distribution plot - no open or closed events found.")
-        plt.close(fig) # Close the empty figure
-        return
-
-    # Determine overall min/max for consistent binning, handle empty lists
-    all_durations_flat = all_open_durations + all_closed_durations
-    min_dur = max(0.01, min(all_durations_flat) if all_durations_flat else 0.01)
-    max_dur = max(1.0, max(all_durations_flat) if all_durations_flat else 1.0)
-    bins = np.logspace(np.log10(min_dur), np.log10(max_dur), num=25)
-
-    # Color map for chains - Use seaborn pastel
-    sns_pastel = sns.color_palette("pastel", n_colors=max(4, len(valid_chain_ids))) # Get at least 4 pastel colors
-    chain_color_map = {chain_id[-1]: color for chain_id, color in zip(valid_chain_ids, sns_pastel)}
-    chain_chars_plot = sorted([c[-1] for c in valid_chain_ids]) # Define the list of chain chars to iterate over
-
-    # Ensure consistent x-axis ranges
-    x_min = min_dur * 0.9
-    x_max = max_dur * 1.1
-
-    # Create legend handles & labels for the consolidated legend
-    legend_handles, legend_labels = [], []
-
-    # --- Plot Open States --- #
-    ax_open_hist = axes[0, 0]
-    ax_open_cdf = axes[0, 1]
-    plotted_open = False
-
-    for i, chain_char in enumerate(chain_chars_plot):
-        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)])
-        chain_open_durs = open_durations_by_chain.get(chain_char, [])
-        if chain_open_durs:
-            plotted_open = True
-            # Histogram
-            counts, _, patches = ax_open_hist.hist(
-                chain_open_durs,
-                bins=bins,
-                alpha=0.7,
-                color=chain_color,
-                label=f'Chain {chain_char}',
-                density=True
-            )
-            # Store for legend
-            if chain_char not in [label.split()[-1] for label in legend_labels]:
-                legend_handles.append(patches[0])
-                legend_labels.append(f'Chain {chain_char}')
-
-            # Add mean/median markers with annotations
-            mean_val = np.mean(chain_open_durs)
-            median_val = np.median(chain_open_durs)
-            
-            # Add mean line with annotation
-            ax_open_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8)
-            ax_open_hist.text(mean_val*1.1, 0.9*ax_open_hist.get_ylim()[1], 
-                              f'Mean: {mean_val:.2f} ns', color=chain_color, 
-                              fontsize=8, ha='left', rotation=45, va='top')
-            
-            # Add median line with different style
-            ax_open_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8)
-
-            # CDF
-            data_sorted = np.sort(chain_open_durs)
-            y = np.arange(1, len(data_sorted) + 1) / len(data_sorted)
-            ax_open_cdf.step(data_sorted, y, color=chain_color)
-            
-            # Add median marker on CDF (where y=0.5)
-            ax_open_cdf.plot(median_val, 0.5, 'o', color=chain_color, markersize=5, alpha=0.7)
-
-    ax_open_hist.set_title('Open State Duration Distribution')
-    ax_open_hist.set_xlabel('Duration (ns)')
-    ax_open_hist.set_ylabel('Probability Density')
-    ax_open_hist.set_xscale('log')
-    # Lighter grid for less distraction
-    ax_open_hist.grid(True, which='major', linestyle='--', alpha=0.3)
-    ax_open_hist.grid(False, which='minor')
-    ax_open_hist.set_xlim(x_min, x_max)
-
-    ax_open_cdf.set_title('Open State Duration CDF')
-    ax_open_cdf.set_xlabel('Duration (ns)')
-    ax_open_cdf.set_ylabel('Cumulative Probability')
-    ax_open_cdf.set_xscale('log')
-    ax_open_cdf.grid(True, which='major', linestyle='--', alpha=0.3)
-    ax_open_cdf.grid(False, which='minor')
-    ax_open_cdf.set_xlim(x_min, x_max)
-
-    if not plotted_open:
-        ax_open_hist.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', 
-                          verticalalignment='center', transform=ax_open_hist.transAxes)
-        ax_open_cdf.text(0.5, 0.5, 'No Open Events', horizontalalignment='center', 
-                         verticalalignment='center', transform=ax_open_cdf.transAxes)
-
-    # --- Plot Closed States --- #
-    ax_closed_hist = axes[1, 0]
-    ax_closed_cdf = axes[1, 1]
-    plotted_closed = False
-
-    for i, chain_char in enumerate(chain_chars_plot):
-        chain_color = chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)])
-        chain_closed_durs = closed_durations_by_chain.get(chain_char, [])
-        if chain_closed_durs:
-            plotted_closed = True
-            # Histogram
-            counts, _, patches = ax_closed_hist.hist(
-                chain_closed_durs,
-                bins=bins,
-                alpha=0.7,
-                color=chain_color,
-                density=True
-            )
-
-            # Add mean/median markers with annotations
-            mean_val = np.mean(chain_closed_durs)
-            median_val = np.median(chain_closed_durs)
-            
-            # Add mean line with annotation
-            ax_closed_hist.axvline(mean_val, color=chain_color, linestyle='-', alpha=0.8)
-            ax_closed_hist.text(mean_val*1.1, 0.9*ax_closed_hist.get_ylim()[1], 
-                                f'Mean: {mean_val:.2f} ns', color=chain_color, 
-                                fontsize=8, ha='left', rotation=45, va='top')
-            
-            # Add median line with different style
-            ax_closed_hist.axvline(median_val, color=chain_color, linestyle=':', alpha=0.8)
-
-            # CDF
-            data_sorted = np.sort(chain_closed_durs)
-            y = np.arange(1, len(data_sorted) + 1) / len(data_sorted)
-            ax_closed_cdf.step(data_sorted, y, color=chain_color)
-            
-            # Add median marker on CDF (where y=0.5)
-            ax_closed_cdf.plot(median_val, 0.5, 'o', color=chain_color, markersize=5, alpha=0.7)
-
-    ax_closed_hist.set_title('Closed State Duration Distribution')
-    ax_closed_hist.set_xlabel('Duration (ns)')
-    ax_closed_hist.set_ylabel('Probability Density')
-    ax_closed_hist.set_xscale('log')
-    ax_closed_hist.grid(True, which='major', linestyle='--', alpha=0.3)
-    ax_closed_hist.grid(False, which='minor')
-    ax_closed_hist.set_xlim(x_min, x_max)
-
-    ax_closed_cdf.set_title('Closed State Duration CDF')
-    ax_closed_cdf.set_xlabel('Duration (ns)')
-    ax_closed_cdf.set_ylabel('Cumulative Probability')
-    ax_closed_cdf.set_xscale('log')
-    ax_closed_cdf.grid(True, which='major', linestyle='--', alpha=0.3)
-    ax_closed_cdf.grid(False, which='minor')
-    ax_closed_cdf.set_xlim(x_min, x_max)
-
-    if not plotted_closed:
-        ax_closed_hist.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', 
-                            verticalalignment='center', transform=ax_closed_hist.transAxes)
-        ax_closed_cdf.text(0.5, 0.5, 'No Closed Events', horizontalalignment='center', 
-                           verticalalignment='center', transform=ax_closed_cdf.transAxes)
-
-    # Add consolidated legend with chain information
-    if legend_handles:
-        fig.legend(
-            handles=legend_handles, 
-            labels=legend_labels, 
-            loc='center right', 
-            fontsize='medium', 
-            title="Chains",
-            bbox_to_anchor=(1.0, 0.5)
+        # Import config values directly inside __init__ where needed
+        from ...core.config import (
+            DW_GATE_TOLERANCE_FRAMES,
+            DEFAULT_CUTOFF,
+            FRAMES_PER_NS,
+            DW_GATE_AUTO_DETECT_REFS,
+            DW_GATE_DEFAULT_CLOSED_REF_DIST,
+            DW_GATE_DEFAULT_OPEN_REF_DIST
         )
-        
-    # Add explanatory note for line styles
-    line_styles_ax = fig.add_axes([0.85, 0.3, 0.1, 0.1])  # [left, bottom, width, height]
-    line_styles_ax.axis('off')
-    line_styles_ax.plot([0.1, 0.4], [0.7, 0.7], 'k-', label='Mean')
-    line_styles_ax.plot([0.1, 0.4], [0.3, 0.3], 'k:', label='Median')
-    line_styles_ax.legend(loc='center', fontsize='small', title="Statistics")
 
-    # Add layout improvements
-    fig.suptitle('DW Gate Event Duration Analysis', fontsize=16, y=0.98)
+        # Extract parameters from imported config values
+        self.distance_threshold = DEFAULT_CUTOFF
+        self.tolerance_frames = DW_GATE_TOLERANCE_FRAMES
+        self.dt_ns = 1.0 / FRAMES_PER_NS if FRAMES_PER_NS > 0 else 0.1 # Calculate from FRAMES_PER_NS
+        self.auto_detect_refs = DW_GATE_AUTO_DETECT_REFS
+        self.default_closed_ref_dist = DW_GATE_DEFAULT_CLOSED_REF_DIST
+        self.default_open_ref_dist = DW_GATE_DEFAULT_OPEN_REF_DIST
 
-    # Save the figure
-    save_plot(fig, os.path.join(output_dir, "dw_gate_duration_analysis.png"), dpi=300)
+        # Initialize state variables
+        self.time_axis = None
+        self.gate_idx: Dict[str, GateIndices] = {} # Store atom indices here
+        self.valid_segids = sorted(list(gate_residues.keys())) # Get segids from input
+        self.df_raw = None
+        self.df = None # Debounced data
+        self.events_df = None
+        self.kde_analysis_results = None
+        self.stats_results = {} # To store stats like tables, p-values etc.
+        self.plot_paths = {} # To store paths of generated plots
 
-# --- New Plot Function: Idealized vs Actual Distance ---
-def plot_dw_distance_vs_state(df_timeseries, valid_chain_ids, DISTANCE_THRESHOLD, chain_color_map, sns_pastel, output_dir):
-    """Generates a stacked plot showing raw distance vs. idealized state for each chain."""
-    logger.info("Generating DW Gate distance vs. state plot...")
-    n_chains = len(valid_chain_ids)
-    if n_chains == 0 or df_timeseries.empty:
-        logger.warning("Skipping distance vs state plot: No valid chains or timeseries data.")
-        return
+        # Pre-calculate time axis
+        n_frames = len(self.universe.trajectory)
+        self.time_axis = np.arange(n_frames) * self.dt_ns
+        logger.info(f"DWGateAnalysis initialized for {len(self.valid_segids)} chains. N_frames={n_frames}, dt={self.dt_ns:.4f} ns.")
+        logger.info(f"Params: Threshold={self.distance_threshold} Å, Tolerance={self.tolerance_frames} frames.")
+        logger.info(f"Reference dists: AutoDetect={self.auto_detect_refs}, Defaults=({self.default_closed_ref_dist:.2f}, {self.default_open_ref_dist:.2f}) Å.")
 
-    try:
-        fig, axes = plt.subplots(n_chains, 1, figsize=(10, 2 * n_chains), sharex=True, constrained_layout=True)
-        if n_chains == 1:
-            axes = [axes]
+        # Identify atoms immediately based on provided gate_residues
+        self._identify_dw_gate_atoms()
 
-        chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
-        min_time = df_timeseries["time_ns"].min()
-        max_time = df_timeseries["time_ns"].max()
+    def _identify_dw_gate_atoms(self):
+        """Populates self.gate_idx using the pre-identified gate_residues."""
+        logger.info("Identifying DW-gate atom indices for each valid chain.")
+        found_chains = []
+        for segid, gate in self.gate_residues.items():
+            try:
+                asp_atoms = gate.asp_glu_res.atoms.select_atoms("name OD1 OD2 OE1 OE2") # Handle ASP/GLU
+                trp_atoms = gate.trp_res.atoms.select_atoms("name NE1")
 
-        # Define Y-positions for idealized states (adjust offset if needed)
-        state_y_pos = {CLOSED_STATE: DISTANCE_THRESHOLD, OPEN_STATE: DISTANCE_THRESHOLD + 0.5}
-        state_colors = {CLOSED_STATE: 'darkred', OPEN_STATE: 'darkgreen'}
+                # Try to find OD1/OE1 and OD2/OE2 robustly
+                od1_idx = asp_atoms.select_atoms("name OD1 OE1").indices
+                od2_idx = asp_atoms.select_atoms("name OD2 OE2").indices
+                ne1_idx = trp_atoms.indices
 
-        for i, chain_char in enumerate(chain_chars_plot):
-            ax = axes[i]
-            df_ch = df_timeseries[df_timeseries["chain"] == chain_char].copy()
+                if len(od1_idx) != 1:
+                    raise ValueError(f"Could not find exactly one OD1/OE1 atom in {gate.asp_glu_res}")
+                if len(od2_idx) != 1:
+                    raise ValueError(f"Could not find exactly one OD2/OE2 atom in {gate.asp_glu_res}")
+                if len(ne1_idx) != 1:
+                     raise ValueError(f"Could not find exactly one NE1 atom in {gate.trp_res}")
 
-            if not df_ch.empty:
-                # Plot raw distance (actual)
-                ax.plot(df_ch["time_ns"], df_ch["distance"],
-                        label="Actual Distance", lw=0.8, alpha=0.6,
-                        color=chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]))
+                self.gate_idx[segid] = GateIndices(
+                    od1=od1_idx[0],
+                    od2=od2_idx[0],
+                    ne1=ne1_idx[0]
+                )
+                found_chains.append(segid)
+                logger.debug(f"Successfully mapped indices for segid {segid}")
+            except Exception as e:
+                logger.warning(f"Could not map DW-gate atom indices for segid {segid}: {e}")
+                # Remove segid if indices can't be found
+                if segid in self.valid_segids:
+                    self.valid_segids.remove(segid)
 
-                # Plot idealized state
-                # Group by consecutive states
-                df_ch['state_block'] = (df_ch['state'] != df_ch['state'].shift()).cumsum()
-                for _, block in df_ch.groupby('state_block'):
-                    start_time = block['time_ns'].iloc[0]
-                    end_time = block['time_ns'].iloc[-1]
-                    state = block['state'].iloc[0]
-                    y_val = state_y_pos[state]
-                    color = state_colors[state]
-                    # Plot a thicker horizontal line segment for the state duration
-                    ax.plot([start_time, end_time], [y_val, y_val], lw=3, color=color, solid_capstyle='butt')
+        if not self.valid_segids:
+            raise RuntimeError("No valid DW-gates atoms could be mapped after residue identification.")
+        logger.info(f"DW-gate atom indices identified for chains: {self.valid_segids}")
 
-                # Add threshold line
-                ax.axhline(DISTANCE_THRESHOLD, color='grey', linestyle=':', lw=1.0, label=f'Threshold ({DISTANCE_THRESHOLD}Å)')
 
-                # Axis labels and limits
-                ax.set_ylabel(f"Chain {chain_char} Dist (Å)")
-                ax.set_ylim(bottom=0)
-                # Determine reasonable upper ylim
-                max_dist = df_ch["distance"].max()
-                ax.set_ylim(top=max(max_dist * 1.1, DISTANCE_THRESHOLD + 2.0))
-                ax.grid(True, axis='y', linestyle=':', alpha=0.5)
+    def collect_distances(self):
+        """Collects minimum distance between Asp/Glu carboxylates and Trp NE1 for all frames."""
+        if not self.valid_segids:
+             logger.error("No valid chains to collect distances for.")
+             return # Or raise error?
+
+        logger.info("Collecting DW-gate distances for all frames...")
+        records = []
+        # Use the pre-calculated time axis
+        for i, ts in enumerate(tqdm(self.universe.trajectory, desc="DW-gate Distances", total=len(self.time_axis))):
+            t_ns = self.time_axis[i]
+            pos = ts.positions
+            box = ts.dimensions # Needed for distance_array if PBC are relevant
+
+            for segid in self.valid_segids:
+                try:
+                    idx = self.gate_idx[segid]
+                    # Ensure indices are valid for current frame (should be unless topology changes)
+                    # Select carboxylate oxygen positions
+                    carbox_pos = np.vstack([pos[idx.od1], pos[idx.od2]])
+                    # Calculate distance from NE1 to both oxygens
+                    dist = distance_array(pos[idx.ne1][None, :], carbox_pos, box=box).min()
+
+                    records.append({
+                        "time_ns": t_ns,
+                        "frame": i, # Use frame index i directly
+                        "chain": segid[-1], # Use simple chain ID (A, B, C, D)
+                        "distance": dist,
+                        # Initial state assignment (will be refined by KDE/defaults later if needed)
+                        "state": CLOSED_STATE if dist <= self.distance_threshold else OPEN_STATE
+                    })
+                except IndexError:
+                     logger.warning(f"Index error accessing atoms for segid {segid} at frame {i}. Skipping.")
+                     continue # Skip this chain for this frame
+                except KeyError:
+                     logger.warning(f"KeyError accessing indices for segid {segid} at frame {i}. Skipping.")
+                     continue # Skip this chain for this frame
+
+
+        if not records:
+             logger.error("No distance records were collected.")
+             self.df_raw = pd.DataFrame(columns=["time_ns", "frame", "chain", "distance", "state"])
+        else:
+            self.df_raw = pd.DataFrame(records)
+            logger.info(f"Collected {len(self.df_raw)} distance measurements across {len(self.valid_segids)} chains.")
+
+        # Decide whether to calculate or use default reference distances
+        if self.auto_detect_refs:
+            self.closed_ref_dist, self.open_ref_dist = self.calculate_reference_distances()
+        else:
+            self.closed_ref_dist = self.default_closed_ref_dist
+            self.open_ref_dist = self.default_open_ref_dist
+            logger.info(f"Using default reference distances: Closed={self.closed_ref_dist:.2f} Å, Open={self.open_ref_dist:.2f} Å")
+
+
+    def calculate_reference_distances(self) -> Tuple[float, float]:
+        """
+        Calculates reference distances from data using KDE and KMeans clustering.
+        Updates self.kde_analysis_results and self.plot_paths.
+        Returns the calculated (closed_ref_dist, open_ref_dist).
+        Uses defaults if calculation fails.
+        """
+        if self.df_raw is None or self.df_raw.empty:
+            logger.warning("Raw distance data not available. Cannot calculate reference distances. Using defaults.")
+            return self.default_closed_ref_dist, self.default_open_ref_dist
+
+        import scipy.stats as stats # Keep import local if only used here
+
+        logger.info("Calculating reference distances from data using KDE...")
+        results = { 'all_chains': {}, 'per_chain': {} }
+        all_peaks = []
+        all_dist = self.df_raw.distance.values # Get all distances early for range calculation
+
+        # Determine common x-range for all subplots
+        if len(all_dist) > 0:
+             x_min_all = np.floor(all_dist.min() - 0.5)
+             x_max_all = np.ceil(all_dist.max() + 0.5)
+        else:
+             x_min_all, x_max_all = 0, 5 # Default range if no data
+
+
+        # --- Per-chain KDE --- 
+        # Create figure *before* loop to manage legends later
+        fig = plt.figure(figsize=(12, 9)) # Adjusted figsize for bottom legend
+
+        # Plot 1: Combined distribution
+        ax_combined = plt.subplot(3, 2, (1, 2))
+        ax_combined.grid(False) # Hide grid
+
+        chains_analyzed = 0
+        for i, chain in enumerate(sorted(self.df_raw.chain.unique())):
+            dist_arr = self.df_raw.query("chain == @chain").distance.values
+            if len(dist_arr) > 10: # Need enough data for KDE
+                try:
+                    kde = stats.gaussian_kde(dist_arr, bw_method='scott') # Or Silverman?
+                    # Use common x-range for evaluation, but keep points reasonable
+                    x_kde = np.linspace(max(x_min_all, dist_arr.min() - 0.5), 
+                                        min(x_max_all, dist_arr.max() + 0.5), 500)
+                    y_kde = kde(x_kde)
+                    # Adjust find_peaks parameters if needed
+                    peaks, props = find_peaks(y_kde, height=0.05*y_kde.max(), distance=30, prominence=0.05) # Keep prominence
+                    peak_distances = x_kde[peaks]
+                    peak_heights = y_kde[peaks]
+                    all_peaks.extend(peak_distances) # Collect peaks from all chains
+
+                    # Store results
+                    results['per_chain'][chain] = {
+                        'x_kde': x_kde, 'y_kde': y_kde,
+                        'peak_distances': peak_distances, 'peak_heights': peak_heights
+                    }
+                    logger.debug(f"Chain {chain}: Found {len(peak_distances)} KDE peaks at {np.round(peak_distances, 2)}")
+
+                    # Plotting per-chain KDE (max 4 chains shown)
+                    if chains_analyzed < 4:
+                        ax_chain = plt.subplot(3, 2, 3 + chains_analyzed)
+                        ax_chain.plot(x_kde, y_kde, label=f'_Chain {chain} KDE')
+                        ax_chain.scatter(peak_distances, peak_heights, color='red', marker='x', s=50, label='_Peaks')
+                        
+                        # Add text annotations for peak values
+                        for pd, ph in zip(peak_distances, peak_heights):
+                            ax_chain.text(pd + 0.05, ph, f'{pd:.1f}Å', fontsize=9, va='bottom', ha='left')
+                            
+                        ax_chain.set_title(f'Chain {chain}') # NEW Simplified Title
+                        ax_chain.set_xlabel('Distance (Å)')
+                        ax_chain.set_ylabel('Density')
+                        ax_chain.grid(False) # Hide grid
+                        ax_chain.set_xlim(x_min_all, x_max_all) # Set common x-axis range
+                    chains_analyzed += 1
+
+                except Exception as e:
+                    logger.warning(f"KDE calculation failed for chain {chain}: {e}")
             else:
-                ax.text(0.5, 0.5, f'No data for Chain {chain_char}', ha='center', va='center', transform=ax.transAxes)
+                logger.warning(f"Skipping KDE for chain {chain}: Insufficient data points ({len(dist_arr)}).")
+                # Still create subplot placeholder if needed?
+                if chains_analyzed < 4:
+                     ax_chain = plt.subplot(3, 2, 3 + chains_analyzed)
+                     ax_chain.text(0.5, 0.5, f"Chain {chain}\nNo KDE (N={len(dist_arr)})", 
+                                    ha='center', va='center', transform=ax_chain.transAxes)
+                     ax_chain.set_title(f'Chain {chain}') # NEW Simplified Title
+                     ax_chain.set_xlabel('Distance (Å)')
+                     ax_chain.set_ylabel('Density')
+                     ax_chain.grid(False)
+                     ax_chain.set_xlim(x_min_all, x_max_all)
+                chains_analyzed += 1
 
-            # Remove x-tick labels for all but the bottom plot
-            if i < n_chains - 1:
-                ax.tick_params(labelbottom=False)
 
-        # Common X label
-        axes[-1].set_xlabel("Time (ns)")
-        fig.suptitle("DW Gate Distance (Actual vs. Idealized State)", y=1.02)
+        # --- Combined KDE and Histogram (on the first subplot) ---
+        combined_handles, combined_labels = [], [] # For manual legend creation
+        if len(all_dist) > 10:
+            try:
+                # Histogram
+                hist_vals, hist_bins = np.histogram(all_dist, bins=50, density=True)
+                bin_centers = (hist_bins[:-1] + hist_bins[1:]) / 2
+                # Store handle for legend
+                bar_container = ax_combined.bar(bin_centers, hist_vals, width=np.diff(hist_bins)[0]*0.9, alpha=0.5, label='Combined Histogram')
+                combined_handles.append(bar_container[0]) # Get patch handle
+                combined_labels.append('Combined Histogram')
 
-        # Create a custom legend for the figure
+                # Combined KDE
+                kde_all = stats.gaussian_kde(all_dist, bw_method='scott')
+                x_all = np.linspace(all_dist.min() - 0.5, all_dist.max() + 0.5, 1000)
+                y_all = kde_all(x_all)
+                peaks_all, _ = find_peaks(y_all, height=0.05*y_all.max(), distance=50, prominence=0.05) # Wider distance for combined?
+                peak_distances_all = x_all[peaks_all]
+                peak_heights_all = y_all[peaks_all]
+
+                # Store handle for legend
+                line_kde, = ax_combined.plot(x_all, y_all, label='Combined KDE', color='k', lw=1.5)
+                combined_handles.append(line_kde)
+                combined_labels.append('Combined KDE')
+                
+                # Store handle for legend
+                scatter_peaks = ax_combined.scatter(peak_distances_all, peak_heights_all, color='red', marker='x', s=80, label='Combined Peaks')
+                combined_handles.append(scatter_peaks)
+                combined_labels.append('Combined Peaks')
+
+                results['all_chains'] = {
+                    'x_kde': x_all, 'y_kde': y_all,
+                    'hist_bins': bin_centers, 'hist_values': hist_vals, # Store hist data
+                    'peak_distances': peak_distances_all, 'peak_heights': peak_heights_all
+                }
+                self.kde_analysis_results = results # Store results object
+
+            except Exception as e:
+                 logger.error(f"Combined KDE/Histogram calculation failed: {e}")
+                 self.kde_analysis_results = None # Ensure it's None if failed
+        else:
+            logger.warning("Insufficient combined data points for KDE/Histogram.")
+            self.kde_analysis_results = None
+
+
+        # --- Determine Reference Distances using KMeans on collected peaks ---
+        closed_ref = self.default_closed_ref_dist
+        open_ref = self.default_open_ref_dist
+        if all_peaks:
+            unique_peaks = sorted(list(set(all_peaks))) # Use unique peaks
+            if len(unique_peaks) >= 2:
+                try:
+                    # Reshape for KMeans
+                    kp = np.array(unique_peaks).reshape(-1, 1)
+                    # Fit KMeans with 2 clusters
+                    kmeans = KMeans(n_clusters=2, random_state=0, n_init=10).fit(kp) # Explicit n_init
+                    centers = sorted(kmeans.cluster_centers_.flatten())
+                    closed_ref, open_ref = centers[0], centers[1]
+                    logger.info(f"KDE/KMeans derived references: Closed={closed_ref:.2f} Å, Open={open_ref:.2f} Å")
+
+                    # Add KMeans centers to the combined plot - Store handle for legend
+                    scatter_kmeans = ax_combined.scatter(centers, [ax_combined.get_ylim()[1]*0.95]*2, color='blue', marker='D', s=100, label='KMeans Centers', zorder=5)
+                    combined_handles.append(scatter_kmeans)
+                    combined_labels.append('KMeans Centers')
+
+                except Exception as e:
+                    logger.warning(f"KMeans clustering on peaks failed: {e}. Using defaults.")
+            elif len(unique_peaks) == 1:
+                logger.warning(f"Only one unique KDE peak found ({unique_peaks[0]:.2f} Å). Insufficient for clustering. Using defaults.")
+            else: # len is 0
+                 logger.warning("No KDE peaks found across any chain. Using defaults.")
+        else:
+            logger.warning("No KDE peaks collected from per-chain analysis. Using defaults.")
+
+
+        # --- Finalize Combined Plot --- 
+        if self.kde_analysis_results: # Only add lines if combined KDE ran
+            # Add threshold line - Store handle
+             line_thresh = ax_combined.axvline(self.distance_threshold, color='grey', ls=':', lw=1.5, label=f'Threshold ({self.distance_threshold:.1f} Å)')
+             combined_handles.append(line_thresh)
+             combined_labels.append(f'Threshold ({self.distance_threshold:.1f} Å)')
+             
+             # Add reference distance lines (final values, either calculated or default) - Store handles
+             line_closed = ax_combined.axvline(closed_ref, color='darkred', ls='-', lw=2, label=f'Closed Ref ({closed_ref:.2f} Å)')
+             line_open = ax_combined.axvline(open_ref, color='darkgreen', ls='-', lw=2, label=f'Open Ref ({open_ref:.2f} Å)')
+             combined_handles.append(line_closed)
+             combined_labels.append(f'Closed Ref ({closed_ref:.2f} Å)')
+             combined_handles.append(line_open)
+             combined_labels.append(f'Open Ref ({open_ref:.2f} Å)')
+             
+             # ax_combined.legend(fontsize='small') # REMOVED Legend here
+             ax_combined.set_title('Combined & Per-Chain DW-Gate Distance Distributions (KDE)')
+             ax_combined.set_xlabel('Distance (Å)')
+             ax_combined.set_ylabel('Density')
+             ax_combined.grid(False) # Ensure grid is off
+             ax_combined.set_xlim(x_min_all, x_max_all) # Set common x-limit here too
+        else:
+             ax_combined.text(0.5, 0.5, 'KDE Analysis Failed or Insufficient Data',
+                              ha='center', va='center', transform=ax_combined.transAxes, color='red')
+
+
+        # --- Create Combined Legend Below Plot ---
+        from matplotlib.lines import Line2D
+        # Handles/Labels for per-chain elements
+        per_chain_handles = [
+            Line2D([0], [0], color='tab:blue', lw=2), # Representing the per-chain KDE line
+            Line2D([0], [0], marker='x', color='red', markersize=8, linestyle='None') # Representing peaks
+        ]
+        per_chain_labels = ['Per-Chain KDE', 'Per-Chain Peaks']
+        
+        # Combine legends
+        all_handles = combined_handles + per_chain_handles
+        all_labels = combined_labels + per_chain_labels
+        
+        # Place legend below the figure
+        fig.legend(all_handles, all_labels, loc='lower center', 
+                   bbox_to_anchor=(0.5, -0.05), # Adjust vertical position below axes
+                   ncol=4, # Adjust number of columns as needed
+                   fontsize='medium')
+
+
+        plt.tight_layout(rect=[0, 0.08, 1, 0.95]) # Adjust rect for suptitle and bottom legend space
+        # plt.suptitle("DW-Gate Reference Distance Analysis", fontsize=16) # Title is now on subplot
+
+        # Save the plot
+        plot_filename = "dw_gate_distance_distribution.png"
+        plot_path = os.path.join(self.output_dir, plot_filename)
+        save_plot(fig, plot_path) # Save the modified figure
+        self.plot_paths['distance_distribution'] = os.path.join("dw_gate_analysis", plot_filename) # Relative path for report
+
+        return closed_ref, open_ref
+
+
+    def apply_debouncing(self):
+        """Applies Run-Length Encoding (RLE) debouncing to the raw states."""
+        if self.df_raw is None or self.df_raw.empty:
+            logger.error("Cannot apply debouncing: Raw data not available.")
+            return
+
+        logger.info(f"Applying RLE debouncing with tolerance={self.tolerance_frames} frames...")
+        self.df = self.df_raw.copy() # Start with raw data
+
+        # Map states to numeric for easier processing
+        state_map = {CLOSED_STATE: 0, OPEN_STATE: 1}
+        inverse_state_map = {v: k for k, v in state_map.items()}
+
+        debounced_states_all = [] # Store debounced states for all chains
+
+        # Process each chain independently
+        for chain in sorted(self.df['chain'].unique()):
+            chain_indices = self.df['chain'] == chain
+            if not chain_indices.any():
+                logger.warning(f"No data found for chain {chain} during debouncing.")
+                continue
+
+            # Get original states for this chain
+            original_numeric_states = self.df.loc[chain_indices, 'state'].map(state_map).tolist()
+
+            # Apply RLE debouncing
+            debounced_numeric_states = self._debounce_rle(original_numeric_states)
+
+            # Store the debounced states (still numeric)
+            # We need to put them back in the correct order according to the original DataFrame index
+            # Create a temporary Series to map back easily
+            debounced_series = pd.Series(debounced_numeric_states, index=self.df[chain_indices].index)
+            debounced_states_all.append(debounced_series)
+
+
+        # Concatenate all debounced states and update the DataFrame
+        if debounced_states_all:
+             all_debounced = pd.concat(debounced_states_all).sort_index()
+             # Map back to string representation ('open'/'closed')
+             self.df['state'] = all_debounced.map(inverse_state_map)
+             logger.info("Debouncing complete.")
+        else:
+             logger.error("Debouncing failed: No states were processed.")
+             # Keep self.df as the raw copy if debouncing fails completely
+             self.df = self.df_raw.copy()
+
+
+    def _debounce_rle(self, states: List[int]) -> List[int]:
+        """
+        Internal RLE debouncing logic. Merges runs shorter than tolerance
+        into the longer neighboring run.
+
+        Args:
+            states (List[int]): List of numeric states (e.g., 0 for closed, 1 for open).
+
+        Returns:
+            List[int]: Debounced list of numeric states.
+        """
+        if not states:
+            return []
+
+        tol = self.tolerance_frames
+        if tol <= 1: # No debouncing if tolerance is 1 or less
+             return states
+
+        s = list(states) # Work on a copy
+        n = len(s)
+        iteration = 0
+        max_iterations = n # Safety break to prevent infinite loops
+
+        while iteration < max_iterations:
+            iteration += 1
+            runs = []
+            if not s: break # Should not happen if initial states exist
+
+            # 1. Identify runs
+            current_val = s[0]
+            start_idx = 0
+            for i in range(1, n):
+                if s[i] != current_val:
+                    runs.append({'value': current_val, 'start': start_idx, 'length': i - start_idx})
+                    current_val = s[i]
+                    start_idx = i
+            runs.append({'value': current_val, 'start': start_idx, 'length': n - start_idx})
+
+            # 2. Find short runs to merge
+            merges_made = 0
+            indices_to_merge = [i for i, run in enumerate(runs) if run['length'] < tol]
+
+            if not indices_to_merge:
+                break # No more short runs found, debouncing complete
+
+            # 3. Merge short runs
+            # Iterate backwards to avoid index issues after merging
+            for idx in sorted(indices_to_merge, reverse=True):
+                current_run = runs[idx]
+                val_to_merge = current_run['value']
+                start = current_run['start']
+                length = current_run['length']
+
+                # Determine the value to merge into
+                new_val = -1 # Placeholder for invalid state
+                if idx == 0: # First run is short
+                    if len(runs) > 1:
+                        new_val = runs[1]['value']
+                    # else: # Only one run and it's short - keep original value? Or error? Keep original.
+                    #    new_val = val_to_merge # No change possible
+                elif idx == len(runs) - 1: # Last run is short
+                    new_val = runs[idx - 1]['value']
+                else: # Middle run is short
+                    # Merge into the longer neighbor
+                    prev_run = runs[idx - 1]
+                    next_run = runs[idx + 1]
+                    if prev_run['length'] >= next_run['length']:
+                        new_val = prev_run['value']
+                    else:
+                        new_val = next_run['value']
+
+                # Apply the merge in the state list 's'
+                if new_val != -1 and new_val != val_to_merge: # Only merge if neighbor exists and is different
+                    for j in range(start, start + length):
+                        s[j] = new_val
+                    merges_made += 1
+                # If new_val is same as original, or no neighbor, no change needed here
+
+            if merges_made == 0:
+                 # This can happen if short runs are surrounded by runs of the same value
+                 # or are at the ends with no different neighbor.
+                 break
+
+        if iteration == max_iterations:
+             logger.warning("RLE debouncing reached max iterations. Results might be incomplete.")
+
+        return s
+
+    def build_events(self):
+        """Builds continuous events from debounced states, handling potential gaps."""
+        if self.df is None or self.df.empty:
+            logger.error("Cannot build events: Debounced data frame is missing or empty.")
+            return
+
+        logger.info("Building events from debounced states...")
+        rows = []
+        max_frame_overall = self.df['frame'].max() # Get max frame from data
+
+        # Sort by chain and time/frame is crucial
+        df_sorted = self.df.sort_values(['chain', 'frame']).reset_index()
+
+        for ch, sub_df in df_sorted.groupby('chain'):
+            if sub_df.empty: continue
+
+            # Detect consecutive blocks of the same state
+            sub_df = sub_df.copy() # Avoid SettingWithCopyWarning
+            sub_df['block'] = (sub_df['state'] != sub_df['state'].shift()).cumsum()
+
+            chain_events = []
+            for _, group in sub_df.groupby('block'):
+                start_frame = group['frame'].min()
+                end_frame = group['frame'].max()
+                frame_count = end_frame - start_frame + 1
+                start_time = group['time_ns'].min()
+                # End time is start time of *next* block or end of sim if last block
+                # Approximate duration using frame count * dt_ns for now
+                duration_ns = frame_count * self.dt_ns
+                end_time = start_time + duration_ns # Approximate end time
+
+                chain_events.append({
+                    'chain': ch,
+                    'state': group['state'].iloc[0],
+                    'start_frame': start_frame,
+                    'end_frame': end_frame,
+                    'frame_count': frame_count,
+                    'duration_ns': duration_ns,
+                    'start_ns': start_time,
+                    'end_ns': end_time # Store approximate end time
+                })
+
+            if not chain_events:
+                logger.warning(f"No events generated for chain {ch}.")
+                continue
+
+            # --- Verify and Fix Coverage for this chain ---
+            chain_events_df = pd.DataFrame(chain_events).sort_values('start_frame')
+            fixed_events_for_chain = self._verify_and_fix_coverage_per_chain(
+                chain_events_df, ch, max_frame_overall
+            )
+            rows.extend(fixed_events_for_chain)
+
+        if not rows:
+            logger.error("Failed to build any events for any chain.")
+            self.events_df = pd.DataFrame(columns=[
+                'chain', 'state', 'start_frame', 'end_frame',
+                'frame_count', 'duration_ns', 'start_ns', 'end_ns'
+            ])
+        else:
+            self.events_df = pd.DataFrame(rows).sort_values(['chain', 'start_frame']).reset_index(drop=True)
+            logger.info(f"Built {len(self.events_df)} events across all chains after coverage check.")
+            # Final verification (optional)
+            self.verify_continuous_coverage() # Logs warnings if issues persist
+
+        # Save events to CSV
+        if self.events_df is not None and not self.events_df.empty:
+            # --- Add Logging ---
+            logger.debug(f"Final events_df head before saving:\n{self.events_df.head().to_string()}")
+            logger.debug(f"Final events_df shape: {self.events_df.shape}")
+            # --- End Logging ---
+            csv_path = os.path.join(self.output_dir, "dw_gate_events.csv")
+            try:
+                self.events_df.to_csv(csv_path, index=False, float_format="%.3f")
+                logger.info(f"Saved DW Gate events data to {csv_path}")
+            except Exception as e:
+                logger.error(f"Failed to save DW Gate events CSV: {e}")
+        else:
+             logger.warning("events_df is None or empty; cannot save events CSV.")
+
+
+    def _verify_and_fix_coverage_per_chain(self, chain_events_df: pd.DataFrame, chain_id: str, max_frame_overall: int) -> List[Dict]:
+        """
+        Checks for gaps in event coverage for a single chain and fills them
+        by extending the neighboring event or using raw data if necessary.
+        Returns a list of event dictionaries (original + filled gaps).
+        """
+        if chain_events_df.empty:
+            return []
+
+        events = chain_events_df.to_dict('records')
+        fixed_events = []
+        last_end_frame = -1
+
+        # 1. Check for gap before the first event
+        first_event = events[0]
+        if first_event['start_frame'] > 0:
+            gap_start_frame = 0
+            gap_end_frame = first_event['start_frame'] - 1
+            gap_state = first_event['state'] # Assume gap takes state of first event
+            gap_count = gap_end_frame - gap_start_frame + 1
+            # Try to get actual start/end times from raw data for the gap
+            gap_df = self.df_raw[(self.df_raw['chain'] == chain_id) &
+                                 (self.df_raw['frame'] >= gap_start_frame) &
+                                 (self.df_raw['frame'] <= gap_end_frame)]
+            start_ns = gap_df['time_ns'].min() if not gap_df.empty else gap_start_frame * self.dt_ns
+            duration_ns = gap_count * self.dt_ns
+            end_ns = start_ns + duration_ns
+
+            logger.warning(f"Chain {chain_id}: Found gap at start (Frames 0-{gap_end_frame}). Filling with state '{gap_state}'.")
+            fixed_events.append({
+                'chain': chain_id, 'state': gap_state,
+                'start_frame': gap_start_frame, 'end_frame': gap_end_frame,
+                'frame_count': gap_count, 'duration_ns': duration_ns,
+                'start_ns': start_ns, 'end_ns': end_ns
+            })
+            last_end_frame = gap_end_frame
+
+
+        # 2. Process existing events and check for gaps between them
+        for i, event in enumerate(events):
+            # Check for gap *before* this event
+            if event['start_frame'] > last_end_frame + 1:
+                gap_start_frame = last_end_frame + 1
+                gap_end_frame = event['start_frame'] - 1
+                # Assign state based on the *previous* event's state
+                gap_state = fixed_events[-1]['state'] if fixed_events else event['state'] # Fallback to current if first
+                gap_count = gap_end_frame - gap_start_frame + 1
+                # Try to get actual start/end times
+                gap_df = self.df_raw[(self.df_raw['chain'] == chain_id) &
+                                     (self.df_raw['frame'] >= gap_start_frame) &
+                                     (self.df_raw['frame'] <= gap_end_frame)]
+                start_ns = gap_df['time_ns'].min() if not gap_df.empty else gap_start_frame * self.dt_ns
+                duration_ns = gap_count * self.dt_ns
+                end_ns = start_ns + duration_ns
+
+                logger.warning(f"Chain {chain_id}: Found mid gap (Frames {gap_start_frame}-{gap_end_frame}). Filling with state '{gap_state}'.")
+                fixed_events.append({
+                    'chain': chain_id, 'state': gap_state,
+                    'start_frame': gap_start_frame, 'end_frame': gap_end_frame,
+                    'frame_count': gap_count, 'duration_ns': duration_ns,
+                    'start_ns': start_ns, 'end_ns': end_ns
+                })
+
+            # Add the current event itself
+            fixed_events.append(event)
+            last_end_frame = event['end_frame']
+
+
+        # 3. Check for gap after the last event
+        if last_end_frame < max_frame_overall:
+            gap_start_frame = last_end_frame + 1
+            gap_end_frame = max_frame_overall
+            gap_state = fixed_events[-1]['state'] # Assume state of last event continues
+            gap_count = gap_end_frame - gap_start_frame + 1
+             # Try to get actual start/end times
+            gap_df = self.df_raw[(self.df_raw['chain'] == chain_id) &
+                                 (self.df_raw['frame'] >= gap_start_frame) &
+                                 (self.df_raw['frame'] <= gap_end_frame)]
+            start_ns = gap_df['time_ns'].min() if not gap_df.empty else gap_start_frame * self.dt_ns
+            duration_ns = gap_count * self.dt_ns
+            end_ns = start_ns + duration_ns
+
+            logger.warning(f"Chain {chain_id}: Found gap at end (Frames {gap_start_frame}-{gap_end_frame}). Filling with state '{gap_state}'.")
+            fixed_events.append({
+                'chain': chain_id, 'state': gap_state,
+                'start_frame': gap_start_frame, 'end_frame': gap_end_frame,
+                'frame_count': gap_count, 'duration_ns': duration_ns,
+                'start_ns': start_ns, 'end_ns': end_ns
+            })
+
+        return fixed_events
+
+
+    def verify_continuous_coverage(self):
+        """Verifies that the final events cover the full trajectory duration for each chain."""
+        if self.events_df is None or self.events_df.empty:
+            return True # No events to verify
+
+        maxf = self.df['frame'].max() # Use max frame from debounced data
+        is_continuous = True
+        for ch, ev in self.events_df.groupby('chain'):
+            e = ev.sort_values('start_frame')
+            if e.empty: continue
+
+            # Check start
+            if e['start_frame'].iloc[0] > 0:
+                logger.warning(f"Coverage Issue [Chain {ch}]: Events do not start at frame 0 (starts at {e['start_frame'].iloc[0]}).")
+                is_continuous = False
+
+            # Check gaps between events
+            for i in range(len(e) - 1):
+                end_frame_current = e['end_frame'].iloc[i]
+                start_frame_next = e['start_frame'].iloc[i+1]
+                if end_frame_current + 1 < start_frame_next:
+                    logger.warning(f"Coverage Issue [Chain {ch}]: Gap found between frame {end_frame_current} and {start_frame_next}.")
+                    is_continuous = False
+
+            # Check end
+            if e['end_frame'].iloc[-1] < maxf:
+                logger.warning(f"Coverage Issue [Chain {ch}]: Events do not end at max frame {maxf} (ends at {e['end_frame'].iloc[-1]}).")
+                is_continuous = False
+
+        if is_continuous:
+            logger.info("Event coverage verified to be continuous for all chains.")
+        else:
+            logger.error("Event coverage issues detected AFTER gap filling. Check logic.")
+        return is_continuous
+
+    def run_statistical_analysis(self):
+        """
+        Performs statistical analysis on the events data.
+        Calculates summary stats, open/closed probabilities, and runs significance tests.
+        Stores results (DataFrames, dicts) in self.stats_results.
+        """
+        if self.events_df is None or self.events_df.empty:
+            logger.error("Cannot run statistics: Events data frame not available.")
+            self.stats_results = {'Error': 'No events data'}
+            return
+
+        logger.info("Running statistical analysis on DW-gate events...")
+        # Clear previous results
+        self.stats_results = {}
+        raw_stats_collector = {} # Temporary dict to hold intermediate results
+
+        # --- 1. Summary Statistics Table ---
+        try:
+            stats_df = self.events_df.groupby(['chain', 'state'])['duration_ns'].agg(
+                Count='size',
+                Mean_ns='mean',
+                Std_Dev_ns='std',
+                Median_ns='median',
+                Min_ns='min',
+                Max_ns='max',
+                Total_Duration_ns='sum' # Also get total time spent in state
+            ).reset_index()
+            # Fill NaN for Std_Dev if only one event exists
+            stats_df['Std_Dev_ns'] = stats_df['Std_Dev_ns'].fillna(0)
+            raw_stats_collector['summary_stats_df'] = stats_df
+
+            # --- Add Logging --- 
+            if stats_df is not None and not stats_df.empty:
+                 logger.debug(f"Calculated summary_stats_df head:\n{stats_df.head().to_string()}")
+                 logger.debug(f"summary_stats_df shape: {stats_df.shape}")
+            else:
+                 logger.warning("summary_stats_df is None or empty after calculation.")
+            # --- End Logging --- 
+
+            # REMOVED HTML Generation
+            # html_summary_table = stats_df.to_html(...)
+            logger.info("Calculated summary statistics.")
+        except Exception as e:
+            logger.error(f"Failed to calculate summary statistics: {e}")
+            # Store error indicator if needed, but avoid storing HTML error message
+            raw_stats_collector['summary_stats_error'] = str(e)
+            # self.stats_results['summary_table_html'] = "<p>Error calculating summary statistics.</p>"
+
+
+        # --- 2. Open/Closed Probability and Chi-squared Test ---
+        prob_df = None # Initialize
+        time_sum_df = None # Initialize
+        try:
+            # Use the pre-calculated Total_Duration_ns from stats_df if available
+            if 'summary_stats_df' in raw_stats_collector:
+                 summary_df = raw_stats_collector['summary_stats_df']
+                 # Need to handle potential multi-index if groupby was different
+                 if all(col in summary_df.columns for col in ['chain', 'state', 'Total_Duration_ns']):
+                     time_sum_df = summary_df.pivot(index='chain', columns='state', values='Total_Duration_ns').fillna(0)
+                 else:
+                     logger.warning("Summary stats DF missing expected columns for pivot. Recalculating time sums.")
+                     time_sum_df = None # Force recalculation
+            
+            if time_sum_df is None:
+                logger.debug("Recalculating time sums for probability.")
+                time_sum_df = self.events_df.groupby(['chain', 'state'])['duration_ns'].sum().unstack(fill_value=0)
+
+            # Ensure both 'open' and 'closed' columns exist
+            if OPEN_STATE not in time_sum_df.columns: time_sum_df[OPEN_STATE] = 0.0
+            if CLOSED_STATE not in time_sum_df.columns: time_sum_df[CLOSED_STATE] = 0.0
+            # Reorder columns for consistency
+            time_sum_df = time_sum_df[[CLOSED_STATE, OPEN_STATE]]
+
+            total_time_per_chain = time_sum_df.sum(axis=1)
+            # Avoid division by zero if a chain had no events
+            prob_df = time_sum_df.divide(total_time_per_chain, axis=0).fillna(0)
+            prob_df['total_time_ns'] = total_time_per_chain # Add total time
+            prob_df.reset_index(inplace=True)
+            raw_stats_collector['probability_df'] = prob_df # Store the DataFrame for the report
+
+            # Melted version for potential internal use or easy plotting access
+            # prob_melted_df = prob_df.melt('chain', var_name='state', value_name='probability')
+            # raw_stats_collector['probability_melted_df'] = prob_melted_df
+
+            # Chi-squared test on the time sums (contingency table)
+            # Ensure there are at least 2 rows (chains) and 2 columns (states) with non-zero variance?
+            if time_sum_df.shape[0] >= 2 and time_sum_df.shape[1] >= 2 and time_sum_df.any(axis=None):
+                 chi2_stat, p_chi2, dof, expected = chi2_contingency(time_sum_df.values)
+                 raw_stats_collector['chi2_test'] = {'statistic': chi2_stat, 'p_value': p_chi2, 'dof': dof}
+                 logger.info(f"Chi-squared test on state durations across chains: chi2={chi2_stat:.3f}, p={p_chi2:.4g}")
+            else:
+                 logger.warning("Skipping Chi-squared test: Insufficient data dimensions or variance.")
+                 raw_stats_collector['chi2_test'] = {'statistic': np.nan, 'p_value': np.nan, 'dof': np.nan}
+
+            # REMOVED HTML Generation
+            # html_prob_table = prob_df.to_html(...)
+            # self.stats_results['probability_table_html'] = html_prob_table
+            # self.stats_results['chi2_results_html'] = f"<p>... {chi2_stat:.3f} ...</p>"
+
+        except Exception as e:
+            logger.error(f"Failed to calculate probabilities or run Chi-squared test: {e}")
+            raw_stats_collector['probability_error'] = str(e)
+            raw_stats_collector['chi2_test'] = {'statistic': np.nan, 'p_value': np.nan, 'dof': np.nan, 'error': str(e)}
+            # self.stats_results['probability_table_html'] = "<p>Error calculating probabilities.</p>"
+            # self.stats_results['chi2_results_html'] = "<p>Chi-squared test failed.</p>"
+
+        # --- 3. Kruskal-Wallis Test (Compare Open Durations Across Chains) ---
+        try:
+            chains = sorted(self.events_df['chain'].unique())
+            open_duration_lists = [
+                self.events_df.loc[(self.events_df['state'] == OPEN_STATE) & (self.events_df['chain'] == c), 'duration_ns'].values
+                for c in chains
+            ]
+            # Filter out chains with no open events or only one event
+            valid_open_lists = [lst for lst in open_duration_lists if len(lst) > 1]
+
+            if len(valid_open_lists) >= 2: # Need at least two groups with >1 data point for Kruskal-Wallis
+                h_stat, p_kruskal = kruskal(*valid_open_lists)
+                raw_stats_collector['kruskal_test'] = {'statistic': h_stat, 'p_value': p_kruskal}
+                logger.info(f"Kruskal-Wallis test on OPEN durations across chains: H={h_stat:.3f}, p={p_kruskal:.4g}")
+                # REMOVED HTML
+                # self.stats_results['kruskal_results_html'] = f"<p>... H-statistic={h_stat:.3f} ...</p>"
+            else:
+                logger.warning("Skipping Kruskal-Wallis test: Need open events (>1) in at least two chains.")
+                raw_stats_collector['kruskal_test'] = {'statistic': np.nan, 'p_value': np.nan, 'skipped': True}
+                # self.stats_results['kruskal_results_html'] = "<p>Kruskal-Wallis test skipped (insufficient data).</p>"
+        except Exception as e:
+            logger.error(f"Failed to run Kruskal-Wallis test: {e}")
+            raw_stats_collector['kruskal_test'] = {'statistic': np.nan, 'p_value': np.nan, 'error': str(e)}
+            # self.stats_results['kruskal_results_html'] = "<p>Kruskal-Wallis test failed.</p>"
+
+
+        # --- 4. Pairwise Mann-Whitney U Tests (Compare Open Durations Between Chain Pairs) ---
+        comparisons = []
+        mw_df = None
+        try:
+            chains = sorted(self.events_df['chain'].unique())
+            if len(chains) >= 2:
+                for chain_a, chain_b in combinations(chains, 2):
+                    durations_a = self.events_df.loc[(self.events_df['state'] == OPEN_STATE) & (self.events_df['chain'] == chain_a), 'duration_ns']
+                    durations_b = self.events_df.loc[(self.events_df['state'] == OPEN_STATE) & (self.events_df['chain'] == chain_b), 'duration_ns']
+
+                    # Check if both chains have sufficient data (e.g., >= 1 event?)
+                    if not durations_a.empty and not durations_b.empty:
+                         # Perform Mann-Whitney U test
+                         u_stat, p_mannwhitney = mannwhitneyu(durations_a, durations_b, alternative='two-sided') # Use two-sided
+                         comparisons.append({
+                             'Chain 1': chain_a,
+                             'Chain 2': chain_b,
+                             'U-statistic': u_stat,
+                             'p-value': p_mannwhitney
+                         })
+                    # else: Skip pair if one chain has no open events
+
+            if comparisons:
+                mw_df = pd.DataFrame(comparisons)
+                # Apply Bonferroni correction (or other method like Benjamini-Hochberg?)
+                num_comparisons = len(mw_df)
+                mw_df['p-value (Bonferroni)'] = (mw_df['p-value'] * num_comparisons).clip(upper=1.0) # Corrected p-value
+                raw_stats_collector['mannwhitney_tests_df'] = mw_df # Store the DataFrame
+
+                logger.info(f"Performed {num_comparisons} pairwise Mann-Whitney U tests on open durations.")
+
+                # REMOVED HTML GENERATION
+                # html_mw_table = mw_df.to_html(...)
+                # self.stats_results['mannwhitney_table_html'] = html_mw_table
+            else:
+                 logger.warning("Skipping pairwise Mann-Whitney U tests: Need at least two chains with open events.")
+                 raw_stats_collector['mannwhitney_tests_df'] = None # Indicate skipped
+                 # self.stats_results['mannwhitney_table_html'] = "<p>Pairwise Mann-Whitney U tests skipped (insufficient data).</p>"
+
+        except Exception as e:
+            logger.error(f"Failed to run Mann-Whitney U tests: {e}")
+            raw_stats_collector['mannwhitney_tests_error'] = str(e)
+            raw_stats_collector['mannwhitney_tests_df'] = None # Indicate failure
+            # self.stats_results['mannwhitney_table_html'] = "<p>Pairwise Mann-Whitney U tests failed.</p>"
+
+        # Store the collected raw stats (DataFrames, dicts) in the main results dict
+        self.stats_results = raw_stats_collector
+        logger.info("Statistical analysis complete. Results stored as DataFrames/Dicts.")
+
+
+    # --- Plotting Methods (Adapted to save plots and return paths) ---
+
+    def plot_distance_vs_state(self):
+        """Plots raw distance vs. debounced state for each chain."""
+        if self.df is None or self.df.empty:
+            logger.warning("Skipping distance vs state plot: Debounced data not available.")
+            return
+
+        sns.set_theme(style='ticks', context='notebook') # Use notebook context for potentially smaller plots
+        chains = sorted(self.df['chain'].unique())
+        n_chains = len(chains)
+        if n_chains == 0: return
+
+        # Create palettes
+        pastel_palette = sns.color_palette("pastel", n_colors=n_chains)
+        bright_palette = sns.color_palette("bright", n_colors=n_chains)
+        chain_color_map_pastel = {ch: col for ch, col in zip(chains, pastel_palette)}
+        chain_color_map_bright = {ch: col for ch, col in zip(chains, bright_palette)}
+
+        fig, axes = plt.subplots(n_chains, 1, figsize=(12, 2.5 * n_chains), sharex=True)
+        if n_chains == 1: axes = [axes] # Ensure axes is always iterable
+
+        # Find global min/max for consistent y-scale (optional, but good practice)
+        y_min = self.df['distance'].min() * 0.9
+        y_max = self.df['distance'].max() * 1.1
+        if np.isnan(y_min): y_min = 0
+        if np.isnan(y_max): y_max = self.distance_threshold * 2 # Default if NaN
+
+        # Reference heights for state indicators (use calculated/default refs)
+        state_y = {CLOSED_STATE: self.closed_ref_dist, OPEN_STATE: self.open_ref_dist}
+
+        for i, ch in enumerate(chains):
+            ax = axes[i]
+            sub = self.df.query("chain == @ch").sort_values('time_ns') # Ensure sorted by time
+
+            if sub.empty:
+                 ax.text(0.5, 0.5, f"No data for Chain {ch}", ha='center', va='center', transform=ax.transAxes)
+                 continue
+
+            # Plot distance trace with pastel color
+            ax.plot(sub['time_ns'], sub['distance'],
+                    color=chain_color_map_pastel[ch], alpha=0.8, linewidth=1.0) # Thinner line
+
+            # Plot debounced state bars using event data for efficiency
+            chain_events = self.events_df[self.events_df['chain'] == ch]
+            for _, event in chain_events.iterrows():
+                y = state_y[event['state']]
+                # Use event start/end times
+                ax.plot([event['start_ns'], event['end_ns']], [y, y], lw=5, # Slightly thinner bars
+                        color=chain_color_map_bright[ch], solid_capstyle='butt',
+                        label='_nolegend_') # Avoid legend entries for every bar
+
+            # Add threshold line
+            ax.axhline(self.distance_threshold, ls=':', color='black', alpha=0.6, linewidth=1.0)
+
+            # Set consistent y-scale and label
+            ax.set_ylim(y_min, y_max)
+            ax.set_ylabel(f"Chain {ch} (Å)")
+            ax.grid(False) # Turn off grid
+
+            # Remove top/right spines
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+
+        # Finalize plot
+        axes[-1].set_xlabel('Time (ns)')
+        fig.suptitle('DW-Gate Distance vs. Debounced State', fontsize=14)
+
+        # Add legend manually below the plot
         from matplotlib.lines import Line2D
         legend_elements = [
-            Line2D([0], [0], color='gray', lw=0.8, alpha=0.6, label='Actual Distance'),
-            Line2D([0], [0], color=state_colors[CLOSED_STATE], lw=3, label='Idealized Closed'),
-            Line2D([0], [0], color=state_colors[OPEN_STATE], lw=3, label='Idealized Open'),
-            Line2D([0], [0], color='grey', linestyle=':', lw=1.0, label=f'Threshold ({DISTANCE_THRESHOLD}Å)')
+            Line2D([0], [0], marker='o', color='w', label='Mean', markerfacecolor='red', markersize=8, markeredgecolor='white'),
+            Line2D([0], [0], color='black', lw=1.5, label='Median'),
+            # Maybe add patch for violin?
+            # Patch(facecolor='grey', edgecolor='black', alpha=0.6, label='Distribution (Violin)')
         ]
-        fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.1, 0.95), fontsize='small')
+        fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02), ncol=2, frameon=False)
+
+        plt.suptitle("DW-Gate Event Duration Distributions", fontsize=16, fontweight='bold')
+        plt.tight_layout(rect=[0, 0.05, 1, 0.95]) # Adjust layout for suptitle and legend
 
         # Save plot
-        plot_filename = "dw_distance_state_overlay.png"
-        save_plot(fig, os.path.join(output_dir, plot_filename))
+        plot_filename = "dw_gate_distance_vs_state.png"
+        plot_path = os.path.join(self.output_dir, plot_filename)
+        save_plot(fig, plot_path)
+        self.plot_paths['distance_vs_state'] = os.path.join("dw_gate_analysis", plot_filename) # Relative path
 
-    except Exception as e:
-        logger.error(f"Failed to generate distance vs state plot: {e}", exc_info=True)
 
-# --- Main Analysis Function ---
+    def plot_open_probability(self):
+        """Plots open-state probability per chain."""
+        if 'probability_df' not in self.stats_results.get('raw_stats', {}):
+            logger.warning("Skipping open probability plot: Probability data not available.")
+            return
+
+        prob_df = self.stats_results['raw_stats']['probability_df']
+        open_prob_df = prob_df[prob_df['state'] == OPEN_STATE].sort_values('chain')
+        if open_prob_df.empty:
+             logger.warning("Skipping open probability plot: No open state data found.")
+             return
+
+        sns.set_theme(style='ticks', context='notebook')
+        plt.figure(figsize=(max(6, len(open_prob_df)*1.5), 5)) # Adjust width based on num chains
+        ax = sns.barplot(data=open_prob_df, x='chain', y='probability', palette='viridis') # Use a different palette?
+
+        # Add probability values above bars
+        for i, p in enumerate(open_prob_df['probability']):
+            plt.text(i, p + 0.02, f'{p:.3f}', ha='center', fontsize=10, fontweight='bold')
+
+        plt.ylim(0, 1.1)
+        plt.title('DW-Gate Open State Probability per Chain')
+        plt.xlabel('Chain')
+        plt.ylabel('Probability')
+        ax.grid(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        plt.tight_layout()
+
+        # Save plot
+        plot_filename = "dw_gate_open_probability.png"
+        plot_path = os.path.join(self.output_dir, plot_filename)
+        save_plot(plt.gcf(), plot_path)
+        self.plot_paths['open_probability'] = os.path.join("dw_gate_analysis", plot_filename) # Relative path
+
+
+    def plot_state_heatmap(self):
+        """Plots DW-Gate state transitions as a heatmap (Closed=Blue, Open=LightBlue)."""
+        if self.df is None or self.df.empty:
+            logger.warning("Skipping state heatmap plot: Debounced data not available.")
+            return
+
+        sns.set_theme(style='white', context='notebook') # White background often looks good for heatmaps
+
+        # Prepare data for heatmap: Pivot debounced data
+        df_pivot = None # Initialize df_pivot to None
+        time_extent = None # Initialize time_extent
+        try:
+            # Ensure correct columns and types before pivoting
+            # Using drop_duplicates might hide issues if times aren't unique per frame
+            heatmap_pivot = self.df[['time_ns', 'chain', 'state']].drop_duplicates()
+            if not heatmap_pivot.empty:
+                df_pivot = heatmap_pivot.pivot(index="time_ns", columns="chain", values="state")
+            else:
+                logger.warning("Heatmap source data (time_ns) is empty after drop_duplicates.")
+
+        except Exception as e:
+            logger.warning(f"Failed to pivot data for heatmap using time_ns: {e}. Check for duplicate time/chain entries. Trying frame index.")
+            # Fallback: maybe use raw data or skip? Let's try to proceed cautiously.
+            # Might need resampling if time points aren't perfectly aligned across chains.
+            # For now, attempt pivot on frame index as fallback.
+            try:
+                 logger.warning("Retrying heatmap pivot using frame index.")
+                 heatmap_pivot = self.df[['frame', 'chain', 'state']].drop_duplicates()
+                 if not heatmap_pivot.empty:
+                     df_pivot = heatmap_pivot.pivot(index="frame", columns="chain", values="state")
+                     # We'll need to map frame index back to time for the x-axis label later
+                     frame_to_time_map = self.df[['frame', 'time_ns']].drop_duplicates().set_index('frame')['time_ns']
+                     if not frame_to_time_map.empty:
+                          time_extent = [frame_to_time_map.min(), frame_to_time_map.max()]
+                     else:
+                          logger.warning("Could not create frame_to_time_map for heatmap extent.")
+                 else:
+                      logger.warning("Heatmap source data (frame) is empty after drop_duplicates.")
+
+            except Exception as e2:
+                 logger.error(f"Fallback pivot using frame index also failed: {e2}. Skipping heatmap.")
+                 # df_pivot remains None in this case, handled below
+
+        # Check if pivoting failed or resulted in an empty DataFrame
+        if df_pivot is None or df_pivot.empty:
+            logger.warning("Skipping state heatmap: Pivoted data is None or empty after pivot attempts.")
+            return
+
+        # Map states to numeric values (Closed=0, Open=1)
+        state_map = {CLOSED_STATE: 0, OPEN_STATE: 1}
+        df_numeric = df_pivot.replace(state_map).fillna(-1) # Use -1 for missing data/gaps
+
+        # Create a custom colormap: Missing=Gray, Closed=DarkBlue, Open=LightBlue
+        cmap = mcolors.ListedColormap(['#cccccc', '#add8e6', '#00008b']) # Gray, LightBlue, DarkBlue
+        bounds = [-1.5, -0.5, 0.5, 1.5] # Define boundaries for the colors
+        norm = mcolors.BoundaryNorm(bounds, cmap.N)
+
+        # Create figure
+        plt.figure(figsize=(12, max(3, 0.5 * len(df_numeric.columns)))) # Adjust height based on chains
+        ax = plt.gca()
+
+        # Determine extent (time or frame)
+        # Check if time_extent was successfully assigned (i.e., frame-based pivot was used)
+        if time_extent is not None:
+             extent = [time_extent[0], time_extent[1], -0.5, len(df_numeric.columns)-0.5]
+             xlabel = 'Time (ns) [from frame index]' # Clarify label
+        elif df_pivot is not None: # Check df_pivot exists before using its index
+             # Use original time_ns extent if first pivot worked
+             extent = [df_pivot.index.min(), df_pivot.index.max(), -0.5, len(df_numeric.columns)-0.5]
+             xlabel = 'Time (ns)'
+        else:
+            # Should not happen if the earlier check passed, but as a failsafe
+            logger.error("Cannot determine heatmap extent because df_pivot is None.")
+            return # Cannot proceed
+
+
+        # Plot the heatmap
+        im = ax.imshow(df_numeric.T, aspect='auto', cmap=cmap, norm=norm, interpolation='nearest',
+                       extent=extent)
+
+        # Set labels and title
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel('Chain')
+        ax.set_title('DW Gate State Heatmap')
+
+        # Set y-ticks to chain labels (use sorted order from columns)
+        ax.set_yticks(np.arange(len(df_numeric.columns)))
+        ax.set_yticklabels(sorted(df_numeric.columns))
+
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax, ticks=[-1, 0, 1], orientation='vertical', fraction=0.05, pad=0.04)
+        cbar.ax.set_yticklabels(['Missing', 'Open', 'Closed'], fontsize='small')
+
+        # Remove gridlines
+        ax.grid(False)
+
+        plt.tight_layout()
+
+        # Save plot
+        plot_filename = "dw_gate_state_heatmap.png"
+        plot_path = os.path.join(self.output_dir, plot_filename)
+        save_plot(plt.gcf(), plot_path)
+        self.plot_paths['state_heatmap'] = os.path.join("dw_gate_analysis", plot_filename) # Relative path
+
+
+    def plot_duration_distributions(self):
+        """
+        Plots distributions of event durations using violin plots overlaid with
+        box plots and swarm plots for individual events. Uses linear y-scale.
+        """
+        if self.events_df is None or self.events_df.empty:
+            logger.warning("Skipping duration distribution plot: Events data not available.")
+            return
+
+        sns.set_theme(style='ticks', context='notebook')
+
+        # Create figure with two subplots (Open, Closed) side-by-side
+        fig, axes = plt.subplots(1, 2, figsize=(16, 7), sharey=False) # Don't share Y axis initially
+
+        # Filter events by state
+        open_events = self.events_df.query("state == @OPEN_STATE")
+        closed_events = self.events_df.query("state == @CLOSED_STATE")
+
+        # Get sorted chains and palettes
+        chains = sorted(self.events_df.chain.unique())
+        n_chains = len(chains)
+        if n_chains == 0: return
+
+        pastel_palette = sns.color_palette("pastel", n_chains)
+        bright_palette = sns.color_palette("bright", n_chains)
+        chain_color_map_pastel = {ch: col for ch, col in zip(chains, pastel_palette)}
+        chain_color_map_bright = {ch: col for ch, col in zip(chains, bright_palette)}
+
+        # Helper function to plot a single panel (modified from original)
+        def plot_panel(ax, data, chains, palette_violin, palette_points, chain_map_bright, title):
+            if data.empty:
+                ax.text(0.5, 0.5, f"No {title.split()[0]} Events", ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(title, fontsize=14, fontweight='bold')
+                ax.set_xlabel("Chain", fontsize=12)
+                return # Skip plotting if no data for this state
+
+            # 1. Violin Plot
+            sns.violinplot(
+                x="chain", y="duration_ns", data=data, ax=ax, order=chains,
+                palette=palette_violin, inner=None, alpha=0.6, # More transparent
+                bw_method=0.3, cut=0, scale="width", linewidth=1 # Thinner edge
+            )
+
+            # 2. Box Plot (without fliers, customize appearance)
+            sns.boxplot(
+                x="chain", y="duration_ns", data=data, ax=ax, order=chains,
+                width=0.3, color="white", showfliers=False,
+                medianprops={"color": "black", "linewidth": 1.5}, # Black median
+                boxprops={"facecolor": (0,0,0,0), "edgecolor": "black", "linewidth":1.0}, # Transparent box, thin edge
+                whiskerprops={"color": "black", "linewidth": 1.0},
+                capprops={"color": "black", "linewidth": 1.0},
+                showmeans=True,
+                meanprops={"marker":"o", "markerfacecolor":"red", "markeredgecolor":"white", "markersize":7, "zorder":10} # Red mean dot
+            )
+
+            # 3. Swarm Plot (use bright palette mapped per chain)
+            # Map chain colors for swarmplot explicitly
+            swarm_palette = [chain_map_bright.get(ch, "grey") for ch in chains]
+
+            sns.swarmplot(
+                x="chain", y="duration_ns", data=data, ax=ax, order=chains,
+                palette=swarm_palette, # Use the mapped bright colors
+                size=5, # Smaller points
+                edgecolor="black", linewidth=0.5, # Thin black edge
+                alpha=0.8, zorder=5 # Ensure points are visible
+            )
+
+            ax.set_title(title, fontsize=14, fontweight='bold')
+            ax.grid(True, axis='y', linestyle=':', alpha=0.7) # Lighter grid
+            ax.set_yscale('linear') # Ensure linear scale
+
+            # Adjust y-limit to data range + margin
+            if not data.empty:
+                 data_max = data['duration_ns'].max() * 1.1
+                 ax.set_ylim(bottom=0, top=max(data_max, ax.get_ylim()[1]*0.1)) # Ensure some space if max is low
+            else:
+                 ax.set_ylim(bottom=0)
+
+
+            # Add n=<count> text below x-axis ticks
+            for i, chain in enumerate(chains):
+                n_events = len(data[data['chain'] == chain])
+                if n_events > 0:
+                    ax.text(i, ax.get_ylim()[0] - (ax.get_ylim()[1]-ax.get_ylim()[0])*0.05, # Position below axis
+                            f"n={n_events}", ha='center', va='top', fontsize=9)
+
+
+        # Plot both panels
+        plot_panel(axes[0], open_events, chains, pastel_palette, bright_palette, chain_color_map_bright, "Open State Durations")
+        plot_panel(axes[1], closed_events, chains, pastel_palette, bright_palette, chain_color_map_bright, "Closed State Durations")
+
+        # Format axes
+        axes[0].set_ylabel("Duration (ns)", fontsize=12)
+        axes[1].set_ylabel("")  # No y-label on second plot
+        axes[0].set_xlabel("Chain", fontsize=12)
+        axes[1].set_xlabel("Chain", fontsize=12)
+
+        # Find common y-limit for both plots for better comparison
+        y_max_open = axes[0].get_ylim()[1] if not open_events.empty else 0
+        y_max_closed = axes[1].get_ylim()[1] if not closed_events.empty else 0
+        common_y_max = max(y_max_open, y_max_closed) * 1.05 # Add 5% margin
+
+        if common_y_max > 0: # Avoid setting limits if no data at all
+             axes[0].set_ylim(0, common_y_max)
+             axes[1].set_ylim(0, common_y_max)
+
+
+        # Add legend
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w', label='Mean', markerfacecolor='red', markersize=8, markeredgecolor='white'),
+            Line2D([0], [0], color='black', lw=1.5, label='Median'),
+            # Maybe add patch for violin?
+            # Patch(facecolor='grey', edgecolor='black', alpha=0.6, label='Distribution (Violin)')
+        ]
+        fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02), ncol=2, frameon=False)
+
+        plt.suptitle("DW-Gate Event Duration Distributions", fontsize=16, fontweight='bold')
+        plt.tight_layout(rect=[0, 0.05, 1, 0.95]) # Adjust layout for suptitle and legend
+
+        # Save plot
+        plot_filename = "dw_gate_duration_distributions.png"
+        plot_path = os.path.join(self.output_dir, plot_filename)
+        save_plot(fig, plot_path)
+        self.plot_paths['duration_distributions'] = os.path.join("dw_gate_analysis", plot_filename) # Relative path
+
+
+    def run_analysis(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        """
+        Executes the full DW-gate analysis pipeline.
+
+        Returns:
+            Tuple[Dict[str, Any], Dict[str, str]]:
+                - A dictionary containing the statistical results (HTML tables, raw data).
+                - A dictionary mapping plot keys to their relative paths.
+        """
+        logger.info("--- Starting DW-Gate Analysis ---")
+        # Ensure output directory exists
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        # Steps:
+        self.collect_distances()    # Also calls calculate_reference_distances if auto_detect_refs is True
+        self.apply_debouncing()
+        self.build_events()         # Also calls verify/fix coverage and saves events.csv
+        self.run_statistical_analysis() # Calculates stats, stores DFs/Dicts
+
+        # Generate remaining plots:
+        self.plot_distance_vs_state()
+        self.plot_open_probability()
+        self.plot_state_heatmap()
+        self.plot_duration_distributions()
+
+        logger.info("--- DW-Gate Analysis Finished ---")
+
+        # Return the collected statistics and plot paths
+        return self.stats_results, self.plot_paths
+
+
+# --- Main Entry Point Function (Called by PoreAnalysis main script) ---
+
 def analyse_dw_gates(
     run_dir: str,
     psf_file: str,
     dcd_file: str,
-    time_points: np.ndarray,
-    stride: int = 1,
+    results: Dict[str, Any] # Existing results dict from main workflow
 ) -> Dict[str, Any]:
     """
-    Analyzes the DW-gate hydrogen bond distance and state over time for each chain.
+    Main function called by the analysis pipeline to perform DW-gate analysis.
 
-    Calculates:
-    - Per-frame distance between Asp/Glu (OD1/OD2) and Trp (NE1).
-    - Per-frame state ("open" or "closed") based on a distance threshold.
-    - Per-chain closed fraction and mean distance.
-    - Per-chain mean closed state dwell time.
-    - Global closed fraction.
-
-    Saves timeseries data to a subdirectory and plots directly to the run directory.
+    1. Loads Universe.
+    2. Identifies filter and gate residues.
+    3. Initializes and runs the DWGateAnalysis class.
+    4. Returns statistics and plot paths for reporting.
 
     Args:
         run_dir (str): Path to the simulation run directory.
         psf_file (str): Path to the topology (PSF) file.
         dcd_file (str): Path to the trajectory (DCD) file.
-        time_points (np.ndarray): Array of time points (in ns) for the full trajectory.
-        stride (int): Analysis stride. Process every nth frame.
+        results (Dict[str, Any]): Dictionary holding results from previous steps
+                                  (e.g., time_points).
 
     Returns:
-        Dict[str, Any]: Dictionary containing calculated statistics, including
-                        'DWhbond_closed_global', 'DWhbond_closed_per_subunit',
-                        and potentially others like 'Mean_Closed_Dwell_ms_A'.
-                        Returns an empty dictionary on critical failure.
+        Dict[str, Any]: Dictionary containing DW-gate results, including:
+                        'dw_gate_stats': Dictionary of statistical results (HTML tables).
+                        'dw_gate_plots': Dictionary mapping plot keys to relative paths.
+                        'Error': String message if analysis failed critically.
     """
-    logger.info(f"--- Starting DW-Gate Analysis (Stride: {stride}) ---")
-    # Define output directory for CSV (plots go directly to run_dir)
+    logger.info("--- Preparing for DW-Gate Analysis ---")
+    dw_results = {} # Initialize dict for DW gate specific results
+
+    # Define output subdirectory for this module
     output_dir = os.path.join(run_dir, "dw_gate_analysis")
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- Load Universe --- 
+    # --- Load Universe ---
     try:
         logger.debug(f"Loading Topology: {psf_file}, Trajectory: {dcd_file}")
+        # Check if universe is already loaded in results? Assume not for now.
         u = mda.Universe(psf_file, dcd_file)
-        n_frames_total = len(u.trajectory)
-        if n_frames_total == 0:
+        n_frames = len(u.trajectory)
+        if n_frames == 0:
             raise ValueError("Trajectory contains 0 frames.")
-        # Estimate dt from full time_points array if possible
-        if len(time_points) == n_frames_total and n_frames_total > 1:
-             dt_ns = time_points[1] - time_points[0]
-             logger.info(f"Universe loaded: {n_frames_total} frames. Estimated dt={dt_ns:.6f} ns from time_points.")
-        else:
-            dt_ps = u.trajectory.dt
-            dt_ns = dt_ps / 1000.0
-            logger.warning(f"Mismatch between time_points length ({len(time_points)}) and trajectory frames ({n_frames_total}). Using trajectory dt={dt_ps} ps ({dt_ns:.6f} ns). Time axis might be inaccurate.")
-            # Recalculate time_points if mismatched (use original length for safety)
-            time_points = np.arange(n_frames_total) * dt_ns
-
-        n_frames_analyzed = len(range(0, n_frames_total, stride))
-        logger.info(f"Analyzing {n_frames_analyzed} frames (stride={stride}).")
+        logger.info(f"Universe loaded with {n_frames} frames for DW-gate analysis.")
 
     except FileNotFoundError as e:
          logger.error(f"Input file not found for DW Gate analysis: {e}")
-         return {'Error': 'Input file not found'}
+         dw_results['Error'] = f'Input file not found: {e}'
+         return dw_results # Return immediately on critical failure
     except Exception as e:
         logger.error(f"Failed to load Universe for DW Gate analysis: {e}", exc_info=True)
-        return {'Error': f'Universe load failed: {e}'}
+        dw_results['Error'] = f'Universe load failed: {e}'
+        return dw_results # Return immediately
 
-    # --- Identify Filter & Gate Residues --- 
+    # --- Identify Filter & Gate Residues (Using existing functions) ---
     try:
+        # 1. Find Filter Residues (needed by gate identification)
+        # Assuming find_filter_residues takes Universe and logger
         filter_res_map = find_filter_residues(u, logger)
         if not filter_res_map:
             raise ValueError("find_filter_residues returned empty or None.")
-    except Exception as e:
-        logger.error(f"Failed to find filter residues for DW Gate analysis: {e}", exc_info=True)
-        return {'Error': f'Filter residue ID failed: {e}'}
+        logger.info(f"Identified selectivity filter residues for {len(filter_res_map)} chains.")
 
-    valid_gates: Dict[str, GateResidues] = {}
-    gate_atom_indices: Dict[str, Dict[str, int]] = defaultdict(dict)
-    chain_failures = 0
-    chain_ids = sorted(filter_res_map.keys())
-
-    for segid in chain_ids:
-        try:
-            gate = find_gate_residues_for_chain(u, segid, filter_res_map)
-            valid_gates[segid] = gate
-
-            asp_atoms = gate.asp_glu_res.atoms.select_atoms("name OD1 OD2")
-            trp_atoms = gate.trp_res.atoms.select_atoms("name NE1")
-
-            if len(asp_atoms.select_atoms("name OD1")) == 1:
-                gate_atom_indices[segid]['asp_od1'] = asp_atoms.select_atoms("name OD1").indices[0]
-            else: raise ValueError("Could not find exactly one OD1 atom")
-            if len(asp_atoms.select_atoms("name OD2")) == 1:
-                gate_atom_indices[segid]['asp_od2'] = asp_atoms.select_atoms("name OD2").indices[0]
-            else: raise ValueError("Could not find exactly one OD2 atom")
-            if len(trp_atoms) == 1:
-                gate_atom_indices[segid]['trp_ne1'] = trp_atoms.indices[0]
-            else: raise ValueError("Could not find exactly one NE1 atom")
-
-            logger.debug(f"Stored DW gate atom indices for {segid}")
-
-        except ValueError as e:
-            logger.warning(f"Skipping chain {segid} due to DW gate residue identification error: {e}")
-            chain_failures += 1
-
-    if chain_failures == len(chain_ids):
-        logger.error("Failed to identify valid DW gate residues for ANY chain. Aborting DW Gate analysis.")
-        return {'Error': 'DW Gate residue ID failed for all chains'}
-    if chain_failures > 0:
-        logger.warning(f"DW Gate analysis proceeding with {len(valid_gates)} chains.")
-
-    valid_chain_ids = sorted(valid_gates.keys())
-
-    # --- Define consistent color mapping for plots ---
-    sns_pastel = sns.color_palette("pastel", n_colors=max(4, len(valid_chain_ids)))
-    chain_color_map = {chain_id[-1]: color for chain_id, color in zip(valid_chain_ids, sns_pastel)}
-
-    # --- Process Trajectory --- 
-    timeseries_data = []
-    frame_indices_analyzed = np.arange(0, n_frames_total, stride)
-    time_points_analyzed = time_points[frame_indices_analyzed]
-
-    logger.info("Calculating DW distances and states...")
-    for i, ts in enumerate(tqdm(u.trajectory[::stride], total=n_frames_analyzed, desc="DW Gate Analysis")):
-        frame = frame_indices_analyzed[i]
-        time_ns = time_points_analyzed[i]
-        positions = ts.positions
-
-        for chain_id in valid_chain_ids:
+        # 2. Find Gate Residues for each chain using the filter map
+        valid_gates: Dict[str, GateResidues] = {}
+        chain_ids = sorted(filter_res_map.keys())
+        failed_chains = []
+        for segid in chain_ids:
             try:
-                idx = gate_atom_indices[chain_id]
-                pos_od1 = positions[idx['asp_od1']]
-                pos_od2 = positions[idx['asp_od2']]
-                pos_ne1 = positions[idx['trp_ne1']]
-
-                dist1 = np.linalg.norm(pos_od1 - pos_ne1)
-                dist2 = np.linalg.norm(pos_od2 - pos_ne1)
-                dw_distance = min(dist1, dist2)
-
-                state = CLOSED_STATE if dw_distance <= DISTANCE_THRESHOLD else OPEN_STATE
-
-                timeseries_data.append({
-                    "frame": frame,
-                    "time_ns": time_ns,
-                    "chain": chain_id[-1], # Use A, B, C, D for simplicity
-                    "distance": dw_distance,
-                    "state": state
-                })
-            except KeyError as e:
-                 logger.warning(f"Frame {frame}: Missing atom index for chain {chain_id}, skipping distance calc. Error: {e}")
-                 continue
-            except Exception as e:
-                 logger.warning(f"Frame {frame}: Error calculating distance for chain {chain_id}: {e}", exc_info=False)
-                 continue
-
-    if not timeseries_data:
-        logger.error("No DW Gate timeseries data was generated. Aborting statistics calculation.")
-        return {'Error': 'No timeseries data generated'}
-
-    # --- Save Timeseries Data (to subdirectory) --- 
-    df_timeseries = pd.DataFrame(timeseries_data)
-    csv_path = os.path.join(output_dir, "dw_gate_timeseries.csv")
-    try:
-        df_timeseries.to_csv(csv_path, index=False, float_format="%.3f")
-        logger.info(f"Saved DW Gate timeseries data to {csv_path}")
-    except Exception as e:
-        logger.error(f"Failed to save DW Gate timeseries CSV: {e}")
-        # Continue with analysis even if CSV save fails?
-
-    # --- Calculate Statistics --- 
-    raw_stats: Dict[str, Any] = {}
-    per_subunit_fractions = {}
-    all_closed_fractions = []
-    open_durations_by_chain = defaultdict(list) # New dict for per-chain data
-    closed_durations_by_chain = defaultdict(list) # New dict for per-chain data
-    event_summary_data = [] # List to hold data for the event summary CSV
-    all_events_data = [] # New list to hold data for ALL individual events
-
-    logger.info("Calculating DW Gate summary statistics and individual events...")
-    for chain_id_full in valid_chain_ids:
-        chain_char = chain_id_full[-1]
-        df_chain = df_timeseries[df_timeseries["chain"] == chain_char]
-
-        if df_chain.empty:
-            logger.warning(f"No data found for chain {chain_char} after processing.")
-            raw_stats[f'Mean_DW_Distance_{chain_char}'] = np.nan
-            per_subunit_fractions[chain_char] = np.nan
-            raw_stats[f'DW_OpenEvents_{chain_char}'] = np.nan
-            raw_stats[f'DW_ClosedEvents_{chain_char}'] = np.nan
-            raw_stats[f'DW_MeanOpenTime_ns_{chain_char}'] = np.nan
-            raw_stats[f'DW_StdOpenTime_ns_{chain_char}'] = np.nan
-            raw_stats[f'DW_MeanClosedTime_ns_{chain_char}'] = np.nan
-            raw_stats[f'DW_StdClosedTime_ns_{chain_char}'] = np.nan
-            continue
-
-        raw_stats[f'Mean_DW_Distance_{chain_char}'] = float(df_chain["distance"].mean())
-
-        closed_count = (df_chain["state"] == CLOSED_STATE).sum()
-        total_count = len(df_chain)
-        closed_fraction = closed_count / total_count if total_count > 0 else 0.0
-        per_subunit_fractions[chain_char] = float(closed_fraction)
-        all_closed_fractions.append(closed_fraction)
-
-        # --- Event Duration Analysis (Using Tolerance) ---
-        logger.debug(f"Analyzing event durations for chain {chain_char} with tolerance {DW_GATE_TOLERANCE_FRAMES} frames...")
-        open_durations_frames = []
-        closed_durations_frames = []
-        current_state = None
-        current_duration = 0
-        current_start_frame = None
-        current_start_time_ns = None
-        prev_frame = None
-        prev_time_ns = None
-
-        time_per_frame_ns = stride * dt_ns # Calculate once per chain
-
-        for row in df_chain.itertuples(): # Iterate over rows to get frame/time info
-            frame = row.frame
-            time_ns = row.time_ns
-            state = row.state
-
-            if state == current_state:
-                current_duration += 1
-            else:
-                # End of a block, check if it met tolerance and record if so
-                if current_state is not None and current_duration >= DW_GATE_TOLERANCE_FRAMES:
-                    # Calculate end frame/time (use previous row's data)
-                    end_frame = prev_frame
-                    end_time_ns = prev_time_ns
-                    duration_frames = current_duration
-                    duration_ns = duration_frames * time_per_frame_ns
-
-                    # Append to the list for detailed event CSV
-                    all_events_data.append({
-                        'chain': chain_char,
-                        'state': current_state,
-                        'start_frame': current_start_frame,
-                        'end_frame': end_frame,
-                        'start_time_ns': current_start_time_ns,
-                        'end_time_ns': end_time_ns,
-                        'duration_frames': duration_frames,
-                        'duration_ns': duration_ns
-                    })
-
-                    # Append duration to lists for summary stats/plotting
-                    if current_state == OPEN_STATE:
-                        open_durations_frames.append(duration_frames)
-                    elif current_state == CLOSED_STATE:
-                        closed_durations_frames.append(duration_frames)
-
-                # Start of a new block
-                current_state = state
-                current_duration = 1
-                current_start_frame = frame
-                current_start_time_ns = time_ns
-
-            # Store current frame/time for the next iteration's 'end' calculation
-            prev_frame = frame
-            prev_time_ns = time_ns
-
-        # Check the last block at the end of the series for this chain
-        if current_state is not None and current_duration >= DW_GATE_TOLERANCE_FRAMES:
-            end_frame = prev_frame # The last frame processed
-            end_time_ns = prev_time_ns # The last time point processed
-            duration_frames = current_duration
-            duration_ns = duration_frames * time_per_frame_ns
-
-            all_events_data.append({
-                'chain': chain_char,
-                'state': current_state,
-                'start_frame': current_start_frame,
-                'end_frame': end_frame,
-                'start_time_ns': current_start_time_ns,
-                'end_time_ns': end_time_ns,
-                'duration_frames': duration_frames,
-                'duration_ns': duration_ns
-            })
-
-            if current_state == OPEN_STATE:
-                open_durations_frames.append(duration_frames)
-            elif current_state == CLOSED_STATE:
-                closed_durations_frames.append(duration_frames)
-
-        # --- Calculate summary statistics from the collected valid durations ---
-        n_open_events = len(open_durations_frames)
-        n_closed_events = len(closed_durations_frames)
-
-        # time_per_frame_ns = stride * dt_ns # Moved calculation up
-        open_durations_ns = None # Initialize as None
-        if open_durations_frames: # Check the list before converting
-            open_durations_ns_array = np.array(open_durations_frames) * time_per_frame_ns
-            mean_open_ns = float(np.mean(open_durations_ns_array))
-            std_open_ns = float(np.std(open_durations_ns_array))
-            open_durations_ns = open_durations_ns_array # Assign numpy array for extension
-        else:
-            mean_open_ns = 0.0
-            std_open_ns = 0.0
-            # open_durations_ns remains None
-
-        closed_durations_ns = None # Initialize as None
-        if closed_durations_frames: # Check the list before converting
-            closed_durations_ns_array = np.array(closed_durations_frames) * time_per_frame_ns
-            mean_closed_ns = float(np.mean(closed_durations_ns_array))
-            std_closed_ns = float(np.std(closed_durations_ns_array))
-            closed_durations_ns = closed_durations_ns_array # Assign numpy array for extension
-        else:
-            mean_closed_ns = 0.0
-            std_closed_ns = 0.0
-            # closed_durations_ns remains None
-
-        # Append chain durations to overall lists for histogram
-        # Check if the numpy arrays were created before extending
-        if open_durations_ns is not None:
-             open_durations_by_chain[chain_char].extend(open_durations_ns)
-        if closed_durations_ns is not None:
-             closed_durations_by_chain[chain_char].extend(closed_durations_ns)
-
-        # Store results in raw_stats (to be added to final_stats later)
-        # Keep these for compatibility or direct access if needed, but primary detailed
-        # event data will go to the CSV.
-        raw_stats[f'DW_OpenEvents_{chain_char}'] = n_open_events
-        raw_stats[f'DW_ClosedEvents_{chain_char}'] = n_closed_events
-        raw_stats[f'DW_MeanOpenTime_ns_{chain_char}'] = mean_open_ns
-        raw_stats[f'DW_StdOpenTime_ns_{chain_char}'] = std_open_ns
-        raw_stats[f'DW_MeanClosedTime_ns_{chain_char}'] = mean_closed_ns
-        raw_stats[f'DW_StdClosedTime_ns_{chain_char}'] = std_closed_ns
-
-        # Append structured data for the event summary CSV
-        event_summary_data.append({
-            'chain': chain_char,
-            'state': OPEN_STATE,
-            'event_count': n_open_events,
-            'mean_duration_ns': mean_open_ns,
-            'std_duration_ns': std_open_ns
-        })
-        event_summary_data.append({
-            'chain': chain_char,
-            'state': CLOSED_STATE,
-            'event_count': n_closed_events,
-            'mean_duration_ns': mean_closed_ns,
-            'std_duration_ns': std_closed_ns
-        })
-
-        logger.debug(f"Chain {chain_char}: Open Events={n_open_events}, Mean(ns)={mean_open_ns:.3f} +/- {std_open_ns:.3f}")
-        logger.debug(f"Chain {chain_char}: Closed Events={n_closed_events}, Mean(ns)={mean_closed_ns:.3f} +/- {std_closed_ns:.3f}")
-
-    # --- Save Event Summary Data --- 
-    if event_summary_data:
-        df_event_summary = pd.DataFrame(event_summary_data)
-        event_csv_path = os.path.join(output_dir, "dw_gate_event_summary.csv")
-        try:
-            df_event_summary.to_csv(event_csv_path, index=False, float_format="%.3f")
-            logger.info(f"Saved DW Gate event summary data to {event_csv_path}")
-        except Exception as e:
-            logger.error(f"Failed to save DW Gate event summary CSV: {e}")
-    else:
-        logger.warning("No event summary data generated to save.")
-
-    # --- Save All Individual Events Data --- 
-    if all_events_data:
-        df_all_events = pd.DataFrame(all_events_data)
-        # Sort by start time for better readability
-        df_all_events = df_all_events.sort_values(by='start_time_ns').reset_index(drop=True)
-        all_events_csv_path = os.path.join(output_dir, "dw_gate_events.csv")
-        try:
-            df_all_events.to_csv(all_events_csv_path, index=False, float_format="%.3f")
-            logger.info(f"Saved all individual DW Gate events data to {all_events_csv_path}")
-        except Exception as e:
-            logger.error(f"Failed to save all DW Gate events CSV: {e}")
-    else:
-        logger.warning("No individual event data generated to save.")
-
-    # --- Combine Final Stats (for return value) --- 
-    final_stats = {
-        'DWhbond_closed_per_subunit': per_subunit_fractions,
-        'DWhbond_closed_global': float(np.mean(all_closed_fractions)) if all_closed_fractions else np.nan
-    }
-    # Add the new event stats to the final dictionary
-    final_stats.update(raw_stats)
-    # Add tolerance value used
-    final_stats['DW_GATE_TOLERANCE_FRAMES'] = DW_GATE_TOLERANCE_FRAMES
-
-    # --- Generate Plots (Save directly to run_dir) --- 
-    logger.info("Generating DW Gate plots...")
-    # 1. Distance Timeseries (Stacked Layout)
-    try:
-        n_chains = len(valid_chain_ids)
-        if n_chains > 0:
-            # Create stacked subplots, sharing the x-axis
-            fig1, axes1 = plt.subplots(n_chains, 1, figsize=(10, 2 * n_chains), sharex=True, constrained_layout=True)
-            # If only one chain, axes1 might not be an array, handle this
-            if n_chains == 1:
-                axes1 = [axes1]
-
-            chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
-
-            for i, chain_char in enumerate(chain_chars_plot):
-                ax = axes1[i]
-                df_ch = df_timeseries[df_timeseries["chain"] == chain_char]
-                if not df_ch.empty:
-                     # Plot the distance data for the current chain
-                     ax.plot(df_ch["time_ns"], df_ch["distance"], label=f"Chain {chain_char}", lw=1, color=chain_color_map.get(chain_char, sns_pastel[i % len(sns_pastel)]))
-                     # Add the threshold line to each subplot
-                     ax.axhline(DISTANCE_THRESHOLD, color='grey', linestyle='--', lw=1.5)
-                     # Set y-axis label specific to the chain
-                     ax.set_ylabel(f"Chain {chain_char} Dist (Å)")
-                     # Set y-limits (optional: customize based on data range?)
-                     ax.set_ylim(bottom=0)
-                     ax.grid(True, axis='y', linestyle=':', alpha=0.7)
+                gate = find_gate_residues_for_chain(u, segid, filter_res_map)
+                if gate: # Ensure it's not None
+                    valid_gates[segid] = gate
                 else:
-                    ax.text(0.5, 0.5, f'No data for Chain {chain_char}', 
-                            horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+                     # Should not happen if find_gate_residues_for_chain raises error on fail
+                     logger.warning(f"find_gate_residues_for_chain returned None for segid {segid}")
+                     failed_chains.append(segid)
+            except ValueError as e:
+                logger.warning(f"Skipping chain {segid} due to DW gate residue identification error: {e}")
+                failed_chains.append(segid)
 
-                # Remove x-tick labels for all but the bottom plot
-                if i < n_chains - 1:
-                    ax.tick_params(labelbottom=False)
+        if not valid_gates:
+            logger.error("Failed to identify valid DW gate residues for ANY chain. Aborting DW Gate analysis.")
+            dw_results['Error'] = 'DW Gate residue ID failed for all chains'
+            return dw_results
+        if failed_chains:
+            logger.warning(f"DW Gate analysis proceeding with {len(valid_gates)} chains (failed: {failed_chains}).")
 
-            # Set common x-axis label on the bottom plot
-            axes1[-1].set_xlabel("Time (ns)")
-            # Set a main title for the figure
-            fig1.suptitle("DW Gate Distance Over Time (Stacked)", y=1.0) # Adjust y if needed
-            # Add threshold label once, maybe to the last axis or in the title?
-            # Let's add it near the line on the last plot for clarity
-            axes1[-1].text(time_points_analyzed.max()*0.9, DISTANCE_THRESHOLD + 0.2, f'{DISTANCE_THRESHOLD}Å Threshold', 
-                           color='grey', va='bottom', ha='right', fontsize='small')
-            # No need for a legend now as chains are identified by axes
-            # fig1.legend(fontsize='small')
-            save_plot(fig1, os.path.join(output_dir, "dw_distance_timeseries.png"))
-        else:
-             logger.warning("Skipping distance timeseries plot: No valid chains found.")
     except Exception as e:
-         logger.error(f"Failed to generate stacked distance timeseries plot: {e}", exc_info=True)
+        logger.error(f"Failed during residue identification for DW Gate analysis: {e}", exc_info=True)
+        dw_results['Error'] = f'Residue identification failed: {e}'
+        return dw_results
 
-    # 1b. Idealized vs Actual Distance Plot (NEW)
-    plot_dw_distance_vs_state(
-        df_timeseries,
-        valid_chain_ids,
-        DISTANCE_THRESHOLD,
-        chain_color_map,
-        sns_pastel,
-        output_dir
-    )
-
-    # 2. State Heatmap
+    # --- Run the DWGateAnalysis Class ---
     try:
-        df_pivot = df_timeseries.pivot(index="time_ns", columns="chain", values="state")
-        state_map = {CLOSED_STATE: 1, OPEN_STATE: 0}
-        df_numeric = df_pivot.replace(state_map).fillna(-1)
-        if not df_numeric.empty:
-            fig2, ax2 = setup_plot(figsize=(10, 2.5))
-            cmap = mcolors.ListedColormap(['lightgrey', 'lightblue', 'darkblue'])
-            bounds = [-1.5, -0.5, 0.5, 1.5]
-            norm = mcolors.BoundaryNorm(bounds, cmap.N)
-            im = ax2.imshow(df_numeric.T, aspect='auto', cmap=cmap, norm=norm,
-                            interpolation='nearest', extent=[time_points_analyzed.min(), time_points_analyzed.max(), -0.5, len(valid_chain_ids)-0.5])
-            ax2.set_yticks(np.arange(len(valid_chain_ids)))
-            ax2.set_yticklabels(sorted([c[-1] for c in valid_chain_ids]))
-            ax2.set_xlabel("Time (ns)")
-            ax2.set_ylabel("Chain")
-            ax2.set_title("DW Gate State (Closed=Blue, Open=LightBlue)")
-            cbar = fig2.colorbar(im, ax=ax2, ticks=[-1, 0, 1], orientation='vertical', fraction=0.05, pad=0.04)
-            cbar.ax.set_yticklabels(['Missing', 'Open', 'Closed'], fontsize='small')
-            save_plot(fig2, os.path.join(output_dir, "dw_gate_state_heatmap.png"))
-        else:
-            logger.warning("Skipping DW Gate heatmap plot: Pivoted DataFrame is empty.")
-    except Exception as e:
-        logger.error(f"Failed to generate state heatmap plot: {e}", exc_info=True)
-
-    # 3. Closed Fraction Bar Chart
-    try:
-        chain_chars_plot = sorted([c[-1] for c in valid_chain_ids])
-        fractions = [per_subunit_fractions.get(ch, np.nan) for ch in chain_chars_plot]
-        if any(not np.isnan(f) for f in fractions):
-             fig3, ax3 = setup_plot(figsize=(5, 4))
-             ax3.bar(chain_chars_plot, fractions, color='skyblue')
-             global_avg = final_stats.get('DWhbond_closed_global', np.nan)
-             if not np.isnan(global_avg):
-                  ax3.axhline(global_avg, color='red', linestyle='--', lw=1, label=f"Global Avg ({global_avg:.2f})")
-             ax3.set_xlabel("Chain")
-             ax3.set_ylabel("Fraction of Time Closed")
-             ax3.set_title("DW Gate Closed Fraction")
-             ax3.set_ylim(0, 1)
-             ax3.legend()
-             save_plot(fig3, os.path.join(output_dir, "dw_gate_closed_fraction_bar.png"))
-        else:
-             logger.warning("Skipping closed fraction bar plot: No valid fraction data.")
-    except Exception as e:
-        logger.error(f"Failed to generate closed fraction bar plot: {e}", exc_info=True)
-
-    # 4. Improved Event Duration Plot (NEW)
-    try:
-        plot_improved_duration_distribution(
-            open_durations_by_chain,
-            closed_durations_by_chain,
-            valid_chain_ids,
-            output_dir
+        analyzer = DWGateAnalysis(
+            universe=u,
+            gate_residues=valid_gates,
+            output_dir=output_dir
         )
-    except Exception as e:
-        logger.error(f"Failed to generate improved event duration plot: {e}", exc_info=True)
 
-    logger.info(f"--- DW-Gate Analysis Finished ---")
-    return final_stats 
+        # Run the analysis pipeline within the class
+        stats_results, plot_paths = analyzer.run_analysis()
+
+        # Store results for reporting
+        dw_results['dw_gate_stats'] = stats_results
+        dw_results['dw_gate_plots'] = plot_paths
+        # Optionally add key dataframes to results if needed downstream (but prefer summary stats)
+        # dw_results['dw_gate_events_df'] = analyzer.events_df
+        logger.info("Successfully completed DW-Gate analysis.")
+
+    except Exception as e:
+        logger.error(f"An error occurred during DW-Gate analysis execution: {e}", exc_info=True)
+        dw_results['Error'] = f'DW-Gate analysis failed: {e}'
+        # Optionally include partial results if available
+        if 'analyzer' in locals():
+            dw_results['dw_gate_stats'] = getattr(analyzer, 'stats_results', {'Error': 'Analysis failed mid-run'})
+            dw_results['dw_gate_plots'] = getattr(analyzer, 'plot_paths', {})
+
+    return dw_results 

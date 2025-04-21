@@ -1,150 +1,163 @@
-<!-- DW Gate Analysis Tab -->
-{# Use run_summary to check if data exists, plots for plot images #}
-{% if run_summary.DWhbond_closed_global is defined %}
-<div class="section">
-    <h3>DW Gate Analysis</h3>
-    <p>Analysis of the DW Gate dynamics, focusing on hydrogen bonding between the identified Asp/Glu and Trp residues.</p>
+{# DW Gate Analysis Tab #}
 
-    <!-- Statistics Table -->
-    <h4>Key Statistics</h4>
-    <table class="stats-table">
-        <thead>
-            <tr>
-                <th>Metric</th>
-                <th>Value</th>
-                <th>Description</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td>Global Closed Fraction</td>
-                <td>{{ '%.3f' | format(run_summary.DWhbond_closed_global) if run_summary.DWhbond_closed_global is not none else 'N/A' }}</td>
-                <td>Fraction of simulation time where the DW gate (at least one subunit) is considered closed based on D/E-W H-bonding (≤ {{ DISTANCE_THRESHOLD }} Å).</td>
-            </tr>
-            {% if run_summary.DWhbond_closed_per_subunit %}
-            <tr>
-                <td>Closed Fraction per Subunit</td>
-                <td>
-                    {% for subunit, fraction in run_summary.DWhbond_closed_per_subunit.items() %}
-                        {{ subunit }}: {{ '%.3f' | format(fraction) if fraction is not none else 'N/A' }}{% if not loop.last %}<br>{% endif %}
-                    {% endfor %}
-                </td>
-                <td>Fraction of simulation time each subunit's DW gate is considered closed.</td>
-            </tr>
-            {% else %}
-            <tr>
-                <td>Closed Fraction per Subunit</td>
-                <td>Not Calculated</td>
-                <td>Per-subunit analysis likely encountered issues.</td>
-            </tr>
-            {% endif %}
-        </tbody>
-    </table>
+<h2>DW Gate Dynamics</h2>
 
-    <!-- Plots Section -->
-    <h4>Plots</h4>
-    {# --- Top Row: Distance Plots --- #}
-    <div class="two-column">
-        <!-- Stacked DW Distance Timeseries -->
-        <div class="column plot-container">
-            <h5>DW Gate Distance Over Time (Stacked)</h5> {# Updated Title #}
-            {% if plots.get('dw_distance_timeseries') %}
-                <img src="data:image/png;base64,{{ plots.dw_distance_timeseries }}" alt="DW Gate H-bond Distance Timeseries (Stacked)">
-                <p class="plot-description">Timeseries showing the minimum hydrogen bond distance (D/E-W) for each subunit in separate panels. The dashed line indicates the H-bond distance cutoff ({{ DISTANCE_THRESHOLD }} Å).</p>
-            {% else %}
-                <p><i>Plot not available (dw_distance_timeseries.png missing).</i></p>
-            {% endif %}
-        </div>
-
-        <!-- Idealized vs Actual DW Distance Timeseries (NEW) -->
-        <div class="column plot-container">
-            <h5>DW Gate Distance (Actual vs. Idealized State)</h5>
-            {% if plots.get('dw_distance_state_overlay') %}
-                <img src="data:image/png;base64,{{ plots.dw_distance_state_overlay }}" alt="DW Gate Distance Actual vs Idealized State">
-                <p class="plot-description">Comparison of the raw D/E-W distance (thin line) against the derived idealized state (thick horizontal lines: closed at threshold, open slightly above) for each subunit.</p>
-            {% else %}
-                <p><i>Plot not available (dw_distance_state_overlay.png missing).</i></p>
-            {% endif %}
-        </div>
-    </div>
-
-    {# --- Second Row: Heatmap --- #}
-    <div class="plot-container"> {# Heatmap now in its own full-width container #}
-        <h5>DW Gate State Heatmap</h5>
-        {% if plots.get('dw_gate_state_heatmap') %}
-            <img src="data:image/png;base64,{{ plots.dw_gate_state_heatmap }}" alt="DW Gate State Heatmap">
-            <p class="plot-description">Heatmap showing the state (open/closed) of the DW gate for each subunit over time. Closed states are typically indicated by one color (e.g., dark blue) and open states by another (e.g., light blue).</p>
-        {% else %}
-            <p><i>Plot not available (dw_gate_state_heatmap.png missing).</i></p>
-        {% endif %}
-    </div>
-
-    {# --- Third Row: Bar plot --- #}
-    <div class="plot-container">
-        <h5>DW Gate Closed Fraction</h5>
-        {% if plots.get('dw_gate_closed_fraction_bar') %}
-            <img src="data:image/png;base64,{{ plots.dw_gate_closed_fraction_bar }}" alt="DW Gate Closed Fraction Bar Plot">
-            <p class="plot-description">Bar plot showing the fraction of time each subunit's DW gate is closed, along with the global average closed fraction.</p>
-        {% else %}
-            <p><i>Plot not available (dw_gate_closed_fraction_bar.png missing).</i></p>
-        {% endif %}
-    </div>
-
-    {# New Event Duration Plot Below #}
-    <div class="plot-container">
-        <h5>DW Gate Event Duration Analysis</h5>
-        {% if plots.get('dw_duration_analysis') %}
-            <img src="data:image/png;base64,{{ plots.dw_duration_analysis }}" alt="DW Gate Event Duration Analysis Plot">
-            <p class="plot-description">Analysis of the duration of open and closed events for the DW gate in each subunit. Shows distribution histograms and cumulative distribution functions (CDFs) on a logarithmic time scale, with markers for mean and median durations.</p>
-        {% else %}
-            <p><i>Plot not available (dw_gate_duration_analysis.png missing).</i></p>
-        {% endif %}
-    </div>
-
-    <!-- Event Statistics Table -->
-    <h4>Event Statistics Summary</h4>
-    <p>Summary of open and closed event durations calculated using a tolerance of {{ run_summary.DW_GATE_TOLERANCE_FRAMES }} frames.</p>
-    <table class="stats-table">
-        <thead>
-            <tr>
-                <th>Chain</th>
-                <th>State</th>
-                <th>Event Count</th>
-                <th>Mean Duration (ns)</th>
-                <th>Std Dev Duration (ns)</th>
-            </tr>
-        </thead>
-        <tbody>
-            {# Iterate through the chains for which per-subunit data exists #}
-            {% if run_summary.DWhbond_closed_per_subunit %}
-                {% for chain_char in run_summary.DWhbond_closed_per_subunit.keys() | sort %}
-                    {# Row for Open State #}
-                    <tr>
-                        <td rowspan="2">{{ chain_char }}</td> {# Span row for chain ID #}
-                        <td>Open</td>
-                        <td>{{ run_summary.get('DW_OpenEvents_' + chain_char, 'N/A') }}</td>
-                        <td>{{ '%.2f' | format(run_summary.get('DW_MeanOpenTime_ns_' + chain_char, 0)) if run_summary.get('DW_MeanOpenTime_ns_' + chain_char) is not none else 'N/A' }}</td>
-                        <td>{{ '%.2f' | format(run_summary.get('DW_StdOpenTime_ns_' + chain_char, 0)) if run_summary.get('DW_StdOpenTime_ns_' + chain_char) is not none else 'N/A' }}</td>
-                    </tr>
-                    {# Row for Closed State #}
-                    <tr>
-                        <td>Closed</td>
-                        <td>{{ run_summary.get('DW_ClosedEvents_' + chain_char, 'N/A') }}</td>
-                        <td>{{ '%.2f' | format(run_summary.get('DW_MeanClosedTime_ns_' + chain_char, 0)) if run_summary.get('DW_MeanClosedTime_ns_' + chain_char) is not none else 'N/A' }}</td>
-                        <td>{{ '%.2f' | format(run_summary.get('DW_StdClosedTime_ns_' + chain_char, 0)) if run_summary.get('DW_StdClosedTime_ns_' + chain_char) is not none else 'N/A' }}</td>
-                    </tr>
-                {% endfor %}
-            {% else %}
-                <tr>
-                    <td colspan="5">Event statistics not available (per-subunit data missing).</td>
-                </tr>
-            {% endif %}
-        </tbody>
-    </table>
-
+<div class="info-box">
+    <h4>Analysis Overview</h4>
+    <p>This section analyzes the dynamics of the DW (Asp/Trp) gate located near the cytoplasmic entrance of the channel. It involves:</p>
+    <ul>
+        <li>Calculating the minimum distance between the Asp/Glu carboxylate oxygens (OD1/OD2 or OE1/OE2) and the Trp indole nitrogen (NE1) for each chain over time.</li>
+        <li>Identifying reference distances for OPEN and CLOSED states using Kernel Density Estimation (KDE) and KMeans clustering (unless disabled or failed, then defaults are used).</li>
+        {# Note: DEFAULT_CUTOFF might not be directly in run_summary, adjust if needed or fetch from config #}
+        <li>Assigning an initial OPEN/CLOSED state based on a distance threshold (Default: {{ run_summary.DEFAULT_CUTOFF | default(3.5) }} Å).</li>
+        <li>Applying Run-Length Encoding (RLE) debouncing to filter out short-lived state flickers (Tolerance: {{ run_summary.DW_Gate_ToleranceFrames | default('N/A') }} frames).</li>
+        <li>Building state events and calculating durations.</li>
+        <li>Performing statistical analysis on event durations and state probabilities.</li>
+    </ul>
 </div>
+
+{# 1. Distance Distribution Plot (KDE/Reference) #}
+<h3>Reference Distance Determination</h3>
+<p>The following plot shows the combined and per-chain distribution of DW gate distances used to determine the reference distances for the OPEN and CLOSED states via KDE and KMeans clustering.</p>
+<div class="plot-container">
+    {% if plots.dw_distance_distribution %}
+        <img src="data:image/png;base64,{{ plots.dw_distance_distribution }}" alt="DW Gate Distance Distribution">
+        <p><small>Plot: Combined and per-chain distance distributions with KDE fits, identified peaks, threshold (dotted grey), and final reference distances (solid red/green lines).</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate Distance Distribution plot (<code>dw_gate_distance_distribution.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
+</div>
+
+{# 2. Statistics Table (Summary) #}
+<h3>Event Summary Statistics</h3>
+<p>Summary statistics for the duration of detected OPEN and CLOSED events after RLE debouncing.</p>
+{# Assuming the analyse_dw_gates function populates run_summary with dw_gate_stats #}
+{% if run_summary.dw_gate_stats and run_summary.dw_gate_stats.summary_table_html %}
+    {{ run_summary.dw_gate_stats.summary_table_html | safe }}
 {% else %}
-<div class="section unavailable">
-    <p><i>DW Gate analysis not performed or data unavailable.</i></p>
+    <div class="warning-box">
+        <h4>Statistics Missing</h4>
+        <p>The summary statistics table could not be generated. Check logs for errors in the DW Gate module.</p>
+        {# Optionally display raw metrics from run_summary if available #}
+        {% if run_summary.DW_Global_Closed_Fraction is defined %}
+        <p><small>Raw Summary Metrics Found:</small></p>
+        <ul>
+          <li>Global Closed Fraction: {{ run_summary.DW_Global_Closed_Fraction | round(3) if run_summary.DW_Global_Closed_Fraction is not none else 'N/A' }}</li>
+          {# Add more raw stats here if desired #}
+        </ul>
+        {% endif %}
+    </div>
+{% endif %}
+
+{# 3. Probability Table/Info (Probability + Chi2) #}
+<h3>State Probabilities and Chi-squared Test</h3>
+<p>Overall probability of each chain being in the OPEN or CLOSED state, based on the total time spent in each state.</p>
+{% if run_summary.dw_gate_stats and run_summary.dw_gate_stats.probability_table_html %}
+    {{ run_summary.dw_gate_stats.probability_table_html | safe }}
+{% else %}
+    <div class="warning-box">
+        <h4>Statistics Missing</h4>
+        <p>The state probability table could not be generated.</p>
+    </div>
+{% endif %}
+
+<p>A Chi-squared test checks if the distribution of time spent in OPEN/CLOSED states is significantly different across the chains.</p>
+{% if run_summary.dw_gate_stats and run_summary.dw_gate_stats.chi2_results_html %}
+    {{ run_summary.dw_gate_stats.chi2_results_html | safe }}
+{% elif run_summary.DW_StateVsChain_Chi2_pvalue is defined %}
+    <p>Chi-squared Test (state vs chain) p-value: {{ "%.4g" | format(run_summary.DW_StateVsChain_Chi2_pvalue) if run_summary.DW_StateVsChain_Chi2_pvalue is not none else 'N/A' }}</p>
+{% else %}
+    <div class="warning-box">
+        <h4>Statistics Missing</h4>
+        <p>The Chi-squared test results could not be generated.</p>
+    </div>
+{% endif %}
+
+{# 4. Statistical Test Results (Kruskal + Mann-Whitney) #}
+<h3>Statistical Comparison of Open State Durations</h3>
+<p>Statistical tests comparing the distribution of <strong>OPEN state durations</strong> across the different chains.</p>
+
+<p><strong>Kruskal-Wallis Test:</strong> Checks for an overall significant difference in open durations among all chains.</p>
+{% if run_summary.dw_gate_stats and run_summary.dw_gate_stats.kruskal_results_html %}
+    {{ run_summary.dw_gate_stats.kruskal_results_html | safe }}
+{% elif run_summary.DW_OpenDurationVsChain_Kruskal_pvalue is defined %}
+     <p>Kruskal-Wallis Test (open durations vs chain) p-value: {{ "%.4g" | format(run_summary.DW_OpenDurationVsChain_Kruskal_pvalue) if run_summary.DW_OpenDurationVsChain_Kruskal_pvalue is not none else 'N/A' }}</p>
+{% else %}
+    <div class="warning-box">
+        <h4>Statistics Missing</h4>
+        <p>The Kruskal-Wallis test results could not be generated.</p>
+    </div>
+{% endif %}
+
+<p><strong>Pairwise Mann-Whitney U Tests:</strong> Compares open durations between each pair of chains (Bonferroni correction applied to p-values).</p>
+{% if run_summary.dw_gate_stats and run_summary.dw_gate_stats.mannwhitney_table_html %}
+    {{ run_summary.dw_gate_stats.mannwhitney_table_html | safe }}
+{% else %}
+    <div class="warning-box">
+        <h4>Statistics Missing</h4>
+        <p>The Mann-Whitney U test table could not be generated.</p>
+    </div>
+{% endif %}
+
+{# 5. Distance vs. State Plot #}
+<h3>Distance Traces and Debounced States</h3>
+<p>The plot below shows the raw DW gate distance for each chain over time (thin line) overlaid with the corresponding debounced state (thick bars positioned at reference OPEN/CLOSED distances).</p>
+<div class="plot-container">
+    {% if plots.dw_distance_vs_state %}
+        <img src="data:image/png;base64,{{ plots.dw_distance_vs_state }}" alt="DW Gate Distance vs State">
+        <p><small>Plot: Raw distance traces overlaid with debounced state indicators.</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate Distance vs. State plot (<code>dw_gate_distance_vs_state.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
 </div>
-{% endif %} 
+
+{# 6. Open Probability Plot #}
+<h3>Open State Probability</h3>
+<p>Bar chart visualizing the probability of each chain being in the OPEN state.</p>
+<div class="plot-container">
+    {% if plots.dw_open_probability %}
+        <img src="data:image/png;base64,{{ plots.dw_open_probability }}" alt="DW Gate Open Probability">
+        <p><small>Plot: Probability of each chain being in the open state.</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate Open Probability plot (<code>dw_gate_open_probability.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
+</div>
+
+{# 7. State Heatmap Plot #}
+<h3>State Heatmap</h3>
+<p>Heatmap showing the debounced state (Closed=Dark Blue, Open=Light Blue) for each chain over the course of the simulation.</p>
+<div class="plot-container">
+    {% if plots.dw_state_heatmap %}
+        <img src="data:image/png;base64,{{ plots.dw_state_heatmap }}" alt="DW Gate State Heatmap">
+        <p><small>Plot: Heatmap of debounced states over time.</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate State Heatmap plot (<code>dw_gate_state_heatmap.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
+</div>
+
+{# 8. Duration Distributions Plot #}
+<h3>Event Duration Distributions</h3>
+<p>Violin plots showing the distribution of OPEN and CLOSED state durations for each chain, overlaid with box plots (indicating median, quartiles) and swarm plots (showing individual event durations).</p>
+<div class="plot-container">
+    {% if plots.dw_duration_distributions %}
+        <img src="data:image/png;base64,{{ plots.dw_duration_distributions }}" alt="DW Gate Duration Distributions">
+        <p><small>Plot: Distributions of debounced event durations (Open and Closed states).</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate Duration Distributions plot (<code>dw_gate_duration_distributions.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
+</div>

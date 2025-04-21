@@ -10,6 +10,7 @@ setup(
         "matplotlib",
         "seaborn",
         "scipy",
+        "scikit-learn",
         "mdanalysis",
         "jinja2",
     ],
