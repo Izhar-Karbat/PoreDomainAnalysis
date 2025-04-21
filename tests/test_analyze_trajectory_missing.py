@@ -1,4 +1,5 @@
 import numpy as np
+from pathlib import Path
 from pore_analysis.modules.core_analysis.core import analyze_trajectory
 
 def test_analyze_trajectory_missing_files(tmp_path):
