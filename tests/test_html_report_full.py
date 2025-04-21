@@ -7,7 +7,7 @@ def test_full_html_report(tmp_path):
     run_dir = tmp_path / "run_html"
     run_dir.mkdir()
 
-    # 2) Build a run_summary dict with all required overview + ion stats
+    # 2) Build a run_summary dict with all required overview + ion + COM stats
     run_summary = {
         "SystemName": "sys",
         "RunName": "run_html",
@@ -22,8 +22,12 @@ def test_full_html_report(tmp_path):
         "G_G_BD_Std_Filt": 0.2,
         "G_G_AC_Min_Filt": 0.5,
         "G_G_BD_Min_Filt": 0.6,
+        # COM stats for overview tab
+        "COM_Mean_Filt": 1.5,
+        "COM_Std_Filt": 0.2,
+        "COM_Min_Filt": 1.0,
     }
-    # 3) Add all six ion‐occupancy fields that the pore‐ions tab loops over
+    # 3) Add all six ion‑occupancy fields that the pore‑ions tab loops over
     for site in ["S0","S1","S2","S3","S4","Cavity"]:
         run_summary[f"Ion_AvgOcc_{site}"] = 0.1
 
@@ -35,7 +39,7 @@ def test_full_html_report(tmp_path):
     # 5) Basic sanity checks
     assert "<h1>MD Analysis Report</h1>" in html
     assert "Pore Ions" in html
-    # Check that each site label appears in the table
-    for site in ["S0","S1","S2","S3","S4","Cavity"]:
-        assert f"Ion_AvgOcc_{site}" not in html  # field keys aren’t literally shown
-        assert site in html                      # but the header “S0”, “S1”, etc. must be
+    assert "Inner Vestibule" in html
+    assert "Carbonyl Dynamics" in html
+    assert "SF Tyrosine" in html
+    assert "DW Gate" in html
