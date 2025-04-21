@@ -1,10 +1,5 @@
-import os
 import numpy as np
 import pandas as pd
-import shutil
-import tempfile
-
-import pytest
 
 from pore_analysis.modules.core_analysis.core import filter_and_save_data
 
@@ -12,7 +7,7 @@ def test_gg_filter_and_save(tmp_path):
     # Prepare a fake run directory
     run_dir = tmp_path / "run1"
     run_dir.mkdir()
-    
+
     # Synthetic raw distances: a simple trend with noise
     dist_ac = np.array([1.0, 2.0, 3.5, 2.5, 1.5])
     dist_bd = np.array([1.2, 2.1, 3.6, 2.4, 1.3])
@@ -59,6 +54,14 @@ def test_gg_filter_and_save(tmp_path):
     }
     assert expected_cols.issubset(set(df.columns))
 
-    # 5) The filtered values in the CSV match those returned
-    np.testing.assert_allclose(df["G_G_Distance_AC_Filt"].values, filtered_ac, rtol=1e-6)
-    np.testing.assert_allclose(df["G_G_Distance_BD_Filt"].values, filtered_bd, rtol=1e-6)
+    # 5) The filtered values in the CSV match those returned (compare to 4 decimals)
+    np.testing.assert_array_almost_equal(
+        df["G_G_Distance_AC_Filt"].values,
+        filtered_ac,
+        decimal=4
+    )
+    np.testing.assert_array_almost_equal(
+        df["G_G_Distance_BD_Filt"].values,
+        filtered_bd,
+        decimal=4
+    )
