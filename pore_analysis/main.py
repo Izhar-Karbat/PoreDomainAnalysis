@@ -89,6 +89,40 @@ except ImportError as e:
 def main():
     """
     Main execution function: parses arguments and orchestrates the analysis workflow.
+
+    Handles command-line argument parsing to determine the target run folder,
+    which analysis modules to execute, and reporting options. Sets up logging
+    and calls the core `_run_analysis_workflow` function to perform the analysis.
+
+    Command-Line Arguments:
+        --folder (str, required): Path to the specific run folder containing PSF/DCD files.
+        --force_rerun (bool, optional): If True, forces reprocessing of all modules, ignoring any existing summary file.
+        --GG (bool, optional): Flag to selectively run only G-G distance analysis.
+        --COM (bool, optional): Flag to selectively run only COM distance analysis.
+        --orientation (bool, optional): Flag to selectively run only Toxin orientation and contact analysis.
+        --ions (bool, optional): Flag to selectively run only K+ ion tracking and coordination analysis.
+        --water (bool, optional): Flag to selectively run only Inner Vestibule Water analysis.
+        --gyration (bool, optional): Flag to selectively run only Carbonyl Gyration analysis.
+        --tyrosine (bool, optional): Flag to selectively run only SF Tyrosine rotamer analysis.
+        --conduction (bool, optional): Flag to selectively run only Ion Conduction/Transition analysis.
+        --dwgates (bool, optional): Flag to selectively run only DW-Gate analysis.
+        --box_z (float, optional): Estimated box Z-dimension (Angstroms) for multi-level COM filter.
+        --log_level (str, optional): Logging level (DEBUG, INFO, WARNING, ERROR). Default is INFO.
+        --report (bool, optional): Force HTML report generation when running selective analyses.
+        --no-report (bool, optional): Suppress HTML report generation when running full analysis.
+        --trajectory (str, optional): Path to a specific trajectory file (single trajectory mode - discouraged).
+        --topology (str, optional): Path to a specific topology file (required for --trajectory mode).
+        --output (str, optional): Output directory for results (used in --trajectory mode).
+
+    Side Effects:
+        - Configures logging to both console and a file within the run directory.
+        - Creates subdirectories within the run directory for module-specific outputs (e.g., `core_analysis/`, `ion_analysis/`).
+        - Generates various CSV and PNG files containing analysis results and plots within these subdirectories.
+        - Creates or overwrites `analysis_summary.json` in the run directory.
+        - Optionally creates or overwrites an HTML report file in the run directory.
+
+    Returns:
+        None
     """
     parser = argparse.ArgumentParser(
         description=f"MD Simulation Analysis Script (v{Analysis_version}). Processes trajectories for a SINGLE run folder. See script docstring for detailed USAGE.",
