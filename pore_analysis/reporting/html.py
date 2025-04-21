@@ -17,9 +17,7 @@ import matplotlib.pyplot as plt # Keep for plt.close if needed, though plots are
 import seaborn as sns # Keep for plot style consistency settings if applied here
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from ..domain.models import DomainCalculationResult, ResidueDomainAffiliation
-from ..config import config
-from ..utils.plotly_utils import format_fig
+
 
 
 # Import from other modules
