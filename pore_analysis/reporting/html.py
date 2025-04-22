@@ -1,6 +1,6 @@
-# reporting.py
+# html.py
 """
-Functions for generating analysis reports (HTML for single runs, PPT for summaries).
+Functions for generating analysis reports.
 """
 
 import os
@@ -268,7 +268,7 @@ def generate_html_report(run_dir, run_summary, full_analysis_results=None):
         "dw_distance_vs_state": "dw_gate_analysis/dw_gate_distance_vs_state.png",       # Distance vs Debounced State
         "dw_open_probability": "dw_gate_analysis/dw_gate_open_probability.png",        # Open Probability Bar Chart
         "dw_state_heatmap": "dw_gate_analysis/dw_gate_state_heatmap.png",           # State Heatmap
-        "dw_duration_distributions": "dw_gate_analysis/dw_gate_duration_distributions.png" # Duration Violin/Box/Swarm Plot
+        "dw_duration_distributions": "dw_gate_analysis/dw_gate_duration_distribution.png" # Duration Violin/Box/Swarm Plot (Singular filename)
         
         # REMOVED Old DW Gate Keys:
         # "dw_distance_timeseries": "dw_gate_analysis/dw_distance_timeseries.png",
@@ -361,6 +361,3 @@ def generate_html_report(run_dir, run_summary, full_analysis_results=None):
         error_report_path = os.path.join(run_dir, f"{run_summary.get('RunName', 'report')}_report_ERROR.html")
         with open(error_report_path, 'w') as f: f.write(f"<html><body><h1>Report Generation Error</h1><pre>{traceback.format_exc()}</pre></body></html>")
         return None
-
-# --- PowerPoint Report Generation ---
-# Note: PowerPoint functionality has been moved to presentation.py

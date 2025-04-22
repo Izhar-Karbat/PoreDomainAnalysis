@@ -56,7 +56,7 @@
 <h3>State Probabilities and Chi-squared Test</h3>
 <p>Overall probability of each chain being in the OPEN or CLOSED state, based on the total time spent in each state.</p>
 {% if run_summary.dw_gate_stats and run_summary.dw_gate_stats.probability_table_html %}
-    {{ run_summary.dw_gate_stats.probability_table_html | safe }}
+    {{ run_summary.dw_gate_stats.probability_table_html | safe }}x
 {% else %}
     <div class="warning-box">
         <h4>Statistics Missing</h4>

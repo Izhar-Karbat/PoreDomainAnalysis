@@ -23,8 +23,9 @@ except ImportError as e:
     print(f"Error importing dependency modules in reporting/summary.py: {e}")
     raise
 
-# Constants for DW Gate analysis
-CLOSED_STATE = 'closed'  # State value from dw_gate_state.py
+# Constants for DW Gate analysis state names (must match analysis module)
+CLOSED_STATE = 'closed'
+OPEN_STATE = 'open'
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -367,205 +368,197 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             run_summary.setdefault('TYROSINE_ROTAMER_TOLERANCE_FRAMES', TYROSINE_ROTAMER_TOLERANCE_FRAMES) # Use imported default
             run_summary.setdefault('ION_TRANSITION_TOLERANCE_FRAMES', ION_TRANSITION_TOLERANCE_FRAMES) # Add ion tolerance here too
 
-        # --- DW Gate Stats --- (NEW - Updated for DataFrame structure)
-        try:
-            # Check if the main dict and the expected raw_stats dict inside exist
-            if isinstance(dw_gate_stats, dict) and dw_gate_stats:
-                logger.info("Processing DW Gate stats...")
-
-                # Extract key quantitative metrics for the JSON summary
-                summary_df = dw_gate_stats.get('summary_stats_df')
-                prob_df = dw_gate_stats.get('probability_df')
-
-                # --- Calculate Global Closed Fraction --- 
-                # Use probability_df if available (derived from time_sum_df)
-                global_closed_fraction = np.nan # Default
-                if prob_df is not None and not prob_df.empty and 'total_time_ns' in prob_df.columns and CLOSED_STATE in prob_df.columns:
-                    total_closed_time = (prob_df[CLOSED_STATE] * prob_df['total_time_ns']).sum()
-                    total_overall_time = prob_df['total_time_ns'].sum()
-                    if total_overall_time > 0:
-                        global_closed_fraction = total_closed_time / total_overall_time
-                elif summary_df is not None and not summary_df.empty:
-                    # Fallback: Calculate from summary_df if prob_df failed
-                    logger.debug("Calculating global closed fraction from summary_df (fallback).")
-                    time_sum_df = summary_df.pivot(index='chain', columns='state', values='Total_Duration_ns').fillna(0)
-                    if OPEN_STATE not in time_sum_df.columns: time_sum_df[OPEN_STATE] = 0.0
-                    if CLOSED_STATE not in time_sum_df.columns: time_sum_df[CLOSED_STATE] = 0.0
-                    total_time_per_chain = time_sum_df.sum(axis=1)
-                    total_closed_time = time_sum_df[CLOSED_STATE].sum()
-                    total_overall_time = total_time_per_chain.sum()
-                    if total_overall_time > 0:
-                        global_closed_fraction = total_closed_time / total_overall_time
-                
-                run_summary['DW_Global_Closed_Fraction'] = global_closed_fraction
-
-                # --- Add Per-Chain Metrics (Means, Counts) from summary_df ---
-                if summary_df is not None and not summary_df.empty:
-                    try:
-                        mean_times = summary_df.pivot(index='chain', columns='state', values='Mean_ns').fillna(np.nan)
-                        counts = summary_df.pivot(index='chain', columns='state', values='Count').fillna(0)
-                        chains = summary_df['chain'].unique()
-                        for chain in chains:
-                            run_summary[f'DW_MeanOpenTime_ns_{chain}'] = mean_times.loc[chain].get(OPEN_STATE, np.nan)
-                            run_summary[f'DW_MeanClosedTime_ns_{chain}'] = mean_times.loc[chain].get(CLOSED_STATE, np.nan)
-                            run_summary[f'DW_OpenEvents_{chain}'] = int(counts.loc[chain].get(OPEN_STATE, 0))
-                            run_summary[f'DW_ClosedEvents_{chain}'] = int(counts.loc[chain].get(CLOSED_STATE, 0))
-                    except Exception as e:
-                         logger.warning(f"Could not extract per-chain DW gate stats from summary_df: {e}")
-                         # Add placeholders? Depends on requirements.
-
-                else:
-                    logger.warning("DW Gate summary_stats_df not found. Cannot add per-chain metrics.")
-
-                # --- Add p-values from test results ---
-                chi2_results = dw_gate_stats.get('chi2_test')
-                if chi2_results: run_summary['DW_StateVsChain_Chi2_pvalue'] = chi2_results.get('p_value', np.nan)
-                kruskal_results = dw_gate_stats.get('kruskal_test')
-                if kruskal_results: run_summary['DW_OpenDurationVsChain_Kruskal_pvalue'] = kruskal_results.get('p_value', np.nan)
-
-                # Add tolerance frame value used (assuming it might be stored, otherwise get from config)
-                # This assumes dw_gate_stats might contain the config used. If not, get from global config.
-                # Let's try getting from global config directly as dw_gate_stats structure was simplified.
-                try:
-                    from pore_analysis.core.config import DW_GATE_TOLERANCE_FRAMES
-                    run_summary['DW_Gate_ToleranceFrames'] = DW_GATE_TOLERANCE_FRAMES
-                except ImportError:
-                    run_summary['DW_Gate_ToleranceFrames'] = dw_gate_stats.get('tolerance_frames', np.nan) # Fallback if stored
-
-                # Log completion for this section
-                logger.info("Extracted key DW Gate metrics for summary.")
-
-                # Generate HTML for summary and probability tables with formatted numbers
-                if summary_df is not None and not summary_df.empty:
-                    try:
-                        # Format numeric values: up to 2 decimals, drop trailing zeros
-                        summary_fmt = summary_df.copy()
-                        def _fmt(val):
-                            if pd.isnull(val):
-                                return ''
-                            if isinstance(val, (int, np.integer)):
-                                return str(int(val))
-                            try:
-                                s = f"{float(val):.2f}".rstrip('0').rstrip('.')
-                                return s
-                            except:
-                                return str(val)
-                        for col in summary_fmt.columns:
-                            if col not in ['chain', 'state']:
-                                summary_fmt[col] = summary_fmt[col].apply(_fmt)
-                        html_summary = summary_fmt.to_html(index=False, classes='stats-table')
-                        run_summary.setdefault('dw_gate_stats', {})['summary_table_html'] = html_summary
-                    except Exception as e:
-                        logger.warning(f"Could not generate HTML for summary_stats_df: {e}")
-                        run_summary.setdefault('dw_gate_stats', {})['summary_table_html'] = None
-                else:
-                    run_summary.setdefault('dw_gate_stats', {})['summary_table_html'] = None
-
-                if prob_df is not None and not prob_df.empty:
-                    try:
-                        prob_fmt = prob_df.copy()
-                        for col in prob_fmt.columns:
-                            if col != 'chain':
-                                prob_fmt[col] = prob_fmt[col].apply(_fmt)
-                        html_prob = prob_fmt.to_html(index=False, classes='stats-table')
-                        run_summary.setdefault('dw_gate_stats', {})['probability_table_html'] = html_prob
-                    except Exception as e:
-                        logger.warning(f"Could not generate HTML for probability_df: {e}")
-                        run_summary.setdefault('dw_gate_stats', {})['probability_table_html'] = None
-                else:
-                    run_summary.setdefault('dw_gate_stats', {})['probability_table_html'] = None
-
+        # --- DW Gate Stats --- (NEW)
+        logger.info("Processing DW Gate stats...")
+        run_summary['dw_gate_stats'] = {} # Initialize nested dict for HTML snippets
+        if dw_gate_stats and isinstance(dw_gate_stats, dict):
+            # Extract key scalar metrics (example: global closed fraction)
+            # These should ideally be calculated and stored in dw_gate_stats by the analysis module
+            prob_df = dw_gate_stats.get('probability_df')
+            if isinstance(prob_df, pd.DataFrame) and not prob_df.empty:
+                global_closed_frac = prob_df[CLOSED_STATE].mean()
+                run_summary['DW_Global_Closed_Fraction'] = global_closed_frac
             else:
-                logger.debug("No DW Gate stats provided or empty/unrecognized dict structure.")
-                run_summary['DW_Global_Closed_Fraction'] = np.nan # Ensure key exists if module ran
-                run_summary['DW_Gate_ToleranceFrames'] = np.nan # Ensure key exists if module ran
-                if not dw_gate_stats: stats_collection_errors.append("DWGateStats_Missing")
+                 run_summary['DW_Global_Closed_Fraction'] = np.nan
 
-        except Exception as e:
-            logger.error(f"Error processing DW Gate stats: {e}", exc_info=True)
-            stats_collection_errors.append(f"DWGateStats_Error: {e}")
-            run_summary['DW_Global_Closed_Fraction'] = np.nan # Ensure key exists on error
-            run_summary['DW_Gate_ToleranceFrames'] = np.nan # Ensure key exists on error
+            # Add per-chain open/closed means/std if available from summary_df
+            summary_fmt = dw_gate_stats.get('summary_stats_df')
+            if isinstance(summary_fmt, pd.DataFrame) and not summary_fmt.empty:
+                # Add HTML table for summary stats
+                try:
+                    html_summary = summary_fmt.to_html(index=False, classes=['stats-table'], float_format='%.3f')
+                    run_summary['dw_gate_stats']['summary_table_html'] = html_summary
+                except Exception as html_err:
+                    logger.error(f"Failed to convert DW Gate Summary Stats DF to HTML: {html_err}")
+                    run_summary['dw_gate_stats']['summary_table_html'] = "<p>Error creating summary stats table.</p>"
 
-        # --- Finalize Status ---
-        # More granular status based on errors
+                # Extract per-chain stats
+                for _, row in summary_fmt.iterrows():
+                     chain = row['chain']
+                     state = row['state']
+                     run_summary[f'DW_{chain}_{state}_Mean_ns'] = row.get('Mean_ns', np.nan)
+                     run_summary[f'DW_{chain}_{state}_Std_ns'] = row.get('Std_Dev_ns', np.nan)
+                     run_summary[f'DW_{chain}_{state}_Count'] = row.get('Count', 0)
+            else:
+                 logger.warning("DW Gate summary_stats_df not found or empty. Cannot add per-chain metrics.")
+                 run_summary['dw_gate_stats']['summary_table_html'] = None
+
+            # Add HTML table for probability stats
+            if isinstance(prob_df, pd.DataFrame) and not prob_df.empty:
+                try:
+                    prob_df_formatted = prob_df.copy()
+                    prob_cols = [col for col in [OPEN_STATE, CLOSED_STATE] if col in prob_df_formatted.columns]
+                    for col in prob_cols:
+                        prob_df_formatted[col] = prob_df_formatted[col].map('{:.3f}'.format)
+                    if 'total_time_ns' in prob_df_formatted.columns:
+                         prob_df_formatted['total_time_ns'] = prob_df_formatted['total_time_ns'].map('{:.1f}'.format)
+                    html_prob = prob_df_formatted.to_html(index=False, classes=['stats-table'])
+                    run_summary['dw_gate_stats']['probability_table_html'] = html_prob
+                except Exception as html_err:
+                    logger.error(f"Failed to convert DW Gate Probability DF to HTML: {html_err}")
+                    run_summary['dw_gate_stats']['probability_table_html'] = "<p>Error creating probability table.</p>"
+            else:
+                 run_summary['dw_gate_stats']['probability_table_html'] = None
+
+            # ---> Add HTML table for Mann-Whitney results <-----
+            mw_df = dw_gate_stats.get('mannwhitney_tests_df')
+            if isinstance(mw_df, pd.DataFrame) and not mw_df.empty:
+                try:
+                    # Format p-values before converting to HTML
+                    mw_df_fmt = mw_df.copy()
+                    p_cols = [col for col in mw_df_fmt.columns if 'p-value' in col]
+                    for p_col in p_cols:
+                        mw_df_fmt[p_col] = mw_df_fmt[p_col].apply(_format_p_value)
+                    # Format U-statistic
+                    if 'U-statistic' in mw_df_fmt.columns:
+                         mw_df_fmt['U-statistic'] = mw_df_fmt['U-statistic'].map('{:.1f}'.format)
+
+                    html_mw = mw_df_fmt.to_html(index=False, classes=['stats-table'], escape=False) # escape=False because _format_p_value might add HTML
+                    run_summary['dw_gate_stats']['mannwhitney_table_html'] = html_mw
+                except Exception as html_err:
+                    logger.error(f"Failed to convert DW Gate Mann-Whitney DF to HTML: {html_err}")
+                    run_summary['dw_gate_stats']['mannwhitney_table_html'] = "<p>Error creating Mann-Whitney table.</p>"
+            else:
+                logger.warning("DW Gate mannwhitney_tests_df not found or empty.")
+                run_summary['dw_gate_stats']['mannwhitney_table_html'] = None # Set to None if no data
+
+            # ---> Add HTML snippets for Chi2 and Kruskal tests <-----
+            chi2_data = dw_gate_stats.get('chi2_test')
+            if isinstance(chi2_data, dict):
+                 run_summary['dw_gate_stats']['chi2_results_html'] = _format_test_result(chi2_data, "Chi-squared")
+                 # Also store raw p-value if needed for aggregation
+                 run_summary['DW_StateVsChain_Chi2_pvalue'] = chi2_data.get('p_value')
+            else:
+                 run_summary['dw_gate_stats']['chi2_results_html'] = "<p>Chi-squared results not available.</p>"
+                 run_summary['DW_StateVsChain_Chi2_pvalue'] = np.nan
+
+            kruskal_data = dw_gate_stats.get('kruskal_test')
+            if isinstance(kruskal_data, dict):
+                 run_summary['dw_gate_stats']['kruskal_results_html'] = _format_test_result(kruskal_data, "Kruskal-Wallis")
+                 # Also store raw p-value
+                 run_summary['DW_OpenDurationVsChain_Kruskal_pvalue'] = kruskal_data.get('p_value')
+            else:
+                 run_summary['dw_gate_stats']['kruskal_results_html'] = "<p>Kruskal-Wallis results not available.</p>"
+                 run_summary['DW_OpenDurationVsChain_Kruskal_pvalue'] = np.nan
+
+            logger.info("Extracted key DW Gate metrics and generated HTML snippets for summary.") # Updated log
+        else:
+            logger.warning("No DW Gate statistics provided to summarize.")
+
+
+        # Final check on errors collected
         if not stats_collection_errors:
             run_summary['AnalysisStatus'] = 'Success'
-            logger.info("Summary statistics calculation completed successfully.")
+            logger.info("Summary calculation finished successfully.")
         else:
-            # Check if critical files were missing vs. just read errors or missing optional data
-            critical_missing = {'G_G_Filtered_Missing'}
-            if not is_control_system:
-                # Only add COM/orientation as critical for non-control systems
-                critical_missing.update({'COM_Filtered_Missing', 'Orientation_Missing'})
-            # NOTE: IonStats_Missing and InnerVestibule_MissingOrEmpty are NOT currently treated as critical failures by default.
-            # Adjust 'critical_missing' set above if they should be treated as critical.
+            run_summary['AnalysisStatus'] = f"Success_With_Issues_{'_'.join(sorted(list(set(stats_collection_errors))))}"
+            logger.warning(f"Summary calculation finished with issues: {stats_collection_errors}")
 
-            is_critical_failure = any(err in critical_missing for err in stats_collection_errors)
-
-            if is_critical_failure:
-                run_summary['AnalysisStatus'] = 'Failed_Missing_Outputs'
-                # Filter errors to show only the critical missing ones for the ERROR log
-                critical_errors_found = [err for err in stats_collection_errors if err in critical_missing]
-                logger.error(f"Summary calculation failed due to missing critical output files: {critical_errors_found}")
-                # Log non-critical issues as warnings
-                non_critical_issues = [err for err in stats_collection_errors if err not in critical_missing]
-                if non_critical_issues:
-                    logger.warning(f"Additional non-critical issues found during summary: {non_critical_issues}")
-            else:
-                # If no critical failures, it's Success_With_Issues
-                error_str = "_".join(sorted(list(set(stats_collection_errors))))
-                run_summary['AnalysisStatus'] = f"Success_With_Issues_{error_str}"
-                logger.warning(f"Summary calculation finished with issues: {stats_collection_errors}")
-
-    except Exception as e:
-        logger.error(f"Critical error during statistics collection for {run_dir}: {e}", exc_info=True)
-        run_summary['AnalysisStatus'] = 'Summary_Calculation_Error'
-        # Try to include the error message in the summary if possible
-        try: run_summary['ErrorDetails'] = str(e)
-        except: pass
-        stats_collection_errors.append("Summary_Calculation_Error")
-
-    # --- Save the summary to JSON ---
-    summary_file_path = os.path.join(run_dir, 'analysis_summary.json')
-    logger.info(f"Attempting to save run summary to: {summary_file_path}")
-    try:
-        # Clean the data structure for JSON compatibility (handles NaN, numpy types)
+        # Save summary
+        summary_file_path = os.path.join(run_dir, 'analysis_summary.json')
+        logger.info(f"Attempting to save run summary to: {summary_file_path}")
+        # Clean data before saving to JSON (handles NaN, infinity, np types)
         cleaned_summary = clean_json_data(run_summary)
-
-        # Dump the cleaned dictionary
         with open(summary_file_path, 'w') as f_json:
-            json.dump(cleaned_summary, f_json, indent=4)  # allow_nan=False should be safe after cleaning
-
+            json.dump(cleaned_summary, f_json, indent=4)
         logger.info(f"Successfully saved run summary: {summary_file_path} (Status: {run_summary['AnalysisStatus']})")
 
-    except TypeError as e:
-        logger.error(f"JSON TypeError saving summary for {run_dir} (even after cleaning): {e}. Data sample: {str(cleaned_summary)[:500]}...", exc_info=True)
-        run_summary['AnalysisStatus'] = 'JSON_Save_TypeError'  # Overwrite status
-        # Try fallback save with repr for problematic types
-        try:
-            with open(summary_file_path, 'w') as f_json:
-                json.dump(run_summary, f_json, indent=4, default=repr)
-            logger.warning("Saved summary using fallback repr method due to TypeError.")
-        except Exception as e_save:
-            logger.error(f"Fallback summary save failed: {e_save}")
     except Exception as e:
-        logger.error(f"Failed to save summary JSON to {summary_file_path}: {e}", exc_info=True)
-        # Try saving a minimal error status
-        error_summary = {k: run_summary.get(k) for k in ['SystemName', 'RunName', 'RunPath', 'AnalysisStatus', 'AnalysisScriptVersion', 'AnalysisTimestamp']}
-        error_summary['AnalysisStatus'] = 'JSON_Save_Failed'
-        error_summary['ErrorDetails'] = str(e)
+        logger.error(f"Critical error during summary calculation: {e}", exc_info=True)
+        run_summary['AnalysisStatus'] = f'FAILED_SUMMARY_CALC: {e}'
+        stats_collection_errors.append("SummaryCalc_CriticalError")
+        # Attempt to save partial/error summary
         try:
+            summary_file_path = os.path.join(run_dir, 'analysis_summary.json')
+            cleaned_summary = clean_json_data(run_summary)
             with open(summary_file_path, 'w') as f_json:
-                json.dump(error_summary, f_json, indent=4)
+                json.dump(cleaned_summary, f_json, indent=4)
+            logger.info(f"Saved partial/error summary: {summary_file_path}")
         except Exception as e_save:
-            logger.error(f"Failed even to save minimal error summary JSON: {e_save}")
+            logger.error(f"Failed even to save the error summary!: {e_save}")
 
-    return run_summary['AnalysisStatus'].startswith('Success')
+def _format_p_value(p):
+    """Formats p-value for HTML display."""
+    if pd.isna(p):
+        return "N/A"
+    try:
+        p_float = float(p)
+        if p_float < 0.001:
+            return "&lt; 0.001"
+        else:
+            # Format to 3 significant figures, avoiding scientific notation for small nums if possible
+            return f"{p_float:.3g}"
+    except (ValueError, TypeError):
+        return "Invalid"
+
+def _format_test_result(test_dict, test_name):
+    """Formats single-value test results (Chi2, Kruskal) into an HTML string."""
+    if not isinstance(test_dict, dict):
+        return f"<p>{test_name} results not available (invalid format).</p>"
+
+    if test_dict.get('error'):
+        return f"<p>{test_name} test failed: {test_dict['error']}</p>"
+    if test_dict.get('skipped'):
+        return f"<p>{test_name} test skipped (insufficient data).</p>"
+
+    p_val = test_dict.get('p_value')
+    stat = test_dict.get('statistic')
+
+    if pd.isna(p_val) or pd.isna(stat):
+        return f"<p>{test_name} results calculated as NaN.</p>"
+
+    p_str = _format_p_value(p_val)
+
+    if test_name == "Chi-squared":
+        dof = test_dict.get('dof')
+        dof_str = f", degrees&nbsp;of&nbsp;freedom=&nbsp;{dof}" if pd.notna(dof) else ""
+        return f"<p>Chi-squared=&nbsp;{stat:.3f}{dof_str}, p-value:&nbsp;{p_str}</p>"
+    elif test_name == "Kruskal-Wallis":
+        return f"<p>H-statistic=&nbsp;{stat:.3f}, p-value:&nbsp;{p_str}</p>"
+    else:
+        # Fallback for unknown tests
+        return f"<p>{test_name}: Statistic=&nbsp;{stat:.3f}, p-value:&nbsp;{p_str}</p>"
+
 
 def load_existing_summary(run_dir):
     # ... (function remains the same) ...
-    pass
+    """Loads an existing analysis_summary.json file if it exists."""
+    summary_file_path = os.path.join(run_dir, 'analysis_summary.json')
+    if os.path.exists(summary_file_path):
+        try:
+            with open(summary_file_path, 'r') as f_json:
+                existing_summary = json.load(f_json)
+            logger.debug(f"Loaded existing summary from {summary_file_path}")
+            return existing_summary
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding existing JSON summary file {summary_file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error loading existing summary file {summary_file_path}: {e}")
+            return None
+    else:
+        logger.debug(f"No existing summary file found at {summary_file_path}")
+        return None
 
 
 # --- Example Usage --- (optional)
