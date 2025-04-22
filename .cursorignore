@@ -8,7 +8,6 @@ env/
 tests/data/*.dcd
 tests/data/*.psf
 *.log
-*.html
 *.png
 *.csv
 *.json

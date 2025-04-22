@@ -15,7 +15,6 @@ tests/data/
 
 # Generated artifacts
 *.log
-*.html
 *.png
 *.csv
 *.json
