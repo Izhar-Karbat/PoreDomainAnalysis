@@ -37,14 +37,17 @@ This document outlines the structure, core logic, conventions, and development p
 │   │   ├── ion_analysis/
 │   │   ├── inner_vestibule_analysis/
 │   │   ├── gyration_analysis/
-│   │   └── tyrosine_analysis/
+│   │   ├── tyrosine_analysis/
+│   │   ├── dw_gate_analysis/         # Asp-Trp gate analysis
+│   │   │   ├── __init__.py
+│   │   │   ├── dw_gate_state.py
+│   │   │   └── residue_identification.py
 │   └── reporting/            # Report generation and summary logic
 │       ├── __init__.py
 │       ├── summary.py
 │       ├── html.py
 │       └── templates/
 └── ... (other files like .gitignore, LICENSE)
-# NOTE: main_analyzer.py and logger_setup.py in root are obsolete and should be deleted.
 ```
 
 ## 3. Execution Flow: `pore_analysis/main.py`

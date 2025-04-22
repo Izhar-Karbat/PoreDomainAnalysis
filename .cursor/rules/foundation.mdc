@@ -1,20 +1,178 @@
 ---
 description: Core PoreDomainAnalysis conventions (always apply)
-globs:
-  - "**/*.py"
+globs: 
 alwaysApply: true
 ---
-# Foundation — Core Project Conventions
+# MD Analysis Suite - Code Structure & Development Guidelines
 
-1. **Naming & Structure**
-   - All pore-related modules and functions use the prefix `pore_`.
-   - Entry point is `pore_analysis/main.py` (invoked via `python -m pore_analysis.main --folder <path>`).
-2. **Maintain Logic Integrity**
-   - Do not alter scientific calculations (e.g., tolerance thresholds, formula implementations) without explicit prompt.
-   - Preserve all existing validation and logging calls.
-3. **Style & Quality**
-   - Follow PEP8 conventions and Black formatting.
-   - Every new or modified function must include type hints and a numpy‑style docstring.
-4. **Testing Awareness**
-   - After changes, manually verify core functionality with `tests/data/test.psf` & `tests/data/test.dcd`.
-   - Do not remove or rename the sample data files.
+**Version:** (Reflects state as of YYYY-MM-DD)
+
+## 1. Purpose & Philosophy
+
+This document outlines the structure, core logic, conventions, and development practices for the K+ Pore Analysis Suite. Its primary goal is to ensure code contributions (from humans or AI assistants) maintain the integrity, consistency, and intended workflow of the suite, preventing integration errors and promoting maintainability.
+
+**Core Philosophy:**
+
+*   **Modularity:** Code is organized into distinct modules with specific responsibilities (e.g., ion analysis, orientation analysis, reporting).
+*   **Single Run Focus:** The primary operational mode processes a single simulation run directory (`--folder`). Batch processing capabilities have been removed.
+*   **Clear Data Flow:** Analysis results are managed within a defined workflow, primarily using a central dictionary within the main analysis function.
+*   **Standardized Outputs:** Output files (CSV, JSON, PNG, logs) follow consistent naming and location conventions within the processed run directory.
+
+## 2. Project Structure Overview
+
+```
+.
+├── setup.py                  # Package installation and dependencies
+├── config.py                 # Global configuration (consider moving to pore_analysis/core)
+├── README.md                 # Project overview and usage
+├── Code_Structure.md         # This file
+├── Aggregate_Summaries.py    # Utility for combining results from multiple runs
+├── pore_analysis/              # Main Python package source code
+│   ├── __init__.py
+│   ├── main.py               # Main execution script (entry point for python -m)
+│   ├── core/                 # Core utilities, config, logging
+│   │   ├── __init__.py
+│   │   ├── config.py         # (If moved here)
+│   │   ├── logging.py        # Logger setup function (setup_analysis_logger)
+│   │   └── utils.py
+│   ├── modules/              # Specific analysis modules
+│   │   ├── __init__.py
+│   │   ├── core_analysis/
+│   │   ├── orientation_contacts/
+│   │   ├── ion_analysis/
+│   │   ├── inner_vestibule_analysis/
+│   │   ├── gyration_analysis/
+│   │   ├── tyrosine_analysis/
+│   │   ├── dw_gate_analysis/         # Asp-Trp gate analysis
+│   │   │   ├── __init__.py
+│   │   │   ├── dw_gate_state.py
+│   │   │   └── residue_identification.py
+│   └── reporting/            # Report generation and summary logic
+│       ├── __init__.py
+│       ├── summary.py
+│       ├── html.py
+│       └── templates/
+└── ... (other files like .gitignore, LICENSE)
+```
+
+## 3. Execution Flow: `pore_analysis/main.py`
+
+The primary way to run the analysis is via `python -m pore_analysis.main --folder <path> ...`.
+
+1.  **Argument Parsing:** Uses `argparse` in `main()` to handle command-line arguments.
+    *   `--folder` (Required): Specifies the path to the single run directory to process.
+    *   Analysis Flags (`--GG`, `--COM`, `--ions`, etc.): Select specific analyses. If none are provided, all analyses are run by default (Full Analysis mode).
+    *   Report Control Flags: `--report` (generate report in Selective mode), `--no-report` (suppress report in Full Analysis mode).
+    *   Other flags (`--force_rerun`, `--box_z`, `--log_level`).
+2.  **Determine Analyses & Reporting:**
+    *   Sets boolean flags (`run_gg`, `run_com`, etc.) based on user arguments or the default mode.
+    *   Determines if specific analysis flags were set (`specific_flags_set`).
+    *   Calculates `generate_html`: If specific flags were set, `generate_html` is True only if `--report` was also provided. If no specific flags were set (Full Analysis mode), `generate_html` is True by default, unless `--no-report` was provided.
+    *   Handles `--force_rerun` by setting all `run_...` flags to True.
+3.  **Handle Single Trajectory Mode:** (Discouraged) If `--trajectory` is used, determines paths, sets up the logger using `setup_analysis_logger` from `pore_analysis.core.logging` (directing output to the `--output` dir), logs initial info, calls `_run_analysis_workflow` (passing `specific_flags_set`), and exits.
+4.  **Single Folder Mode Execution:** (Primary Path)
+    *   Validates the `--folder` path.
+    *   Determines `system_name` and `run_name`.
+    *   **Sets up Logger:** Calls `setup_analysis_logger` from `pore_analysis.core.logging`, passing the `folder_path`, `run_name`, and log level. This configures the root logger.
+    *   **Logs Initial Info:** Writes startup messages, command, analysis plan etc. to console and the run-specific log file.
+    *   Checks for required input files (`MD_Aligned.dcd`, `step5_input.psf`).
+    *   Calls the internal `_run_analysis_workflow` function, passing the run details, analysis flags, `specific_flags_set`, and `generate_html`.
+5.  **Workflow Execution (`_run_analysis_workflow`)**:
+    *   **Check Skip Logic:** Skips execution only if `force_rerun` is False, `specific_analyses_requested` is False (i.e., Full Analysis mode), AND a valid, up-to-date `analysis_summary.json` exists. If skipping, it may still attempt to generate an HTML report from the existing summary if `generate_html` is True.
+    *   **Initialize `results` Dictionary:** Creates an empty dictionary to hold data passed between analysis steps within this function.
+    *   **Execute Analyses Sequentially:** Calls specific analysis functions from the `modules/` directory based on the boolean flags (`run_gg`, `run_com`, etc.).
+        *   Each analysis function typically takes `run_dir`, `psf_file`, `dcd_file`, and potentially data from previous steps (passed explicitly or retrieved from the `results` dictionary) as input.
+        *   Results from analysis functions (e.g., data arrays, statistics dictionaries) are stored back into the `results` dictionary (e.g., `results['ion_indices'] = ion_indices`).
+        *   Analysis functions may also have side effects like saving plots or intermediate CSV files within designated subdirectories (e.g., `ion_analysis/`).
+    *   **Save Summary:** Calls `calculate_and_save_run_summary` from `reporting/summary.py`, passing necessary data accumulated in the `results` dictionary. This creates `analysis_summary.json`.
+    *   **Generate HTML Report:** If `generate_html` is true, calls `generate_html_report` from `reporting/html.py`, passing the `run_dir` and the just-loaded `run_summary`.
+    *   Uses the root logger configured in the previous step for all its logging.
+
+## 4. Key Data Structures: The `results` Dictionary
+
+*   **Purpose:** Acts as a central, in-memory carrier for data passed between different analysis steps *within* the `_run_analysis_workflow` function in `main_analyzer.py`.
+*   **Usage:**
+    *   Initialized as an empty dictionary at the start of the workflow.
+    *   Populated by the return values of core analysis functions (e.g., `analyze_trajectory`, `track_potassium_ions`).
+    *   Data from it is read by subsequent analysis steps or by the final `calculate_and_save_run_summary` function.
+*   **Scope:** Primarily intended for use *inside* `_run_analysis_workflow`. Analysis functions within modules should generally *return* their results rather than directly modifying this dictionary (though they read from it via arguments).
+*   **Example Keys:** `dist_ac`, `com_distances`, `time_points`, `ion_indices`, `filter_sites`, `g1_reference`, `cavity_water_stats`, `gyration_stats`, `is_control_system`.
+
+## 5. Output Conventions
+
+*   **Location:** All primary outputs (CSVs, JSONs, PNGs, run-specific logs) are saved *within* the processed `--folder` directory or its subdirectories.
+    *   Specific modules often create their own subdirectories (e.g., `ion_analysis/`, `orientation_contacts/`, `gyration_analysis/`). **Convention:** New analysis modules should save their outputs within a dedicated subdirectory named after the analysis type inside the main run folder.
+*   **Naming:**
+    *   Files often incorporate the analysis type (e.g., `K_Ion_Site_Statistics.csv`, `COM_Stability_Filtered.csv`).
+    *   The run-specific log is named `<RunName>_analysis.log`.
+    *   The HTML report is named `<RunName>_analysis_report.html`.
+*   **File Types:**
+    *   **CSV:** Detailed frame-by-frame data or tabular statistics.
+    *   **JSON:** Structured summary data (`analysis_summary.json`), sometimes lists (`Cavity_Water_ResidenceTimes.json`).
+    *   **PNG:** Plots and visualizations.
+    *   **TXT:** Human-readable info like binding site positions.
+    *   **LOG:** Detailed execution logs.
+    *   **HTML:** Final user-facing report.
+
+## 6. The `analysis_summary.json` File
+
+*   **Purpose:** Provides a single, machine-readable summary of the key quantitative results and status for a single analysis run. It is the **primary input** for any downstream aggregation or cross-run comparison (like `Aggregate_Summaries.py`).
+*   **Generation:** Created at the end of `_run_analysis_workflow` by `calculate_and_save_run_summary` (in `reporting/summary.py`).
+*   **Content:** Contains key calculated statistics (means, std devs, counts), configuration parameters used, analysis status (Success, Failed, Success_With_Issues), script version, and timestamps.
+*   **Update Policy:** This file should only be updated by `calculate_and_save_run_summary`. Individual analysis modules should return their data to `_run_analysis_workflow` to be included, rather than modifying this file directly. Adding new summary statistics requires updating `calculate_and_save_run_summary`.
+
+## 7. HTML Report
+
+*   **Purpose:** Provides a user-friendly, visual summary of the analysis results for a single run.
+*   **Data Flow:** HTML templates receive data primarily through the `run_summary` dictionary (containing aggregated statistics) and a dictionary named `plots` (containing base64-encoded PNG plot data). This data is passed from the `generate_html_report` function in `html.py` during the Jinja2 rendering process.
+*   **Template Variable Usage (CRITICAL):** All HTML template files (`reporting/templates/_tab_*.html`) MUST access the plot image data using the `plots` variable. Typically, this is done using the `.get()` method for safety: `{% if plots.get('plot_key') %}<img src="data:image/png;base64,{{ plots.plot_key }}" ...>{% endif %}`. **Do NOT** use other variable names like `img_data` within the templates.
+*   **Structure:** Defined by the Jinja2 templates (e.g., `_tab_overview.html`, `_tab_pore_ions.html`, etc.). Tabs organize different analysis sections. The main structure, CSS, and JavaScript are within the `HTML_TEMPLATE` string in `html.py`.
+*   **Update Policy:**
+    *   To add new plots or tables, modify the relevant template file (e.g., `_tab_new_analysis.html`), ensuring you use the `plots` variable for images.
+    *   Ensure the necessary statistical data keys are present in `run_summary` (populated by `calculate_and_save_run_summary`).
+    *   Ensure the corresponding plot PNG files are generated by the analysis module in the expected subdirectory (e.g., `new_analysis/plot_name.png`).
+    *   Modify the `PLOT_FILES` dictionary in `generate_html_report` (`html.py`) to include the new plot's key and relative path.
+    *   Add the new tab link and include statement to the `HTML_TEMPLATE` string in `html.py`.
+*   **Generation Condition:** Controlled by the `generate_html` variable passed to `_run_analysis_workflow`.
+    *   In **Full Analysis mode** (no specific flags or `--force_rerun`), generated by default unless suppressed by `--no-report`.
+    *   In **Selective Analysis mode** (specific flags like `--ions`), **NOT** generated by default, but can be enabled using `--report`.
+
+## 8. Configuration (`config.py`)
+
+*   Contains global constants and parameters used across different modules.
+*   **Policy:** Define parameters here if they are likely to be used in multiple places or might need user adjustment later. Avoid hardcoding values.
+*   **Location:** Currently in root directory. Consider moving to `pore_analysis/core/` for better package structure.
+
+## 9. Logging (`pore_analysis/core/logging.py`)
+
+*   Provides the `setup_analysis_logger` function.
+*   **Behavior:** This function configures the **root logger** when called by `main()`. It removes any previous handlers and sets up two new ones:
+    1.  A `StreamHandler` writing formatted messages to the console (stdout).
+    2.  A `FileHandler` writing formatted messages to a single log file named `<RunName>_analysis.log` located directly **inside the run directory** (`--folder` path or `--output` path in trajectory mode).
+*   **Consolidation:** There is no separate main log file created in the script's execution directory. All logs related to processing a specific run are contained within that run's folder.
+*   **Policy:** Use standard Python `logging` within modules (`logger = logging.getLogger(__name__)`). The `setup_analysis_logger` function configures the root logger, and module loggers will inherit this configuration automatically. Use appropriate levels (DEBUG, INFO, WARNING, ERROR).
+
+## 10. Development Guidelines & Best Practices
+
+*   **Modularity & Single Responsibility:** Keep functions focused.
+*   **Docstrings:** Document purpose, Args, Returns, and **Side Effects** (like file saving).
+*   **Type Hinting:** Use type hints for clarity and static analysis.
+*   **Testing:**
+    *   **Unit Tests:** Add tests for new or modified analysis functions to verify correctness in isolation.
+    *   **Integration Tests:** Crucial for this workflow. Test the `_run_analysis_workflow` or even `main` with sample data. Verify that:
+        *   The expected analysis steps run based on flags.
+        *   The `results` dictionary is populated correctly.
+        *   `analysis_summary.json` contains the expected keys and plausible values.
+        *   Output files (CSVs, plots) are created in the correct locations with expected content (even if just checking existence and basic format).
+*   **Version Control (Git):** Use branches, commit frequently with clear messages.
+*   **Working with AI Assistants (CRITICAL for Integration):**
+    *   **Be Explicit:** Clearly state the goal, the specific function to modify/create, its inputs (names, types), outputs (return value, files saved), and *exactly where it fits in the workflow*.
+    *   **Provide Context:** Show the AI the calling function (e.g., `_run_analysis_workflow`) and the function being called (if modifying an existing one).
+    *   **Specify Integration:** Do not just ask the AI to "add feature X". Instruct it *how* to integrate it.
+        *   **Example:** "Modify the `_run_analysis_workflow` function in `main_analyzer.py`. After the section calling `analyze_ion_coordination` (around line XXX), add a call to the new function `analyze_ion_conduction` (which you will define in `pore_analysis/modules/ion_analysis/ion_conduction.py`). This new function requires `run_dir`, `time_points_ions`, `ions_z_abs`, `ion_indices`, `filter_sites`, and `g1_reference` as input. These variables should be available from the `results` dictionary or previous steps. Store the dictionary returned by `analyze_ion_conduction` into `results['conduction_stats']`. Ensure the `run_conduction` flag controls whether this call happens."
+    *   **Review Carefully:** Always review AI-generated code for correctness, adherence to conventions, and proper integration *before* running it. Check function calls, argument passing, and file paths.
+    *   **Incremental Steps:** Ask for the core function first, review it, then ask for the integration code separately.
+
+## 11. Maintaining This Document
+
+Keep this document updated as the codebase evolves. Significant changes to workflow, structure, or conventions should be reflected here. 
