@@ -483,6 +483,8 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             json.dump(cleaned_summary, f_json, indent=4)
         logger.info(f"Successfully saved run summary: {summary_file_path} (Status: {run_summary['AnalysisStatus']})")
 
+        return True # Return True on successful completion (even with issues)
+
     except Exception as e:
         logger.error(f"Critical error during summary calculation: {e}", exc_info=True)
         run_summary['AnalysisStatus'] = f'FAILED_SUMMARY_CALC: {e}'
@@ -496,6 +498,7 @@ def calculate_and_save_run_summary(run_dir, system_name, run_name,
             logger.info(f"Saved partial/error summary: {summary_file_path}")
         except Exception as e_save:
             logger.error(f"Failed even to save the error summary!: {e_save}")
+        return False # Return False on critical failure
 
 def _format_p_value(p):
     """Formats p-value for HTML display."""
