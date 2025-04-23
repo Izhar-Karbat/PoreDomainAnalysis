@@ -19,6 +19,42 @@ from .utils import save_plot, OPEN_STATE, CLOSED_STATE
 
 logger = logging.getLogger(__name__)
 
+# Define consistent color palettes for global use
+def get_chain_color_maps(chains):
+    """
+    Creates consistent color mappings for chains using seaborn palettes.
+    
+    Args:
+        chains: List of chain IDs (A, B, C, D, etc.)
+        
+    Returns:
+        Dictionary with chain color mappings for pastel and bright palettes
+    """
+    n_chains = len(chains)
+    # Create color palettes
+    pastel_palette = sns.color_palette("pastel", n_colors=max(n_chains, 4))
+    bright_palette = sns.color_palette("bright", n_colors=max(n_chains, 4))
+    
+    # Create consistent chain-to-color mappings
+    chain_color_map_pastel = {ch: pastel_palette[i % len(pastel_palette)] 
+                              for i, ch in enumerate(chains)}
+    chain_color_map_bright = {ch: bright_palette[i % len(bright_palette)] 
+                              for i, ch in enumerate(chains)}
+    
+    # Override specific chains if they exist (A, B, C, D) to ensure consistent coloring
+    chain_override = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+    for ch, idx in chain_override.items():
+        if ch in chains and idx < len(pastel_palette):
+            chain_color_map_pastel[ch] = pastel_palette[idx]
+            chain_color_map_bright[ch] = bright_palette[idx]
+    
+    return {
+        'pastel': chain_color_map_pastel,
+        'bright': chain_color_map_bright,
+        'pastel_list': pastel_palette[:n_chains],
+        'bright_list': bright_palette[:n_chains]
+    }
+
 def plot_distance_vs_state(
     df_states: pd.DataFrame,
     events_df: pd.DataFrame, # Need events for plotting state bars efficiently
@@ -72,12 +108,10 @@ def plot_distance_vs_state(
     logger.info(f"Plotting distance vs state for chains: {chains}")
     sns.set_theme(style='ticks', context='notebook')
 
-    # Create palettes based on the actual number of chains found
-    pastel_palette = sns.color_palette("pastel", n_colors=n_chains)
-    bright_palette = sns.color_palette("bright", n_colors=n_chains)
-    # Map chain ID (derived from distance col) to color
-    chain_color_map_pastel = {ch: col for ch, col in zip(chains, pastel_palette)}
-    chain_color_map_bright = {ch: col for ch, col in zip(chains, bright_palette)}
+    # Use consistent color mapping
+    color_maps = get_chain_color_maps(chains)
+    chain_color_map_pastel = color_maps['pastel']
+    chain_color_map_bright = color_maps['bright']
 
     fig, axes = plt.subplots(n_chains, 1, figsize=(12, 2.5 * n_chains), sharex=True)
     if n_chains == 1:
@@ -112,11 +146,11 @@ def plot_distance_vs_state(
             ax.set_ylim(y_min, y_max)
             continue
 
-        # Plot distance trace with pastel color
+        # Plot distance trace with pastel color - use consistent chain colors
         ax.plot(sub[time_col], sub[dist_col],
                 color=chain_color_map_pastel.get(ch, 'grey'), alpha=0.8, linewidth=1.0)
 
-        # Plot debounced state bars using event data
+        # Plot debounced state bars using event data with bright colors
         chain_events = events_df[events_df['chain'] == ch]
         if not chain_events.empty:
             for _, event in chain_events.iterrows():
@@ -187,13 +221,20 @@ def plot_open_probability(
 
     logger.info("Plotting open probability per chain...")
     sns.set_theme(style='ticks', context='notebook')
-    n_chains = len(prob_plot_df['chain'].unique())
-    plt.figure(figsize=(max(6, n_chains * 1.5), 5)) # Adjust width based on num chains
-    ax = sns.barplot(data=prob_plot_df, x='chain', y=prob_col, palette='viridis_r') # Changed palette
+    
+    # Get chain IDs to use consistent color mapping
+    chains = prob_plot_df['chain'].unique().tolist()
+    color_maps = get_chain_color_maps(chains)
+    
+    # Use pastel palette for the bars
+    plt.figure(figsize=(max(6, len(chains) * 1.5), 5)) # Adjust width based on num chains
+    
+    # Use the consistent pastel palette for probability bars
+    ax = sns.barplot(data=prob_plot_df, x='chain', y=prob_col, palette=color_maps['pastel_list'])
 
     # Add probability values above bars
     for i, p in enumerate(prob_plot_df[prob_col]):
-        plt.text(i, p + 0.02, f'{p:.3f}', ha='center', fontsize=10, fontweight='normal') # Less bold text
+        plt.text(i, p + 0.02, f'{p:.3f}', ha='center', fontsize=10, fontweight='normal')
 
     plt.ylim(0, 1.05) # Adjusted ylim slightly
     plt.title('DW-Gate Open State Probability per Chain')
@@ -224,7 +265,7 @@ def plot_state_heatmap(
     Plots DW-Gate state transitions as a heatmap.
 
     Pivots the data to have time/frame as index and chains as columns.
-    Uses a custom colormap: Closed=DarkBlue, Open=LightBlue, Missing/NaN=Gray.
+    Uses pastel blue for closed state, pastel red for open state.
 
     Args:
         df_states: DataFrame in long format with time, frame, chain, and state columns.
@@ -244,6 +285,14 @@ def plot_state_heatmap(
 
     logger.info("Plotting state heatmap...")
     sns.set_theme(style='white', context='notebook')
+
+    # Get consistent palette for reference
+    chains = sorted(df_states['chain'].unique())
+    
+    # Define explicit pastel blue and pastel red colors
+    # Using hardcoded RGB values to ensure correct colors
+    pastel_blue = (0.68, 0.85, 0.9)  # Definite pastel blue for CLOSED state
+    pastel_red = (0.98, 0.7, 0.7)    # Definite pastel red for OPEN state
 
     # Prepare data for heatmap: Pivot debounced data using pivot_table for robustness
     df_pivot = None
@@ -283,19 +332,18 @@ def plot_state_heatmap(
 
     # Map states to numeric values (Closed=0, Open=1)
     state_map = {CLOSED_STATE: 0, OPEN_STATE: 1}
-    # Map known states, fill NaNs from pivot with -1 (Missing)
-    df_numeric = df_pivot.replace(state_map).fillna(-1)
-    # Convert to integer type after filling NaNs if possible (makes heatmap cleaner)
+    # Map known states, always fill NaNs with closed state (0) - no missing states
+    df_numeric = df_pivot.replace(state_map).fillna(0)
+    # Convert to integer type after filling NaNs (makes heatmap cleaner)
     try:
         df_numeric = df_numeric.astype(int)
     except ValueError:
         logger.warning("Could not convert heatmap numeric data to integer type.")
 
-
-    # Create a custom colormap: Missing=Gray, Closed=DarkBlue, Open=LightBlue
-    # Order corresponds to numeric values: -1, 0, 1
-    cmap = mcolors.ListedColormap(['#cccccc', '#00008b', '#add8e6']) # Gray, DarkBlue, LightBlue
-    bounds = [-1.5, -0.5, 0.5, 1.5] # Boundaries for -1, 0, 1
+    # Create a custom colormap:
+    # CRITICAL: Explicitly set pastel blue for CLOSED state (index 0) and pastel red for OPEN state (index 1)
+    cmap = mcolors.ListedColormap([pastel_blue, pastel_red])
+    bounds = [-0.5, 0.5, 1.5]  # Boundaries for 0, 1
     norm = mcolors.BoundaryNorm(bounds, cmap.N)
 
     # Create figure
@@ -328,10 +376,9 @@ def plot_state_heatmap(
     ax.set_yticks(np.arange(n_chains))
     ax.set_yticklabels(df_numeric.columns) # Columns are chain IDs
 
-    # Add colorbar
-    cbar = plt.colorbar(im, ax=ax, ticks=[-1, 0, 1], orientation='vertical', fraction=0.05, pad=0.04)
-    # Match colorbar labels to the numeric mapping
-    cbar.ax.set_yticklabels(['Missing', 'Closed', 'Open'], fontsize='small') # Gray(-1), DarkBlue(0), LightBlue(1)
+    # Add colorbar with two states only: closed (blue) and open (red)
+    cbar = plt.colorbar(im, ax=ax, ticks=[0, 1], orientation='vertical', fraction=0.05, pad=0.04)
+    cbar.ax.set_yticklabels(['Closed', 'Open'], fontsize='small')
 
     # Remove gridlines
     ax.grid(False)
@@ -346,7 +393,7 @@ def plot_state_heatmap(
     plot_rel_path = os.path.join(os.path.basename(output_dir), plot_filename)
     return plot_rel_path
 
-def _plot_duration_panel(ax, data, chains, state, palette_violin, palette_points, chain_map_bright, title):
+def _plot_duration_panel(ax, data, chains, state, chain_map_pastel, chain_map_bright, title):
     """Internal helper to plot duration distribution for one state (Open/Closed)."""
     if data.empty:
         ax.text(0.5, 0.5, f"No {state.lower()} events found", ha='center', va='center', transform=ax.transAxes)
@@ -358,22 +405,22 @@ def _plot_duration_panel(ax, data, chains, state, palette_violin, palette_points
         ax.spines['top'].set_visible(False)
         return
 
-    # Violin Plot (main distribution)
+    # Violin Plot (main distribution) with pastel colors
     try:
         sns.violinplot(ax=ax, data=data, x='chain', y='duration_ns', hue='chain',
                        order=chains, hue_order=chains, # Ensure consistent order
-                       palette=palette_violin, inner=None, density_norm='width', linewidth=1.5,
+                       palette=chain_map_pastel, inner=None, density_norm='width', linewidth=1.5,
                        saturation=0.7, legend=False) # Disable automatic legend
     except Exception as e_violin:
         logger.error(f"Error during violinplot for {state} durations: {e_violin}", exc_info=True)
         ax.text(0.5, 0.5, f"Violin plot failed for {state}", ha='center', va='center', transform=ax.transAxes, color='red')
         # Allow function to continue if possible, but mark the failure
 
-    # Box plot (for quartiles, median) - narrow and without outliers
+    # Box plot (for quartiles, median) - using bright palette colors for foreground
     try:
         sns.boxplot(ax=ax, data=data, x='chain', y='duration_ns', hue='chain',
                     order=chains, hue_order=chains,
-                    palette=chain_map_bright, # Use bright colors for box
+                    palette=chain_map_bright, # Use bright colors for box as requested
                     width=0.2, boxprops={'zorder': 2, 'alpha': 0.8},
                     whiskerprops={'zorder': 2, 'alpha': 0.8, 'ls': '-'},
                     capprops={'zorder': 2, 'alpha': 0.8},
@@ -391,12 +438,12 @@ def _plot_duration_panel(ax, data, chains, state, palette_violin, palette_points
         if len(data) < 5000: # Threshold to avoid overcrowding and slow plotting
              sns.swarmplot(ax=ax, data=data, x='chain', y='duration_ns', hue='chain',
                            order=chains, hue_order=chains,
-                           palette=palette_points, size=3, alpha=0.6, legend=False, zorder=1)
+                           palette=chain_map_bright, size=3, alpha=0.6, legend=False, zorder=1)
         else:
             # Optionally plot stripplot as fallback if too many points
             sns.stripplot(ax=ax, data=data, x='chain', y='duration_ns', hue='chain',
                           order=chains, hue_order=chains,
-                          palette=palette_points, size=2, alpha=0.4, jitter=0.2, legend=False, zorder=1)
+                          palette=chain_map_bright, size=2, alpha=0.4, jitter=0.2, legend=False, zorder=1)
             logger.info(f"Using stripplot instead of swarmplot for {state} durations due to large number of points ({len(data)}).")
     except Exception as e_swarm:
         logger.error(f"Error during swarmplot/stripplot for {state} durations: {e_swarm}", exc_info=True)
@@ -411,6 +458,10 @@ def _plot_duration_panel(ax, data, chains, state, palette_violin, palette_points
     except Exception as e_mean:
          logger.error(f"Error calculating or plotting mean points for {state} durations: {e_mean}", exc_info=True)
 
+    # Set y-limit to force minimum at 0 since durations cannot be negative
+    y_min, y_max = ax.get_ylim()
+    ax.set_ylim(0, y_max * 1.05)  # Set lower limit to 0, add 5% padding to upper limit
+    
     ax.set_title(title)
     ax.set_xlabel('Chain')
     ax.set_ylabel('') # Y-label set globally
@@ -452,25 +503,21 @@ def plot_duration_distributions(
         logger.warning("Skipping duration distribution plot: No chains found in event data.")
         return None
 
-    # Define consistent palettes
-    # Using different palettes for different elements can improve clarity
-    palette_violin = sns.color_palette("pastel", n_colors=n_chains)
-    palette_points = sns.color_palette("muted", n_colors=n_chains)
-    palette_bright = sns.color_palette("bright", n_colors=n_chains)
-    chain_map_violin = {ch: col for ch, col in zip(chains, palette_violin)}
-    chain_map_points = {ch: col for ch, col in zip(chains, palette_points)}
-    chain_map_bright = {ch: col for ch, col in zip(chains, palette_bright)}
+    # Use consistent color mapping with our new function
+    color_maps = get_chain_color_maps(chains)
+    chain_map_pastel = color_maps['pastel']  # For violin plots (background)
+    chain_map_bright = color_maps['bright']  # For boxplots and points (foreground)
 
     # Create figure with two subplots (Open, Closed) side-by-side
     fig, axes = plt.subplots(1, 2, figsize=(16, 7), sharey=False) # Start with unshared Y
 
     # Plot Open State Durations
     _plot_duration_panel(axes[0], open_events, chains, OPEN_STATE,
-                         chain_map_violin, chain_map_points, chain_map_bright, 'Open State Durations')
+                        chain_map_pastel, chain_map_bright, 'Open State Durations')
 
     # Plot Closed State Durations
     _plot_duration_panel(axes[1], closed_events, chains, CLOSED_STATE,
-                         chain_map_violin, chain_map_points, chain_map_bright, 'Closed State Durations')
+                        chain_map_pastel, chain_map_bright, 'Closed State Durations')
 
     # Determine common y-axis limits or keep separate?
     # Keeping separate allows better view of each distribution if scales differ greatly.
@@ -502,4 +549,4 @@ def plot_duration_distributions(
     plot_rel_path = os.path.join(os.path.basename(output_dir), plot_filename)
     return plot_rel_path
 
-# Placeholder for other plotting functions 
+# Placeholder for other plotting functions
