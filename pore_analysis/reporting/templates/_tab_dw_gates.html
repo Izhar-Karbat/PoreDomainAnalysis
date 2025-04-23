@@ -31,7 +31,52 @@
     {% endif %}
 </div>
 
-{# 2. Statistics Table (Summary) #}
+{# 2. Distance vs. State Plot #}
+<h3>DW-Gate state - time series</h3>
+<p>The plot below shows the raw DW gate distance for each chain over time (thin line) overlaid with the corresponding debounced state (thick bars positioned at reference OPEN/CLOSED distances).</p>
+<div class="plot-container">
+    {% if plots.dw_distance_vs_state %}
+        <img src="data:image/png;base64,{{ plots.dw_distance_vs_state }}" alt="DW Gate Distance vs State">
+        <p><small>Plot: Raw distance traces overlaid with debounced state indicators.</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate Distance vs. State plot (<code>dw_gate_distance_vs_state.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
+</div>
+
+{# 3. State Heatmap Plot #}
+<h3>State Heatmap</h3>
+<p>Heatmap showing the debounced state (Closed=Dark Blue, Open=Light Blue) for each chain over the course of the simulation.</p>
+<div class="plot-container">
+    {% if plots.dw_state_heatmap %}
+        <img src="data:image/png;base64,{{ plots.dw_state_heatmap }}" alt="DW Gate State Heatmap">
+        <p><small>Plot: Heatmap of debounced states over time.</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate State Heatmap plot (<code>dw_gate_state_heatmap.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
+</div>
+
+{# 4. Open Probability Plot #}
+<h3>Open State Probability</h3>
+<p>Bar chart visualizing the probability of each chain being in the OPEN state.</p>
+<div class="plot-container">
+    {% if plots.dw_open_probability %}
+        <img src="data:image/png;base64,{{ plots.dw_open_probability }}" alt="DW Gate Open Probability">
+        <p><small>Plot: Probability of each chain being in the open state.</small></p>
+    {% else %}
+        <div class="warning-box">
+            <h4>Plot Missing</h4>
+            <p>The DW Gate Open Probability plot (<code>dw_gate_open_probability.png</code>) was not found or failed to load.</p>
+        </div>
+    {% endif %}
+</div>
+
+{# 5. Statistics Table (Summary) #}
 <h3>Event Summary Statistics</h3>
 <p>Summary statistics for the duration of detected OPEN and CLOSED events after RLE debouncing.</p>
 {# Assuming the analyse_dw_gates function populates run_summary with dw_gate_stats #}
@@ -52,11 +97,11 @@
     </div>
 {% endif %}
 
-{# 3. Probability Table/Info (Probability + Chi2) #}
+{# 6. Probability Table/Info (Probability + Chi2) #}
 <h3>State Probabilities and Chi-squared Test</h3>
 <p>Overall probability of each chain being in the OPEN or CLOSED state, based on the total time spent in each state.</p>
 {% if run_summary.dw_gate_stats and run_summary.dw_gate_stats.probability_table_html %}
-    {{ run_summary.dw_gate_stats.probability_table_html | safe }}x
+    {{ run_summary.dw_gate_stats.probability_table_html | safe }}
 {% else %}
     <div class="warning-box">
         <h4>Statistics Missing</h4>
@@ -76,7 +121,7 @@
     </div>
 {% endif %}
 
-{# 4. Statistical Test Results (Kruskal + Mann-Whitney) #}
+{# 7. Statistical Test Results (Kruskal + Mann-Whitney) #}
 <h3>Statistical Comparison of Open State Durations</h3>
 <p>Statistical tests comparing the distribution of <strong>OPEN state durations</strong> across the different chains.</p>
 
@@ -102,51 +147,6 @@
     </div>
 {% endif %}
 
-{# 5. Distance vs. State Plot #}
-<h3>Distance Traces and Debounced States</h3>
-<p>The plot below shows the raw DW gate distance for each chain over time (thin line) overlaid with the corresponding debounced state (thick bars positioned at reference OPEN/CLOSED distances).</p>
-<div class="plot-container">
-    {% if plots.dw_distance_vs_state %}
-        <img src="data:image/png;base64,{{ plots.dw_distance_vs_state }}" alt="DW Gate Distance vs State">
-        <p><small>Plot: Raw distance traces overlaid with debounced state indicators.</small></p>
-    {% else %}
-        <div class="warning-box">
-            <h4>Plot Missing</h4>
-            <p>The DW Gate Distance vs. State plot (<code>dw_gate_distance_vs_state.png</code>) was not found or failed to load.</p>
-        </div>
-    {% endif %}
-</div>
-
-{# 6. Open Probability Plot #}
-<h3>Open State Probability</h3>
-<p>Bar chart visualizing the probability of each chain being in the OPEN state.</p>
-<div class="plot-container">
-    {% if plots.dw_open_probability %}
-        <img src="data:image/png;base64,{{ plots.dw_open_probability }}" alt="DW Gate Open Probability">
-        <p><small>Plot: Probability of each chain being in the open state.</small></p>
-    {% else %}
-        <div class="warning-box">
-            <h4>Plot Missing</h4>
-            <p>The DW Gate Open Probability plot (<code>dw_gate_open_probability.png</code>) was not found or failed to load.</p>
-        </div>
-    {% endif %}
-</div>
-
-{# 7. State Heatmap Plot #}
-<h3>State Heatmap</h3>
-<p>Heatmap showing the debounced state (Closed=Dark Blue, Open=Light Blue) for each chain over the course of the simulation.</p>
-<div class="plot-container">
-    {% if plots.dw_state_heatmap %}
-        <img src="data:image/png;base64,{{ plots.dw_state_heatmap }}" alt="DW Gate State Heatmap">
-        <p><small>Plot: Heatmap of debounced states over time.</small></p>
-    {% else %}
-        <div class="warning-box">
-            <h4>Plot Missing</h4>
-            <p>The DW Gate State Heatmap plot (<code>dw_gate_state_heatmap.png</code>) was not found or failed to load.</p>
-        </div>
-    {% endif %}
-</div>
-
 {# 8. Duration Distributions Plot #}
 <h3>Event Duration Distributions</h3>
 <p>Violin plots showing the distribution of OPEN and CLOSED state durations for each chain, overlaid with box plots (indicating median, quartiles) and swarm plots (showing individual event durations).</p>
@@ -157,7 +157,7 @@
     {% else %}
         <div class="warning-box">
             <h4>Plot Missing</h4>
-            <p>The DW Gate Duration Distributions plot (<code>dw_gate_duration_distributions.png</code>) was not found or failed to load.</p>
+            <p>The DW Gate Duration Distributions plot (<code>dw_gate_duration_distribution.png</code>) was not found or failed to load.</p>
         </div>
     {% endif %}
 </div>
