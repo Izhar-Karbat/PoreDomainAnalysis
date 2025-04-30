@@ -16,8 +16,6 @@ tests/data/
 # Generated artifacts
 *.log
 *.png
-*.csv
-*.json
 
 # OS / editor files
 .DS_Store
