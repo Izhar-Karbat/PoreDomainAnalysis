@@ -1,0 +1,107 @@
+<div class="section">
+    <h2>DW Gate Dynamics</h2>
+    <p>Analysis of the DW (Asp/Trp) gate, located near the extracellular entry to the pore at the top of the peripheral cavity, forming an upper barrier.</p>
+
+    {% if module_status.get('dw_gate_analysis') == 'success' %}
+    <h3>DW Gate State Summary</h3>
+    <table class="stats-table">
+        <thead>
+            <tr><th>Chain</th><th>Open %</th><th>Closed %</th><th>Mean Open Duration (ns)</th><th>Mean Closed Duration (ns)</th></tr>
+        </thead>
+        <tbody>
+            {% for chain in ['A', 'B', 'C', 'D'] %}
+            <tr>
+                <td>{{ chain }}</td>
+                {# FIXED: Use PRO prefix for metric keys #}
+                <td>{{ (100 - metrics.get('DW_PRO'~chain~'_Closed_Fraction', {}).get('value', 50))|round(1) }}%</td>
+                <td>{{ metrics.get('DW_PRO'~chain~'_Closed_Fraction', {}).get('value', 'N/A')|round(1) if metrics.get('DW_PRO'~chain~'_Closed_Fraction', {}).get('value') is not none else 'N/A' }}%</td>
+                <td>{{ metrics.get('DW_PRO'~chain~'_open_Mean_ns', {}).get('value', 'N/A')|round(2) if metrics.get('DW_PRO'~chain~'_open_Mean_ns', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('DW_PRO'~chain~'_closed_Mean_ns', {}).get('value', 'N/A')|round(2) if metrics.get('DW_PRO'~chain~'_closed_Mean_ns', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {# Display the DW Gate statistical test results #}
+    {% if metrics.get('DW_StateDurationVsChain_Chi2_pvalue') or metrics.get('DW_OpenDurationVsChain_Kruskal_pvalue') %}
+        <h4>Statistical Tests (Inter-Chain Comparison)</h4>
+        <table class="stats-table" style="width: auto; margin-left: 0;"> {# More compact table #}
+            <thead>
+                <tr><th>Test Description</th><th>Statistic</th><th>p-value</th><th>Result</th></tr>
+            </thead>
+            <tbody>
+                {% if metrics.get('DW_StateDurationVsChain_Chi2_pvalue') %}
+                <tr>
+                    <td>Chi-Squared (State Duration vs Chain)</td>
+                    <td>N/A</td> {# Statistic not currently stored easily #}
+                    <td>{{ "%.3g"|format(metrics.get('DW_StateDurationVsChain_Chi2_pvalue').value) if metrics.get('DW_StateDurationVsChain_Chi2_pvalue').value is not none else 'N/A' }}</td>
+                    <td>{% if metrics.get('DW_StateDurationVsChain_Chi2_pvalue').value is not none and metrics.get('DW_StateDurationVsChain_Chi2_pvalue').value < 0.05 %}Significant{% elif metrics.get('DW_StateDurationVsChain_Chi2_pvalue').value is not none %}Not Significant{% else %}N/A{% endif %}</td>
+                </tr>
+                {% endif %}
+                {% if metrics.get('DW_OpenDurationVsChain_Kruskal_pvalue') %}
+                <tr>
+                    <td>Kruskal-Wallis (Open Duration vs Chain)</td>
+                     <td>N/A</td> {# Statistic not currently stored easily #}
+                    <td>{{ "%.3g"|format(metrics.get('DW_OpenDurationVsChain_Kruskal_pvalue').value) if metrics.get('DW_OpenDurationVsChain_Kruskal_pvalue').value is not none else 'N/A' }}</td>
+                    <td>{% if metrics.get('DW_OpenDurationVsChain_Kruskal_pvalue').value is not none and metrics.get('DW_OpenDurationVsChain_Kruskal_pvalue').value < 0.05 %}Significant{% elif metrics.get('DW_OpenDurationVsChain_Kruskal_pvalue').value is not none %}Not Significant{% else %}N/A{% endif %}</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+        <p class="info-box" style="font-size: 0.85em;">Significance assessed at p < 0.05. Chi-squared tests if state duration distributions differ across chains. Kruskal-Wallis tests if median open state durations differ across chains.</p>
+    {% endif %}
+
+
+    <h3>DW Gate Plots</h3>
+    <div class="plot-container">
+        <h4>DW Gate Distance Distribution</h4> {# Title provided here in HTML #}
+        {% if plots.get('dw_distance_distribution') %}
+            <img src="data:image/png;base64,{{ plots.dw_distance_distribution }}" alt="DW Gate Distance Distribution">
+             <p>Distribution of raw DW-Gate distances across all chains, showing KDE peaks and final reference states used.</p> {# Description #}
+        {% else %}
+            <p><i>Plot not available.</i></p>
+        {% endif %}
+    </div>
+    <div class="plot-container">
+        <h4>DW Gate State Time Series</h4> {# Title provided here in HTML #}
+        {% if plots.get('dw_distance_vs_state') %}
+            <img src="data:image/png;base64,{{ plots.dw_distance_vs_state }}" alt="DW Gate Distance vs State">
+             <p>Raw DW-Gate distance (pastel line) vs. final assigned state (thicker bar segments) per chain.</p> {# Description #}
+       {% else %}
+            <p><i>Plot not available.</i></p>
+        {% endif %}
+    </div>
+    <div class="plot-container">
+        <h4>DW Gate Open Probability</h4> {# Title provided here in HTML #}
+        {% if plots.get('dw_open_probability') %}
+            <img src="data:image/png;base64,{{ plots.dw_open_probability }}" alt="DW Gate Open Probability">
+             <p>Fraction of time each chain spent in the Open state.</p> {# Description #}
+        {% else %}
+            <p><i>Plot not available.</i></p>
+        {% endif %}
+    </div>
+    <div class="plot-container">
+        <h4>DW Gate State Heatmap</h4> {# Title provided here in HTML #}
+        {% if plots.get('dw_state_heatmap') %}
+            <img src="data:image/png;base64,{{ plots.dw_state_heatmap }}" alt="DW Gate State Heatmap">
+            <p>Heatmap showing the Open (red) / Closed (blue) state of each chain over time.</p> {# Description #}
+        {% else %}
+            <p><i>Plot not available.</i></p>
+        {% endif %}
+    </div>
+     <div class="plot-container"> {# Added container for duration plot #}
+        <h4>DW Gate Duration Distributions</h4> {# Title provided here in HTML #}
+        {% if plots.get('dw_duration_distributions') %}
+            <img src="data:image/png;base64,{{ plots.dw_duration_distributions }}" alt="DW Gate Duration Distributions">
+            <p>Distribution of dwell times for Open and Closed states per chain.</p> {# Description #}
+        {% else %}
+            <p><i>Plot not available.</i></p>
+        {% endif %}
+    </div>
+    {% else %}
+    {# Keep original message if module didn't succeed #}
+    <div class="info-box">
+        <p>DW Gate analysis is under development. The database-centric implementation will be added in a future update.</p>
+    </div>
+    {% endif %}
+</div>

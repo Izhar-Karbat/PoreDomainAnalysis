@@ -1,0 +1,101 @@
+{# pore_analysis/templates/_tab_toxin.html #}
+<div class="section">
+    <h2>Toxin Interface Analysis</h2>
+    <p>Analysis of toxin orientation relative to the channel axis, toxin rotation relative to its starting frame, and toxin-channel contacts.</p>
+
+    {# Check if this is NOT a control system #}
+    {% if not is_control_system %}
+        {# Check if the core computation module ran successfully #}
+        {% if module_status.get('orientation_analysis') == 'success' %}
+            <h3>Toxin Orientation & Rotation</h3>
+            <div class="two-column">
+                <div class="column plot-container">
+                    <h4>Orientation Angle vs Channel Axis</h4>
+                    {% if plots.get('orientation_angle') %}
+                        <img src="data:image/png;base64,{{ plots.orientation_angle }}" alt="Toxin Orientation Angle">
+                    {% else %}
+                        <p><i class="unavailable">Plot not available.</i></p>
+                    {% endif %}
+                </div>
+                <div class="column plot-container">
+                    <h4>Rotation Components Relative to Start</h4>
+                    {% if plots.get('rotation_components') %}
+                        <img src="data:image/png;base64,{{ plots.rotation_components }}" alt="Toxin Rotation Components">
+                    {% else %}
+                        <p><i class="unavailable">Plot not available.</i></p>
+                    {% endif %}
+                </div>
+            </div>
+            <table class="stats-table">
+                <thead><tr><th>Metric</th><th>Value</th><th>Units</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td>Mean Orientation Angle</td>
+                        <td>{{ metrics.get('Orient_Angle_Mean', {}).get('value', 'N/A') | round(2) if metrics.get('Orient_Angle_Mean', {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ metrics.get('Orient_Angle_Mean', {}).get('units', '°') }}</td>
+                    </tr>
+                    <tr>
+                        <td>Std Dev Orientation Angle</td>
+                        <td>{{ metrics.get('Orient_Angle_Std', {}).get('value', 'N/A') | round(2) if metrics.get('Orient_Angle_Std', {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ metrics.get('Orient_Angle_Std', {}).get('units', '°') }}</td>
+                    </tr>
+                    {# Add Rotation Stats if needed #}
+                    <tr><td>Mean Rotation X</td><td>{{ metrics.get('Orient_RotX_Mean', {}).get('value', 'N/A') | round(2) if metrics.get('Orient_RotX_Mean', {}).get('value') is not none else 'N/A' }}</td><td>{{ metrics.get('Orient_RotX_Mean', {}).get('units', '°') }}</td></tr>
+                    <tr><td>Mean Rotation Y</td><td>{{ metrics.get('Orient_RotY_Mean', {}).get('value', 'N/A') | round(2) if metrics.get('Orient_RotY_Mean', {}).get('value') is not none else 'N/A' }}</td><td>{{ metrics.get('Orient_RotY_Mean', {}).get('units', '°') }}</td></tr>
+                    <tr><td>Mean Rotation Z</td><td>{{ metrics.get('Orient_RotZ_Mean', {}).get('value', 'N/A') | round(2) if metrics.get('Orient_RotZ_Mean', {}).get('value') is not none else 'N/A' }}</td><td>{{ metrics.get('Orient_RotZ_Mean', {}).get('units', '°') }}</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Toxin-Channel Contacts</h3>
+            <div class="plot-container">
+                <h4>Total Atom Contacts (&lt; 3.5 Å) Over Time</h4>
+                {% if plots.get('channel_contacts') %}
+                    <img src="data:image/png;base64,{{ plots.channel_contacts }}" alt="Toxin Channel Contacts">
+                {% else %}
+                    <p><i class="unavailable">Plot not available.</i></p>
+                {% endif %}
+            </div>
+            <table class="stats-table">
+                <thead><tr><th>Metric</th><th>Value</th><th>Units</th></tr></thead>
+                <tbody>
+                     <tr>
+                        <td>Mean Atom Contacts</td>
+                        <td>{{ metrics.get('Orient_Contacts_Mean', {}).get('value', 'N/A') | round(1) if metrics.get('Orient_Contacts_Mean', {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ metrics.get('Orient_Contacts_Mean', {}).get('units', 'count') }}</td>
+                    </tr>
+                    <tr>
+                        <td>Std Dev Atom Contacts</td>
+                        <td>{{ metrics.get('Orient_Contacts_Std', {}).get('value', 'N/A') | round(1) if metrics.get('Orient_Contacts_Std', {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ metrics.get('Orient_Contacts_Std', {}).get('units', 'count') }}</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Residue Contact Maps</h3>
+            <div class="plot-container">
+                <h4>Focused Contact Map (Top Interacting Residues)</h4>
+                {% if plots.get('contact_map_focused') %}
+                    <img src="data:image/png;base64,{{ plots.contact_map_focused }}" alt="Focused Residue Contact Map">
+                {% else %}
+                    <p><i class="unavailable">Plot not available.</i></p>
+                {% endif %}
+            </div>
+            {% elif module_status.get('orientation_analysis') == 'skipped' %}
+             <div class="info-box">
+                Orientation analysis was skipped for this run (likely identified as a control system by the analysis script).
+            </div>
+        {% else %}
+            {# Case where module failed or is pending #}
+             <div class="warning-box">
+                <h4>Analysis Incomplete</h4>
+                <p>Toxin interface analysis did not complete successfully (Status: {{ module_status.get('orientation_analysis', 'Unknown') }}). Plots and metrics may be missing.</p>
+            </div>
+        {% endif %}
+
+    {% else %}
+        {# Case where is_control_system is explicitly True #}
+        <div class="info-box">
+            This is a control system without toxin. Orientation and interface analysis is not applicable.
+        </div>
+    {% endif %}
+</div>

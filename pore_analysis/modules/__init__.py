@@ -1,3 +1,3 @@
 """
-Specialized analysis modules
+Specialized analysis modules for pore analysis.
 """

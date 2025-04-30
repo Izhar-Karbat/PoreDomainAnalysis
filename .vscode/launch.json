@@ -1,22 +1,29 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug MD Analysis (R1)", // Give it a descriptive name
+            "name": "Python: Pore Analysis Module",
             "type": "python",
             "request": "launch",
-            "module": "md_analysis.main", // Specify to run as a module
+            "module": "pore_analysis.main",
             "args": [
-                "--folder",
-                "/home/labs/bmeitan/karbati/rCs1/toxin/toxin/R1"
-                // Add any other necessary flags here (e.g., --orientation if needed)
+                "--folder",  // Argument flag
+                "/home/labs/bmeitan/karbati/rCs1/toxin/toxin/R6", // Argument value
+                "--dwgates"
             ],
-            "console": "integratedTerminal", // Show output in the integrated terminal
-            "justMyCode": true // Often helpful to skip stepping into installed library code
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
-        // ... other configurations if you have them ...
     ]
 }

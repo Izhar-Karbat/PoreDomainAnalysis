@@ -1,9 +1,14 @@
+# pore_analysis/modules/orientation_contacts/__init__.py
 """
 Orientation and contacts analysis module for molecular dynamics trajectories.
-This module provides functions for analyzing toxin orientation, rotation,
-and contacts with the channel.
+Provides functions for computation and visualization of toxin orientation,
+rotation, and contacts with the channel.
 """
 
-from .orientation import analyze_toxin_orientation
+from .computation import run_orientation_analysis
+from .visualization import generate_orientation_plots
 
-__all__ = ['analyze_toxin_orientation']
+__all__ = [
+    'run_orientation_analysis',
+    'generate_orientation_plots'
+    ]

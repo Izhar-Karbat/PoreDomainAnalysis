@@ -1,0 +1,118 @@
+<div class="section">
+    <h2>SF Tyrosine Analysis (HMM Based)</h2>
+    <p>Analysis of the Selectivity Filter Tyrosine (e.g., Y445) rotational state and dynamics based on Chi1 and Chi2 dihedral angles using a Hidden Markov Model.</p>
+
+    {% if module_status.get('tyrosine_analysis') == 'success' %}
+        <h3>HMM Rotamer Summary</h3>
+        <div class="info-box">
+            Rotamer state is defined by (Chi1, Chi2) angles using t/p/m codes (see plot below).<br>
+            HMM transitions are calculated based on the filtered dwell events.<br>
+            Flicker Filter Duration: {{ metrics.get('Config_TyrHMM_FlickerNs', {'value': 'N/A'}).value }} ns
+            (HMM states shorter than this may be merged/discarded).
+        </div>
+        <table class="stats-table">
+            <tr>
+                <th>Metric / State</th>
+                <th>Value</th>
+                <th>Units</th>
+            </tr>
+            <tr>
+                <td>Dominant Rotamer State (HMM)</td>
+                <td>{{ metadata.get('Tyr_HMM_DominantState', 'N/A') }}</td>
+                <td>state</td>
+            </tr>
+            <tr>
+                <td>Total State Transitions (HMM)</td>
+                <td>{{ metrics.get('Tyr_HMM_TotalTransitions', {'value': 'N/A'}).value | int if metrics.get('Tyr_HMM_TotalTransitions', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Tyr_HMM_TotalTransitions', {'units': 'count'}).units }}</td>
+            </tr>
+
+            {# --- ADDED: Loop for State Populations & Dwell Times --- #}
+            {% set population_threshold = 0.1 %} {# Set a threshold (e.g., 0.1%) to display minor states #}
+            {# Define the order of states - ideally get this from config if passed to template, otherwise hardcode #}
+            {% set state_order = ['mt', 'mm', 'mp', 'pt', 'pm', 'pp', 'tt', 'tm', 'tp'] %}
+
+            {% for state in state_order %}
+                {% set pop_metric_name = 'Tyr_HMM_Population_' ~ state %}
+                {% set population = metrics.get(pop_metric_name, {}).get('value', 0.0) %}
+                {% if population is not none and population >= population_threshold %}
+                    {# Display Population #}
+                    <tr>
+                        <td>Population ({{ state }})</td>
+                        <td>{{ "%.1f"|format(population) }}</td>
+                        <td>{{ metrics.get(pop_metric_name, {'units': '%'}).units }}</td>
+                    </tr>
+                    {# Display Mean Dwell Time #}
+                    {% set dwell_metric_name = 'Tyr_HMM_MeanDwell_' ~ state %}
+                    <tr>
+                        <td>Mean Dwell Time ({{ state }})</td>
+                         <td>{{ "%.3f"|format(metrics.get(dwell_metric_name, {'value': 0.0}).value) if metrics.get(dwell_metric_name, {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ metrics.get(dwell_metric_name, {'units': 'ns'}).units }}</td>
+                    </tr>
+                {% endif %}
+            {% endfor %}
+            {# --- END ADDED SECTION --- #}
+
+        </table>
+
+        {# Plot section remains largely the same, ensure keys match plots_dict.json #}
+        {% if module_status.get('tyrosine_analysis_visualization') == 'success' %}
+            <h3>Rotamer Plots</h3>
+            <div class="two-column">
+                <div class="column plot-container">
+                     <h4>SF Tyrosine Dihedral Time Series (Chi1)</h4>
+                    {% if plots.get('sf_tyrosine_chi1_dihedrals') %} {# Key from plots_dict.json #}
+                        <img src="data:image/png;base64,{{ plots.sf_tyrosine_chi1_dihedrals }}" alt="SF Tyrosine Chi1 Dihedral Time Series">
+                        <p>Chi1 dihedral angles per chain over time. Background color indicates HMM rotamer state.</p>
+                    {% else %}
+                        <p><i class="unavailable">Chi1 Plot not available.</i></p>
+                    {% endif %}
+                </div>
+                <div class="column plot-container">
+                    <h4>SF Tyrosine Dihedral Time Series (Chi2)</h4>
+                    {% if plots.get('sf_tyrosine_chi2_dihedrals') %} {# Key from plots_dict.json #}
+                        <img src="data:image/png;base64,{{ plots.sf_tyrosine_chi2_dihedrals }}" alt="SF Tyrosine Chi2 Dihedral Time Series">
+                        <p>Chi2 dihedral angles per chain over time. Background color indicates HMM rotamer state.</p>
+                    {% else %}
+                        <p><i class="unavailable">Chi2 Plot not available.</i></p>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="plot-container">
+                 <h4>SF Tyrosine Rotamer Scatter Plot (Chi1 vs Chi2)</h4>
+                {% if plots.get('sf_tyrosine_rotamer_scatter') %} {# Key from plots_dict.json #}
+                    <img src="data:image/png;base64,{{ plots.sf_tyrosine_rotamer_scatter }}" alt="SF Tyrosine Rotamer Scatter Plot">
+                     <p>Scatter plot showing the distribution of Chi1 vs Chi2 dihedral angles, indicating preferred rotameric states.</p>
+               {% else %}
+                    <p><i class="unavailable">Plot not available.</i></p>
+                {% endif %}
+            </div>
+            <div class="plot-container">
+                <h4>SF Tyrosine Rotamer State Population (HMM)</h4>
+                {% if plots.get('sf_tyrosine_rotamer_population') %} {# Key from plots_dict.json #}
+                    <img src="data:image/png;base64,{{ plots.sf_tyrosine_rotamer_population }}" alt="SF Tyrosine Rotamer State Population">
+                    <p>Bar plot showing the population distribution of the different HMM-classified rotamer states.<br>
+                       States are represented as (Chi1, Chi2), where <b>t</b>=trans (±180°), <b>p</b>=plus (+60°), <b>m</b>=minus (-60°).
+                    </p>
+                {% else %}
+                    <p><i class="unavailable">Plot not available.</i></p>
+                {% endif %}
+            </div>
+        {% else %}
+             <div class="warning-box">
+                 <h4>Visualization Incomplete</h4>
+                 <p>Tyrosine analysis visualization did not complete successfully (Status: {{ module_status.get('tyrosine_analysis_visualization', 'Unknown') }}). Plots may be missing.</p>
+             </div>
+        {% endif %} {# End viz check #}
+
+    {% elif module_status.get('tyrosine_analysis') == 'skipped' %}
+        <div class="info-box">
+            <p>SF Tyrosine analysis was skipped for this run.</p>
+        </div>
+    {% else %}
+         <div class="warning-box">
+            <h4>Analysis Incomplete or Failed</h4>
+            <p>SF Tyrosine analysis did not complete successfully (Status: {{ module_status.get('tyrosine_analysis', 'Unknown') }}). Plots and metrics may be missing or incomplete.</p>
+        </div>
+    {% endif %} {# End computation check #}
+</div>

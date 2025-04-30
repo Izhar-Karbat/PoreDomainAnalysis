@@ -1,6 +1,7 @@
+# filename: pore_analysis/modules/dw_gate_analysis/data_collection.py
 """
-Functions for loading the MDAnalysis Universe, selecting DW-gate residues,
-and calculating the raw distances between them over the trajectory.
+Functions for loading the MDAnalysis Universe and calculating raw
+DW-gate distances over the trajectory.
 """
 
 import logging
@@ -8,14 +9,19 @@ from typing import Dict, List, Optional, Tuple
 
 import MDAnalysis as mda
 from MDAnalysis.analysis.distances import distance_array
-from MDAnalysis.core.groups import AtomGroup
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-# Assuming residue_identification and utils are siblings
-from .residue_identification import find_gate_residues_for_chain, GateResidues
-from ...core.utils import frames_to_time # For time conversion
+# Import GateResidues type hint (assuming it's defined correctly in residue_identification)
+# Need to adjust relative import path if structure differs slightly
+try:
+    from .residue_identification import GateResidues
+except ImportError:
+    # Fallback if direct import fails (e.g., during testing)
+    # Define a simple placeholder if needed, though type hints are documentation primarily
+    class GateResidues: pass
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,77 +30,23 @@ def load_universe(psf_file: str, dcd_file: str) -> Optional[mda.Universe]:
     try:
         u = mda.Universe(psf_file, dcd_file)
         logger.info(f"Successfully loaded Universe: {len(u.atoms)} atoms, {len(u.trajectory)} frames.")
+        # Basic check for trajectory length
+        if len(u.trajectory) == 0:
+            logger.warning("Loaded trajectory has 0 frames.")
+            # Depending on requirements, might return None or the Universe
+            # Returning the Universe allows computation.py to handle the 0-frame case potentially
         return u
     except Exception as e:
         logger.error(f"Failed to load Universe from {psf_file} and {dcd_file}: {e}", exc_info=True)
         return None
 
-def select_dw_residues(
-    universe: mda.Universe,
-    chain_ids: List[str],
-    filter_res_map: Dict[str, List[int]] # Added filter_res_map
-    # Removed redundant parameters:
-    # asp_glu_resname: str = "ASP",
-    # asp_glu_resid: int = 27,
-    # trp_resname: str = "TRP",
-    # trp_resid: int = 31
-) -> Dict[str, GateResidues]:
-    """
-    Selects the D/E and W residues involved in the gate for each specified chain.
-
-    Uses `find_gate_residues_for_chain` from `residue_identification.py` which searches
-    relative to the selectivity filter (G1/G2) defined in `filter_res_map`.
-
-    Args:
-        universe: MDAnalysis Universe.
-        chain_ids: List of segment/chain IDs to search within.
-        filter_res_map: Dictionary mapping chain ID to list of filter residue IDs.
-
-    Returns:
-        Dictionary mapping chain ID to the found GateResidues object.
-        Returns an empty dict if no valid residues are found or chain IDs are invalid.
-    """
-    gate_residues: Dict[str, GateResidues] = {}
-    logger.info(f"Attempting to identify DW-gate residues relative to filter for chains: {chain_ids}")
-
-    if not filter_res_map:
-        logger.error("Filter residue map is empty. Cannot identify relative DW-gate residues.")
-        return {}
-
-    for segid in chain_ids:
-        # Check if this segid exists in the filter map before proceeding
-        if segid not in filter_res_map:
-            logger.warning(f"Skipping DW gate search for segid {segid}: Not found in filter_res_map.")
-            continue
-
-        try:
-            # Call find_gate_residues_for_chain with the correct 3 arguments
-            gate = find_gate_residues_for_chain(
-                u=universe, # Use keyword arg for clarity
-                segid=segid,
-                filter_res_map=filter_res_map
-            )
-            if gate:
-                gate_residues[segid] = gate
-                logger.debug(f"Found gate residues for chain {segid}: {gate}")
-            # No else needed, find_gate_residues_for_chain raises ValueError on failure
-        except ValueError as e:
-            # Catch specific errors from find_gate_residues_for_chain
-            logger.warning(f"Could not identify DW gate for chain {segid}: {e}")
-        except Exception as e:
-            # Catch unexpected errors
-            logger.error(f"Unexpected error finding gate residues for chain {segid}: {e}", exc_info=True)
-
-    if not gate_residues:
-        logger.error("Failed to identify any valid DW-gate residue pairs for the specified chains.")
-    else:
-        logger.info(f"Successfully identified gate residues for chains: {list(gate_residues.keys())}")
-    return gate_residues
+# Note: select_dw_residues function was removed as its logic is handled
+#       in residue_identification.py and called by computation.py
 
 def calculate_dw_distances(
     universe: mda.Universe,
-    gate_residues: Dict[str, GateResidues],
-    dt_ns: float # Time step in ns
+    gate_residues: Dict[str, GateResidues]
+    # dt_ns removed - time axis handled by computation.py
 ) -> Optional[pd.DataFrame]:
     """
     Calculates the minimum distance between Asp/Glu carboxylates (OD1/OD2/OE1/OE2)
@@ -103,11 +55,10 @@ def calculate_dw_distances(
     Args:
         universe: MDAnalysis Universe, trajectory must be loaded.
         gate_residues: Dictionary mapping chain ID to GateResidues objects.
-        dt_ns: Time difference between frames in nanoseconds.
 
     Returns:
-        Pandas DataFrame containing 'Time (ns)' and distance columns for each chain
-        (e.g., 'Dist_ChainA', 'Dist_ChainB'), or None if calculation fails.
+        Pandas DataFrame containing distance columns for each chain
+        (e.g., 'Dist_PROA', 'Dist_PROB'), indexed by frame number, or None if calculation fails.
         Distances are in Angstroms.
     """
     if not gate_residues:
@@ -116,7 +67,13 @@ def calculate_dw_distances(
 
     valid_segids = sorted(list(gate_residues.keys()))
     n_frames = len(universe.trajectory)
-    time_axis = np.arange(n_frames) * dt_ns
+
+    if n_frames == 0:
+        logger.warning("Cannot calculate distances: Trajectory has 0 frames.")
+        # Return an empty DataFrame with expected columns?
+        cols = [f"Dist_{segid}" for segid in valid_segids]
+        return pd.DataFrame(columns=cols)
+
 
     # Prepare atom selections
     selections = {}
@@ -143,13 +100,15 @@ def calculate_dw_distances(
         return None
 
     logger.info(f"Calculating DW-gate distances for chains: {valid_segids} over {n_frames} frames...")
-    distance_data = {f"Dist_{segid}": np.full(n_frames, np.nan) for segid in valid_segids}
+    # Initialize dict to hold numpy arrays for performance
+    distance_data_np = {f"Dist_{segid}": np.full(n_frames, np.nan) for segid in valid_segids}
 
     # Iterate through trajectory
-    for i, ts in enumerate(tqdm(universe.trajectory, desc="DW-gate Distances", total=n_frames)):
+    for ts in tqdm(universe.trajectory, desc="DW-gate Distances", total=n_frames, disable=not logger.isEnabledFor(logging.INFO)):
+        frame_idx = ts.frame
         for segid in valid_segids:
             try:
-                # Get atom groups for the current frame
+                # Get atom groups for the current frame (positions updated automatically by MDA)
                 acidic_ag = selections[segid]['acidic']
                 trp_ag = selections[segid]['trp']
 
@@ -158,24 +117,21 @@ def calculate_dw_distances(
                 dist_matrix = distance_array(acidic_ag.positions, trp_ag.positions, box=ts.dimensions)
 
                 # Find the minimum distance for this frame and chain
-                min_dist = np.min(dist_matrix)
-                distance_data[f"Dist_{segid}"][i] = min_dist
+                min_dist = np.min(dist_matrix) if dist_matrix.size > 0 else np.nan
+                distance_data_np[f"Dist_{segid}"][frame_idx] = min_dist
 
             except Exception as e:
-                logger.warning(f"Error calculating distance for chain {segid} at frame {ts.frame}: {e}", exc_info=False) # Avoid spamming logs
-                # Keep NaN value
+                # Log only once per chain if errors persist?
+                if frame_idx == 0: # Log first instance
+                    logger.warning(f"Error calculating distance for chain {segid} at frame {ts.frame}: {e}", exc_info=False)
+                # Keep NaN value assigned during initialization
 
-    # Create DataFrame
-    df_raw = pd.DataFrame(distance_data)
-    df_raw.insert(0, 'Time (ns)', time_axis)
+    # Create DataFrame from the numpy arrays
+    df_raw = pd.DataFrame(distance_data_np, index=pd.RangeIndex(start=0, stop=n_frames, name='Frame'))
 
     logger.info(f"Finished calculating DW-gate distances. DataFrame shape: {df_raw.shape}")
     # Log summary stats for debugging
     for col in df_raw.columns:
-        if col != 'Time (ns)':
-            logger.debug(f"Distance summary for {col}: Min={df_raw[col].min():.2f}, Max={df_raw[col].max():.2f}, Mean={df_raw[col].mean():.2f} Å (NaNs={df_raw[col].isna().sum()})")
+        logger.debug(f"Distance summary for {col}: Min={df_raw[col].min():.2f}, Max={df_raw[col].max():.2f}, Mean={df_raw[col].mean():.2f} Å (NaNs={df_raw[col].isna().sum()})")
 
     return df_raw
-
-# Placeholder - Remove the old placeholder comment
-# Placeholder for data collection functions 

@@ -1,0 +1,178 @@
+<div class="section">
+    <h2>Pore Ion Analysis</h2>
+    <p>Analysis of K+ ion positions, occupancy, transitions, and conduction within the selectivity filter and cavity, determined using a Hidden Markov Model (HMM).</p>
+
+    {# Check if the required analysis modules completed successfully #}
+    {% if module_status.get('ion_analysis') == 'success' %}
+
+        {# --- 1. Ion Positions & Density --- #}
+        <h3>Ion Trajectories and Distribution</h3>
+        <div class="plot-container">
+            <h4>Ion Positions & Density</h4>
+            {% if plots.get('k_ion_combined_plot') %} {# Use correct key from plots_dict.json #}
+                <img src="data:image/png;base64,{{ plots.get('k_ion_combined_plot') }}" alt="Combined Ion Plot">
+            {% else %}
+                <p><i class="unavailable">Plot not available.</i></p>
+            {% endif %}
+            <p>Left: K+ ion Z-positions (relative to G1 Cα) over time. Right: Density distribution of ion positions.</p>
+        </div>
+
+        {# --- 2. HMM Idealized Transitions --- #}
+        <div class="plot-container">
+             <h4>HMM Idealized Transitions</h4>
+             {% if plots.get('hmm_transitions_plot') %} {# Use new HMM plot key #}
+                 <img src="data:image/png;base64,{{ plots.get('hmm_transitions_plot') }}" alt="HMM Ion Transitions Plot">
+             {% else %}
+                 <p><i class="unavailable">Plot not available.</i></p>
+             {% endif %}
+            <p>Comparison of actual K+ ion Z-positions (thin pastel lines) vs. idealized dwell states derived from HMM analysis (thicker solid/dashed lines, tiered by occupancy).</p>
+        </div>
+
+        {# --- 3. Site Occupancy Heatmap --- #}
+        <h3>Ion Occupancy</h3>
+        <div class="plot-container">
+            <h4>Site Occupancy Heatmap</h4>
+             {% if plots.get('k_ion_occupancy_heatmap') %} {# Use correct key from plots_dict.json #}
+                 <img src="data:image/png;base64,{{ plots.get('k_ion_occupancy_heatmap') }}" alt="Ion Occupancy Heatmap">
+             {% else %}
+                 <p><i class="unavailable">Plot not available.</i></p>
+             {% endif %}
+            <p>Heatmap showing the number of ions occupying each binding site over time.</p>
+        </div>
+
+        {# --- 4. Average Site Occupancy --- #}
+        <div class="plot-container">
+            <h4>Average Site Occupancy</h4>
+             {% if plots.get('k_ion_average_occupancy') %} {# Use correct key from plots_dict.json #}
+                 <img src="data:image/png;base64,{{ plots.get('k_ion_Average_occupancy') }}" alt="Average Ion Occupancy">
+             {% else %}
+                 <p><i class="unavailable">Plot not available.</i></p>
+             {% endif %}
+            <p>Bar plot showing the average number of ions found at each binding site over the simulation.</p>
+        </div>
+        {# Also display the summary table for occupancy #}
+        <table class="stats-table">
+            <thead><tr><th>Site</th><th>Mean Occ. (ions)</th><th>Max Occ. (ions)</th><th>% Time Occupied (>0)</th></tr></thead>
+            <tbody>
+            {% for site in ['S0', 'S1', 'S2', 'S3', 'S4', 'Cavity'] %}
+                <tr>
+                    <td>{{ site }}</td>
+                    <td>{{ metrics.get('Ion_AvgOcc_'~site, {}).get('value', 'N/A') | round(3) if metrics.get('Ion_AvgOcc_'~site, {}).get('value') is not none else 'N/A' }}</td>
+                    <td>{{ metrics.get('Ion_MaxOcc_'~site, {}).get('value', 'N/A') | int if metrics.get('Ion_MaxOcc_'~site, {}).get('value') is not none else 'N/A' }}</td>
+                    <td>{{ metrics.get('Ion_PctTimeOcc_'~site, {}).get('value', 'N/A') | round(1) if metrics.get('Ion_PctTimeOcc_'~site, {}).get('value') is not none else 'N/A' }}%</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        {# --- 5. Ion Conduction & HMM Transition Statistics --- #}
+        <h3>Ion Conduction & HMM Transition Statistics</h3>
+        {# Check for a key HMM metric #}
+        {% if metrics.get('Ion_HMM_ConductionEvents_Total') is defined %}
+        <table class="stats-table">
+            <thead>
+                <tr><th>Metric</th><th>Value</th><th>Metric</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Total Conduction Events (HMM)</td>
+                    <td>{{ metrics.get('Ion_HMM_ConductionEvents_Total', {}).get('value', 'N/A') | int }}</td>
+                    <td>Total Site Transitions (HMM)</td>
+                    <td>{{ metrics.get('Ion_HMM_TransitionEvents_Total', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+                 <tr>
+                    <td>Outward Conduction (HMM)</td>
+                    <td>{{ metrics.get('Ion_HMM_ConductionEvents_Outward', {}).get('value', 'N/A') | int }}</td>
+                    <td>Upward Transitions (HMM)</td>
+                     <td>{{ metrics.get('Ion_HMM_TransitionEvents_Upward', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+                <tr>
+                    <td>Inward Conduction (HMM)</td>
+                     <td>{{ metrics.get('Ion_HMM_ConductionEvents_Inward', {}).get('value', 'N/A') | int }}</td>
+                    <td>Downward Transitions (HMM)</td>
+                    <td>{{ metrics.get('Ion_HMM_TransitionEvents_Downward', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+                <tr>
+                    <td>Mean Transit Time (ns, HMM)</td>
+                    <td>
+                        {{ metrics.get('Ion_HMM_Conduction_MeanTransitTime_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Ion_HMM_Conduction_MeanTransitTime_ns', {}).get('value') is not none else 'N/A' }}
+                    </td>
+                    <td>Cavity &leftrightarrow; S4 (HMM)</td>
+                    <td>{{ metrics.get('Ion_HMM_Transition_Cavity_S4', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+                <tr>
+                    <td>Median Transit Time (ns, HMM)</td>
+                    <td>
+                         {{ metrics.get('Ion_HMM_Conduction_MedianTransitTime_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Ion_HMM_Conduction_MedianTransitTime_ns', {}).get('value') is not none else 'N/A' }}
+                    </td>
+                    <td>S4 &leftrightarrow; S3 (HMM)</td>
+                     <td>{{ metrics.get('Ion_HMM_Transition_S4_S3', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+                <tr>
+                    <td>Std Dev Transit Time (ns, HMM)</td>
+                    <td>
+                        {{ metrics.get('Ion_HMM_Conduction_StdTransitTime_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Ion_HMM_Conduction_StdTransitTime_ns', {}).get('value') is not none else 'N/A' }}
+                    </td>
+                    <td>S3 &leftrightarrow; S2 (HMM)</td>
+                     <td>{{ metrics.get('Ion_HMM_Transition_S3_S2', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+                <tr>
+                    <td></td><td></td>
+                    <td>S2 &leftrightarrow; S1 (HMM)</td>
+                    <td>{{ metrics.get('Ion_HMM_Transition_S2_S1', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+                 <tr>
+                    <td></td><td></td>
+                    <td>S1 &leftrightarrow; S0 (HMM)</td>
+                    <td>{{ metrics.get('Ion_HMM_Transition_S1_S0', {}).get('value', 'N/A') | int }}</td>
+                </tr>
+            </tbody>
+        </table>
+        {# Updated info box text - Assuming HMM params might be stored as metrics eventually #}
+        <p class="info-box">
+            HMM parameters used:
+            Self-transition P = {{ metrics.get('HMM_SELF_TRANSITION_P', {'value':'?'}).value }},
+            Emission Sigma = {{ metrics.get('HMM_EMISSION_SIGMA', {'value':'?'}).value }} Å,
+            Flicker Filter = {{ metrics.get('HMM_FLICKER_NS', {'value':'?'}).value }} ns.
+            (Note: Parameter values may need explicit metric storage).
+        </p>
+        {% else %}
+            <p>No HMM conduction/transition data available for this run (Metric 'Ion_HMM_ConductionEvents_Total' not found).</p>
+        {% endif %}
+
+        {# --- 6. Binding Site Schematic (Optimized) --- #}
+        <h3>Binding Site Definition</h3> {# Moved this section title here #}
+        <div class="plot-container">
+             <h4>Binding Site Schematic (Optimized)</h4>
+            {% if plots.get('binding_sites_g1_centric_visualization') %}
+                <img src="data:image/png;base64,{{ plots.get('binding_sites_g1_centric_visualization') }}" alt="Binding Site Visualization">
+            {% else %}
+                <p><i class="unavailable">Plot not available.</i></p>
+            {% endif %}
+            <p>Visualization of the calculated (potentially data-optimized) binding site positions relative to the average Glycine 1 Cα position (Z=0).</p>
+        </div>
+        {# Optionally add the site optimization plot here if desired #}
+        {# <div class="plot-container">
+             <h4>Binding Site Optimization Histogram (If Performed)</h4>
+            {% if plots.get('site_optimization_plot') %}
+                <img src="data:image/png;base64,{{ plots.get('site_optimization_plot') }}" alt="Binding Site Optimization Plot">
+            {% else %}
+                <p><i class="unavailable">Site optimization plot not available (may not have been performed or registered).</i></p>
+            {% endif %}
+            <p>Histogram of raw K+ ion positions (absolute Z) used for site optimization.</p>
+        </div> #}
+
+
+    {% elif module_status.get('ion_analysis') == 'skipped' %}
+        <div class="info-box">
+            <p>Pore ion analysis was skipped for this run.</p>
+        </div>
+    {% else %}
+        {# Case where module failed or is pending #}
+         <div class="warning-box">
+            <h4>Analysis Incomplete or Failed</h4>
+            <p>Pore ion analysis did not complete successfully (Status: {{ module_status.get('ion_analysis', 'Unknown') }}). Plots and metrics may be missing or incomplete.</p>
+            <p>Visualization Status: {{ module_status.get('ion_analysis_visualization', 'Unknown') }}</p>
+        </div>
+    {% endif %}
+</div>

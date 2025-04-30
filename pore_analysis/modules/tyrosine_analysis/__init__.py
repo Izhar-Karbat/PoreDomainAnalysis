@@ -1,14 +1,12 @@
+# pore_analysis/modules/tyrosine_analysis/__init__.py
 """
-Module for analyzing Selectivity Filter (SF) Tyrosine residue dynamics.
-
-Functions:
-    - analyze_sf_tyrosine_rotamers: Calculate chi1/chi2 angles and classify rotamers.
+SF Tyrosine rotamer analysis module.
 """
 
-__version__ = "1.0.0"
-
-from .tyrosine_rotamers import analyze_sf_tyrosine_rotamers
+from .computation import run_tyrosine_analysis
+from .visualization import generate_tyrosine_plots
 
 __all__ = [
-    "analyze_sf_tyrosine_rotamers",
-] 
+    'run_tyrosine_analysis',
+    'generate_tyrosine_plots'
+]
