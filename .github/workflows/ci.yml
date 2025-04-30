@@ -28,9 +28,11 @@ jobs:
       - name: Download test data from Box
         run: |
           mkdir -p tests/data
-          curl -L "https://weizmann.box.com/s/p1uohi0f9fowk33bm55p3qs7tmfbrf8d?dl=1" \
+          # Added -H 'User-Agent...' to potentially fix Box download issues
+          curl -L -H 'User-Agent: Mozilla/5.0' "https://weizmann.box.com/s/p1uohi0f9fowk33bm55p3qs7tmfbrf8d?dl=1" \
             -o tests/data/step5_input.psf
-          curl -L "https://weizmann.box.com/s/uph9a74zmx7z24yh3ulafwcl8xj4kod2?dl=1" \
+          # Added -H 'User-Agent...' to potentially fix Box download issues
+          curl -L -H 'User-Agent: Mozilla/5.0' "https://weizmann.box.com/s/uph9a74zmx7z24yh3ulafwcl8xj4kod2?dl=1" \
             -o tests/data/MD_Aligned.dcd
 
       - name: Cache test data
