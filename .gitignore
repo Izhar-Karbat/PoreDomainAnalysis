@@ -25,3 +25,4 @@ Thumbs.db
 
 # Ignore sample test data
 tests/data/
+_tests/data/
