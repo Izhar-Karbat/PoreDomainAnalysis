@@ -45,7 +45,7 @@ def setup_core_viz_data(tmp_path):
 
     # Register dummy filtering module as success (needed for viz check)
     register_module(conn, "core_analysis_filtering", status='success')
-    module_id = conn.execute("SELECT module_id FROM analysis_modules WHERE module_name = ?", ("core_analysis_filtering",)).fetchone()[0]
+    module_id = conn.execute("SELECT module_id FROM analysis_modules WHERE module_name = ?", ("core_analysis_filtering",)).fetchone()['module_id']
 
     # Register dummy products
     register_product(conn, "core_analysis_filtering", "csv", "data",

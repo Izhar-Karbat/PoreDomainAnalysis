@@ -33,7 +33,7 @@ def setup_report_db(tmp_path):
 
     # Register core filtering module success
     register_module(conn, "core_analysis_filtering", status='success')
-    module_id_filt = conn.execute("SELECT module_id FROM analysis_modules WHERE module_name = ?", ("core_analysis_filtering",)).fetchone()[0]
+    module_id_filt = conn.execute("SELECT module_id FROM analysis_modules WHERE module_name = ?", ("core_analysis_filtering",)).fetchone()['module_id']
 
     # Store some metrics
     store_metric(conn, "core_analysis_filtering", 'G_G_AC_Mean_Filt', 1.0, 'Å', 'Desc AC Mean')
@@ -55,7 +55,7 @@ def setup_report_db(tmp_path):
         import os
         rel_plot_path = create_dummy_png(dummy_gg_plot_path)
         register_module(conn, "core_analysis_visualization_g_g", status='success')
-        module_id_viz_gg = conn.execute("SELECT module_id FROM analysis_modules WHERE module_name = ?", ("core_analysis_visualization_g_g",)).fetchone()[0]
+        module_id_viz_gg = conn.execute("SELECT module_id FROM analysis_modules WHERE module_name = ?", ("core_analysis_visualization_g_g",)).fetchone()['module_id']
         register_product(conn, "core_analysis_visualization_g_g", "png", "plot", rel_plot_path,
                          subcategory="subunit_comparison", description="Dummy G-G Plot")
     except ImportError:
