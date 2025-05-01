@@ -1,3 +1,4 @@
+# pore_analysis/modules/core_analysis/computation.py
 """
 Core analysis computation functions for reading trajectories, calculating raw G-G and COM distances,
 and applying filtering. This module focuses purely on the computational aspects.
@@ -21,6 +22,9 @@ try:
         connect_db, register_module, register_product, store_metric,
         update_module_status
     )
+    # --- FIX: Import FRAMES_PER_NS ---
+    from pore_analysis.core.config import FRAMES_PER_NS
+    # --- END FIX ---
 except ImportError as e:
     print(f"Error importing dependency modules in core_analysis/computation.py: {e}")
     raise
@@ -48,17 +52,31 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     # Set up system-specific logger
     logger = setup_system_logger(run_dir)
     if logger is None:
-        logger = logging.getLogger()
+        logger = logging.getLogger() # Use root logger as fallback
+        # Avoid double logging if root is already configured
+        if not logger.hasHandlers():
+             logging.basicConfig(level=logging.INFO) # Basic config if none exists
         logger.error(f"Failed to setup system logger for {run_dir}. Using root logger.")
 
     # Connect to the database
     db_conn = connect_db(run_dir)
-    
+    if db_conn is None:
+        # Log error even if logger setup failed
+        logging.getLogger().error(f"Failed to connect to database for {run_dir}. Cannot proceed.")
+        # Return minimal failure dict
+        return {
+            'status': 'failed', 'error': 'Database connection failed',
+            'data': {}, 'metadata': {}, 'files': {}
+        }
+
+
     # Register this module run
     module_id = register_module(db_conn, "core_analysis", "running")
-    
+
     run_name = os.path.basename(run_dir)
-    system_dir = os.path.basename(os.path.dirname(run_dir)) if os.path.dirname(run_dir) else run_name
+    # Handle case where run_dir might be root (e.g., '.')
+    parent_dir = os.path.dirname(run_dir)
+    system_dir = os.path.basename(parent_dir) if parent_dir and os.path.basename(parent_dir) != '.' else run_name
     logger.info(f"Starting raw trajectory analysis for system: {system_dir} (Folder: {run_dir})")
 
     # --- Define Output Directory for Core Analysis ---
@@ -75,22 +93,24 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     if not os.path.exists(psf_file):
         logger.error(f"PSF file not found: {psf_file}")
         update_module_status(db_conn, "core_analysis", "failed", error_message="PSF file not found")
+        if db_conn: db_conn.close()
         return {
             'status': 'failed',
             'error': 'PSF file not found',
-            'data': {'dist_ac': np.array([0]), 'dist_bd': np.array([0]), 'com_distances': None, 'time_points': np.array([0])},
-            'metadata': {'system_dir': 'Unknown', 'is_control_system': True},
+            'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
+            'metadata': {'system_dir': system_dir, 'is_control_system': True},
             'files': {}
         }
-    
+
     if not os.path.exists(dcd_file):
         logger.error(f"DCD file not found: {dcd_file}")
         update_module_status(db_conn, "core_analysis", "failed", error_message="DCD file not found")
+        if db_conn: db_conn.close()
         return {
             'status': 'failed',
             'error': 'DCD file not found',
-            'data': {'dist_ac': np.array([0]), 'dist_bd': np.array([0]), 'com_distances': None, 'time_points': np.array([0])},
-            'metadata': {'system_dir': 'Unknown', 'is_control_system': True},
+            'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
+            'metadata': {'system_dir': system_dir, 'is_control_system': True},
             'files': {}
         }
 
@@ -104,6 +124,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
         if n_frames == 0:
             logger.warning("Trajectory contains 0 frames.")
             update_module_status(db_conn, "core_analysis", "failed", error_message="Trajectory contains 0 frames")
+            if db_conn: db_conn.close()
             return {
                 'status': 'failed',
                 'error': 'Trajectory contains 0 frames',
@@ -114,11 +135,12 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     except Exception as e:
         logger.error(f"Failed to load MDAnalysis Universe: {e}", exc_info=True)
         update_module_status(db_conn, "core_analysis", "failed", error_message=f"Failed to load Universe: {str(e)}")
+        if db_conn: db_conn.close()
         return {
             'status': 'failed',
             'error': f'Failed to load Universe: {str(e)}',
             'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
-            'metadata': {'system_dir': 'Unknown', 'is_control_system': True},
+            'metadata': {'system_dir': system_dir, 'is_control_system': True},
             'files': {}
         }
 
@@ -152,7 +174,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                 raise ValueError("No GYG motif and no Glycine residues found in chain A.")
             idx_gyg = gly_indices[len(gly_indices) // 2]
         else:
-            idx_gyg = idx_gyg + 1
+            idx_gyg = idx_gyg + 1 # Assuming GYG, want the middle G
 
         # Convert sequence index to resid
         reference_resid = chain_A_atoms.residues[idx_gyg].resid
@@ -161,11 +183,12 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     except Exception as e:
         logger.error(f"Error finding reference Glycine for G-G distance: {e}", exc_info=True)
         update_module_status(db_conn, "core_analysis", "failed", error_message=f"Error finding reference Glycine: {str(e)}")
+        if db_conn: db_conn.close()
         return {
             'status': 'failed',
             'error': f'Error finding reference Glycine: {str(e)}',
             'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
-            'metadata': {'system_dir': 'Unknown', 'is_control_system': True},
+            'metadata': {'system_dir': system_dir, 'is_control_system': True},
             'files': {}
         }
 
@@ -181,25 +204,29 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
             logger.info(f"Found Toxin selection: '{pep_sel}'")
             break
 
-    chan_sel = 'segid ' + ' or segid '.join(channel_segids_pro)
-    if len(u.select_atoms(chan_sel)) == 0:
-        chan_sel_alt = 'segid ' + ' or segid '.join(channel_segids_alt)
-        if len(u.select_atoms(chan_sel_alt)) > 0:
-             chan_sel = chan_sel_alt
-             logger.info(f"Using Alternate Channel selection: '{chan_sel}'")
-        else:
-             logger.warning(f"Could not find channel atoms using standard selections: '{chan_sel}' or '{chan_sel_alt}'.")
-             update_module_status(db_conn, "core_analysis", "failed", error_message="Could not find channel atoms")
-             return {
-                'status': 'failed',
-                'error': 'Could not find channel atoms',
-                'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
-                'metadata': {'system_dir': 'Unknown', 'is_control_system': True},
-                'files': {}
-             }
-
-    else:
+    # Determine Channel Selection Strategy (PROA-D or A-D)
+    chan_sel = None
+    chan_sel_pro = 'segid ' + ' or segid '.join(channel_segids_pro)
+    chan_sel_alt = 'segid ' + ' or segid '.join(channel_segids_alt)
+    if len(u.select_atoms(chan_sel_pro)) > 0:
+        chan_sel = chan_sel_pro
         logger.info(f"Using Channel selection: '{chan_sel}'")
+        current_channel_segids = channel_segids_pro
+    elif len(u.select_atoms(chan_sel_alt)) > 0:
+        chan_sel = chan_sel_alt
+        logger.info(f"Using Alternate Channel selection: '{chan_sel}'")
+        current_channel_segids = channel_segids_alt
+    else:
+         logger.error(f"Could not find channel atoms using standard selections: '{chan_sel_pro}' or '{chan_sel_alt}'.")
+         update_module_status(db_conn, "core_analysis", "failed", error_message="Could not find channel atoms")
+         if db_conn: db_conn.close()
+         return {
+            'status': 'failed',
+            'error': 'Could not find channel atoms',
+            'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
+            'metadata': {'system_dir': system_dir, 'is_control_system': True},
+            'files': {}
+         }
 
     # Determine if COM analysis is possible (if toxin was found)
     com_analyzed = pep_sel is not None
@@ -221,12 +248,12 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                 ca_atoms = {}
                 found_all_gg = True
                 opposing_chains = [('A', 'C'), ('B', 'D')]
-                current_channel_segids = [s.replace('segid ', '') for s in chan_sel.split(' or ')]
 
+                # Map A/B/C/D to actual segids used (PROA or A, etc.)
                 chain_map = {}
                 for seg in current_channel_segids:
-                    if seg.startswith("PRO"): chain_map[seg[-1]] = seg
-                    else: chain_map[seg] = seg
+                    if seg.startswith("PRO"): chain_map[seg[-1]] = seg # PROA -> A
+                    else: chain_map[seg] = seg # A -> A
 
                 for chain1, chain2 in opposing_chains:
                     if chain1 in chain_map and chain2 in chain_map:
@@ -234,14 +261,18 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                         seg2 = chain_map[chain2]
                         ca1 = u.select_atoms(f'segid {seg1} and resid {reference_resid} and name CA')
                         ca2 = u.select_atoms(f'segid {seg2} and resid {reference_resid} and name CA')
-                        
+
                         if len(ca1) == 1 and len(ca2) == 1:
                             ca_atoms[chain1] = ca1.positions[0]
                             ca_atoms[chain2] = ca2.positions[0]
                         else:
+                            # Log which atom was missing if on first frame
+                            if ts.frame == 0: logger.warning(f"G-G calc: Missing CA atom for resid {reference_resid} in segid {seg1} ({len(ca1)}) or {seg2} ({len(ca2)}).")
                             found_all_gg = False
                             break
                     else:
+                        # Log which chain was missing if on first frame
+                        if ts.frame == 0: logger.warning(f"G-G calc: Chain {chain1} or {chain2} not found in chain_map {chain_map}.")
                         found_all_gg = False
                         break
 
@@ -253,7 +284,7 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                     dist_bd.append(np.nan)
 
             except Exception as e:
-                logger.error(f"Error calculating G-G distances for frame {ts.frame}: {e}")
+                logger.error(f"Error calculating G-G distances for frame {ts.frame}: {e}", exc_info=True)
                 dist_ac.append(np.nan)
                 dist_bd.append(np.nan)
 
@@ -262,28 +293,30 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                 try:
                     pep_atoms = u.select_atoms(pep_sel)
                     chan_atoms = u.select_atoms(chan_sel)
-                    
+
                     if len(pep_atoms) > 0 and len(chan_atoms) > 0:
                         pep_pos = pep_atoms.center_of_mass()
                         chan_pos = chan_atoms.center_of_mass()
                         pep_positions.append(pep_pos)
                         ch_positions.append(chan_pos)
                     else:
+                        if ts.frame == 0: logger.warning(f"COM calc: Toxin ({len(pep_atoms)}) or Channel ({len(chan_atoms)}) selection empty.")
                         pep_positions.append(np.array([np.nan, np.nan, np.nan]))
                         ch_positions.append(np.array([np.nan, np.nan, np.nan]))
                 except Exception as e:
-                    logger.error(f"Error calculating COM positions for frame {ts.frame}: {e}")
+                    logger.error(f"Error calculating COM positions for frame {ts.frame}: {e}", exc_info=True)
                     pep_positions.append(np.array([np.nan, np.nan, np.nan]))
                     ch_positions.append(np.array([np.nan, np.nan, np.nan]))
 
     except Exception as e:
         logger.error(f"Error during trajectory iteration: {e}", exc_info=True)
         update_module_status(db_conn, "core_analysis", "failed", error_message=f"Error during trajectory iteration: {str(e)}")
+        if db_conn: db_conn.close()
         return {
             'status': 'failed',
             'error': f'Error during trajectory iteration: {str(e)}',
             'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
-            'metadata': {'system_dir': 'Unknown', 'is_control_system': True},
+            'metadata': {'system_dir': system_dir, 'is_control_system': is_control_system}, # Use determined values
             'files': {}
         }
 
@@ -291,14 +324,32 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     dist_ac = np.array(dist_ac)
     dist_bd = np.array(dist_bd)
     frame_indices = np.array(frame_indices)
+    # --- FIX: Use FRAMES_PER_NS ---
+    if FRAMES_PER_NS <= 0:
+        logger.error(f"Invalid FRAMES_PER_NS: {FRAMES_PER_NS}. Cannot calculate time points.")
+        update_module_status(db_conn, "core_analysis", "failed", error_message="Invalid FRAMES_PER_NS config")
+        if db_conn: db_conn.close()
+        # Return appropriate failure dictionary
+        return {
+            'status': 'failed', 'error': 'Invalid FRAMES_PER_NS config',
+            'data': {}, 'metadata': {}, 'files': {}
+        }
     time_points = frames_to_time(frame_indices)
+    # --- END FIX ---
+
 
     # Calculate COM distances if toxin was found
     com_distances = None
     if com_analyzed and len(pep_positions) > 0 and len(ch_positions) > 0:
         pep_positions = np.array(pep_positions)
         ch_positions = np.array(ch_positions)
-        com_distances = np.linalg.norm(pep_positions - ch_positions, axis=1)
+        # Ensure arrays are not empty after potential NaN appends
+        if pep_positions.shape == ch_positions.shape and pep_positions.size > 0:
+             com_distances = np.linalg.norm(pep_positions - ch_positions, axis=1)
+        else:
+             logger.warning("Shape mismatch or empty arrays for COM distance calculation, setting COM distances to None.")
+             com_distances = np.full(len(time_points), np.nan) # Assign NaN array
+
 
     # Save raw data to CSV
     files = {}
@@ -309,22 +360,44 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
             'GG_Distance_AC': dist_ac,
             'GG_Distance_BD': dist_bd
         })
-        if com_distances is not None:
+        # Use nan-aware check for com_distances before adding column
+        if com_distances is not None and np.any(np.isfinite(com_distances)):
             df_raw['COM_Distance'] = com_distances
+        else:
+             # Add an empty/NaN column if COM wasn't analyzed or had no valid data
+             df_raw['COM_Distance'] = np.nan
 
         raw_csv_path = os.path.join(output_dir, "Raw_Distances.csv")
-        df_raw.to_csv(raw_csv_path, index=False, float_format='%.4f')
+        df_raw.to_csv(raw_csv_path, index=False, float_format='%.4f', na_rep='NaN') # Use NaN rep
         logger.info(f"Saved raw distance data to {raw_csv_path}")
-        
-        # Register the product in the database
-        product_id = register_product(db_conn, "core_analysis", "csv", "data", "raw_distances", 
-                                     "core_analysis/Raw_Distances.csv", 
-                                     "Raw distance data for G-G and COM")
-        files['raw_distances'] = raw_csv_path
-        
+
+        # --- FIX: Correct arguments for register_product ---
+        # Calculate relative path correctly
+        relative_csv_path = os.path.relpath(raw_csv_path, run_dir)
+        # Ensure subcategory matches what the test expects
+        product_id = register_product(
+            conn=db_conn, # Use the correct connection variable
+            module_name="core_analysis", # Correct module name
+            product_type="csv",
+            category="data",
+            relative_path=relative_csv_path, # Pass the calculated relative path
+            subcategory="raw_distances", # Match the test query
+            description="Raw distance data for G-G and COM"
+        )
+        # --- END FIX ---
+
+        if product_id is None:
+             logger.error("Failed to register raw distances product in database.")
+             # Decide if this is critical? Maybe just warn.
+             # For now, continue but log error.
+        else:
+             files['raw_distances'] = relative_csv_path # Store relative path if registered
+
     except Exception as e:
         logger.error(f"Failed to save raw distance data: {e}", exc_info=True)
         update_module_status(db_conn, "core_analysis", "failed", error_message=f"Failed to save raw distance data: {str(e)}")
+        if db_conn: db_conn.close()
+        # Return failure but include calculated data
         return {
             'status': 'failed',
             'error': f'Failed to save raw distance data: {str(e)}',
@@ -332,10 +405,11 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
             'metadata': {'system_dir': system_dir, 'is_control_system': is_control_system},
             'files': {}
         }
-    
+
     # Update module status to success
     update_module_status(db_conn, "core_analysis", "success")
-    
+    if db_conn: db_conn.close() # Close connection at the end
+
     # Return the result dictionary
     return {
         'status': 'success',
@@ -349,8 +423,9 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
             'system_dir': system_dir,
             'is_control_system': is_control_system
         },
-        'files': files
+        'files': files # Contains relative path if registration succeeded
     }
+
 
 def filter_and_save_data(
     run_dir: str,
@@ -385,7 +460,11 @@ def filter_and_save_data(
     logger = setup_system_logger(run_dir)
     if logger is None:
         logger = logging.getLogger(__name__) # Use module logger as fallback
+        # Avoid double logging if root is already configured
+        if not logger.hasHandlers():
+             logging.basicConfig(level=logging.INFO) # Basic config if none exists
         logger.error(f"{module_name}: Failed to setup system logger for {run_dir}. Using module logger.")
+
 
     # --- Use the passed database connection ---
     if db_conn is None:
@@ -430,11 +509,15 @@ def filter_and_save_data(
 
     gg_success = False # Track success of G-G part
     # --- G-G Filtering and Stats Calculation ---
-    if dist_ac is not None and dist_bd is not None and len(dist_ac) > 0 and len(dist_bd) > 0:
+    # Check inputs are valid numpy arrays with size > 0
+    if isinstance(dist_ac, np.ndarray) and dist_ac.size > 0 and \
+       isinstance(dist_bd, np.ndarray) and dist_bd.size > 0:
         try:
             logger.debug(f"{module_name}: Starting G-G filtering...")
-            filtered_ac, filter_info_g_g_ac = auto_select_filter(dist_ac, data_type='gg_distance')
-            filtered_bd, filter_info_g_g_bd = auto_select_filter(dist_bd, data_type='gg_distance')
+            # Pass only relevant args to standard_filter called within auto_select_filter
+            filter_kwargs_gg = {} # No extra args needed usually for G-G standard filter
+            filtered_ac, filter_info_g_g_ac = auto_select_filter(dist_ac, data_type='gg_distance', **filter_kwargs_gg)
+            filtered_bd, filter_info_g_g_bd = auto_select_filter(dist_bd, data_type='gg_distance', **filter_kwargs_gg)
             logger.debug(f"{module_name}: Finished G-G filtering.")
 
             # Calculate statistics on FILTERED data
@@ -461,7 +544,7 @@ def filter_and_save_data(
             })
             gg_csv_filename = "G_G_Distance_Filtered.csv" # Define filename
             gg_csv_path = os.path.join(output_dir, gg_csv_filename)
-            df_g_g.to_csv(gg_csv_path, index=False, float_format='%.4f')
+            df_g_g.to_csv(gg_csv_path, index=False, float_format='%.4f', na_rep='NaN')
             logger.info(f"{module_name}: Saved filtered G-G distances to {gg_csv_path}")
             relative_gg_path = os.path.relpath(gg_csv_path, run_dir)
 
@@ -497,16 +580,19 @@ def filter_and_save_data(
             result['status'] = 'failed' # Mark overall as failed if G-G fails
 
     else:
-         logger.warning(f"{module_name}: Skipping G-G filtering due to missing input data.")
-         result['errors'].append("Skipped G-G filtering (missing input)")
+         logger.warning(f"{module_name}: Skipping G-G filtering due to missing or empty input data.")
+         result['errors'].append("Skipped G-G filtering (missing/empty input)")
 
 
     com_success = False # Track success of COM part
     # --- COM Filtering and Stats Calculation ---
-    if not is_control_system and com_distances is not None and len(com_distances) > 0:
+    # Check com_distances is a numpy array with size > 0
+    if not is_control_system and isinstance(com_distances, np.ndarray) and com_distances.size > 0:
         try:
             logger.debug(f"{module_name}: Starting COM filtering...")
-            filtered_com, filter_info_com = auto_select_filter(com_distances, data_type='com_distance', box_z=box_z)
+            # Pass only relevant args to auto_select_filter for COM
+            filter_kwargs_com = {'box_size': box_z} # Use box_size which is accepted by multilevel
+            filtered_com, filter_info_com = auto_select_filter(com_distances, data_type='com_distance', **filter_kwargs_com)
             logger.debug(f"{module_name}: Finished COM filtering.")
 
             # Calculate statistics on FILTERED COM data
@@ -531,7 +617,7 @@ def filter_and_save_data(
             })
             com_csv_filename = "COM_Stability_Filtered.csv" # Define filename
             com_csv_path = os.path.join(output_dir, com_csv_filename)
-            df_com.to_csv(com_csv_path, index=False, float_format='%.4f')
+            df_com.to_csv(com_csv_path, index=False, float_format='%.4f', na_rep='NaN')
             logger.info(f"{module_name}: Saved filtered COM distances to {com_csv_path}")
             relative_com_path = os.path.relpath(com_csv_path, run_dir)
 
@@ -558,21 +644,23 @@ def filter_and_save_data(
             error_msg = f"Error in COM filtering: {e}"
             logger.error(f"{module_name}: {error_msg}", exc_info=True)
             result['errors'].append(error_msg)
-            # Don't necessarily mark overall status as failed just for COM
-            # result['status'] = 'failed'
+            # If G-G also failed, status is already failed. If G-G succeeded, mark as failed now.
+            result['status'] = 'failed'
 
     elif is_control_system:
          logger.info(f"{module_name}: Skipping COM filtering (Control System).")
          com_success = True # Skipping is considered handled
+         result['data']['filtered_com'] = np.array([]) # Ensure it's an empty array for consistency
     else:
-         logger.warning(f"{module_name}: Skipping COM filtering due to missing input data.")
-         result['errors'].append("Skipped COM filtering (missing input)")
+         logger.warning(f"{module_name}: Skipping COM filtering due to missing or empty input data.")
+         result['errors'].append("Skipped COM filtering (missing/empty input)")
+         result['data']['filtered_com'] = np.array([]) # Ensure it's an empty array
          # If COM data *should* have been present, this might indicate an earlier problem
          com_success = True # Treat missing data as 'handled' for now
 
 
     # --- Final Status Update ---
-    # Succeeds if both G-G (if attempted) and COM (if attempted) did not raise critical errors
+    # Succeeds if G-G (if attempted) and COM (if attempted) were successful
     final_status = 'success' if gg_success and com_success else 'failed'
     final_error_message = "; ".join(result['errors']) if result['errors'] else None
 
@@ -583,6 +671,8 @@ def filter_and_save_data(
          # Update the result dict even if DB update fails
          result['status'] = 'failed'
          result['errors'].append(f"Failed DB status update: {e_update}")
+         # Re-assign final error message if it was previously None
+         if final_error_message is None: final_error_message = f"Failed DB status update: {e_update}"
 
 
     # Update result status based on final determination

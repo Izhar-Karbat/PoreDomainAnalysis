@@ -1,4 +1,4 @@
-# filtering.py
+# pore_analysis/core/filtering.py
 """
 Functions for filtering distance data from MD simulations, including
 PBC artifact correction (standard and multi-level) and smoothing.
@@ -9,6 +9,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import find_peaks
 from scipy.stats import gaussian_kde
 import logging
+from typing import Dict, Any, Optional # Added Optional, Dict, Any
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -77,11 +78,16 @@ def pbc_unwrap_distance(distance_array, threshold=None, data_type='com_distance'
         jump = original_data[i] - original_data[i - 1]
         if abs(jump) > threshold:
             # Apply adjustment based on the jump direction
-            adjustment = -np.sign(jump) * abs(jump) # Correct based on difference magnitude
+            # Correct based on difference magnitude - should handle positive/negative jumps
+            adjustment = -np.sign(jump) * abs(jump)
+            # Alternative (might be more robust if threshold represents box/2?):
+            # adjustment = -np.sign(jump) * box_dimension_if_known
             cumulative_adjustment += adjustment
             jump_count += 1
             jump_locations.append((i, jump))
-            logger.debug(f"PBC jump detected at frame {i}: {jump:.2f} Å. Cumulative adjustment: {cumulative_adjustment:.2f} Å.")
+            # Reduce verbosity - log only if DEBUG is enabled
+            if logger.isEnabledFor(logging.DEBUG):
+                 logger.debug(f"PBC jump detected at frame {i}: {jump:.2f} Å. Cumulative adjustment: {cumulative_adjustment:.2f} Å.")
         unwrapped[i] = original_data[i] + cumulative_adjustment
 
     info_dict['pbc_unwrap_threshold'] = threshold
@@ -130,7 +136,9 @@ def pbc_unwrap_distance(distance_array, threshold=None, data_type='com_distance'
             spike_corrected[i] = local_median # Replace spike with local median
             spike_count += 1
             spike_locations.append((i, old_value, spike_corrected[i])) # Frame, old value, new value
-            logger.debug(f"Spike corrected at frame {i}: {old_value:.2f} -> {spike_corrected[i]:.2f} (Local Median: {local_median:.2f}, Std: {local_std:.2f})")
+            # Reduce verbosity
+            if logger.isEnabledFor(logging.DEBUG):
+                 logger.debug(f"Spike corrected at frame {i}: {old_value:.2f} -> {spike_corrected[i]:.2f} (Local Median: {local_median:.2f}, Std: {local_std:.2f})")
 
     info_dict['spike_correction_window'] = window_size
     info_dict['spike_correction_threshold_factor'] = local_std_threshold_factor
@@ -206,7 +214,9 @@ def moving_average_smooth(data, window_size=5):
 
     return smoothed, info_dict
 
+# --- MODIFIED: Added box_size to signature ---
 def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=5, quality_threshold=0.8, box_size=None):
+# --- END MODIFICATION ---
     """
     Detects multiple "levels" in trajectory data potentially caused by PBC artifacts
     and attempts to correct them by normalizing to a reference level.
@@ -224,7 +234,7 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
         Threshold (0-1) for quality control checks. Higher values mean stricter
         checks before applying multi-level correction (more likely to fall back
         to standard filtering).
-    box_size : float, optional
+    box_size : float, optional # <-- MODIFIED: Added box_size
         Estimate of the simulation box size (e.g., Z-dimension) in Angstroms.
         Used to help distinguish PBC jumps from biological transitions. If None,
         it might be estimated from data jumps.
@@ -245,7 +255,8 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
          logger.warning("Insufficient data points for multi-level PBC detection. Applying standard filter.")
          info_dict['multi_level_applied'] = False
          info_dict['fallback_reason'] = "Insufficient data points"
-         filtered_data, standard_info = standard_filter(original_data)
+         # --- Pass only smoothing_window to standard_filter ---
+         filtered_data, standard_info = standard_filter(original_data, smoothing_window=smoothing_window)
          info_dict.update({'standard_filter_fallback': standard_info})
          return filtered_data, info_dict
 
@@ -255,7 +266,8 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
         logger.warning("Insufficient finite data points for multi-level PBC detection. Applying standard filter.")
         info_dict['multi_level_applied'] = False
         info_dict['fallback_reason'] = "Insufficient finite data points"
-        filtered_data, standard_info = standard_filter(original_data)
+        # --- Pass only smoothing_window to standard_filter ---
+        filtered_data, standard_info = standard_filter(original_data, smoothing_window=smoothing_window)
         info_dict.update({'standard_filter_fallback': standard_info})
         return filtered_data, info_dict
 
@@ -272,7 +284,8 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
     if box_size is None:
         # Estimate from large jumps in the data (potential PBC wrap-around)
         diffs = np.abs(np.diff(finite_data))
-        large_jumps = diffs[diffs > 5.0] # Consider jumps > 5Å potentially box-related
+        # Increased jump threshold slightly for estimation robustness
+        large_jumps = diffs[diffs > 8.0]
         if len(large_jumps) > 5: # Require a few large jumps for a reasonable estimate
              potential_box_size = np.median(large_jumps)
              # Sanity check: typical box sizes are ~40-150Å
@@ -283,7 +296,7 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
              else:
                   logger.debug(f"Potential box size estimate ({potential_box_size:.2f} Å) outside typical range (40-150 Å).")
         else:
-            logger.debug("Not enough large jumps (>5Å) to estimate box size reliably.")
+            logger.debug("Not enough large jumps (>8Å) to estimate box size reliably.")
     else:
         info_dict['provided_box_size'] = box_size
         logger.debug(f"Using provided box size: {box_size:.2f} Å")
@@ -300,7 +313,8 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
          logger.warning(f"KDE calculation failed: {kde_err}. Applying standard filter.")
          info_dict['multi_level_applied'] = False
          info_dict['fallback_reason'] = f"KDE calculation error: {kde_err}"
-         filtered_data, standard_info = standard_filter(original_data)
+         # --- Pass only smoothing_window to standard_filter ---
+         filtered_data, standard_info = standard_filter(original_data, smoothing_window=smoothing_window)
          info_dict.update({'standard_filter_fallback': standard_info})
          return filtered_data, info_dict
 
@@ -330,7 +344,8 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
         logger.info("KDE detected 0 or 1 level. Applying standard filter.")
         info_dict['multi_level_applied'] = False
         info_dict['fallback_reason'] = "KDE detected <= 1 level"
-        filtered_data, standard_info = standard_filter(original_data)
+        # --- Pass only smoothing_window to standard_filter ---
+        filtered_data, standard_info = standard_filter(original_data, smoothing_window=smoothing_window)
         info_dict.update({'standard_filter_fallback': standard_info})
         return filtered_data, info_dict
 
@@ -348,9 +363,6 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
     for i, point in enumerate(original_data):
          if np.isfinite(point):
              # Find which bin the point falls into using searchsorted
-             # searchsorted finds where point would be inserted to maintain order
-             # The bin index is the index of the boundary it's *less* than
-             # E.g., if point < boundary[0], result is 0. If boundary[0] <= point < boundary[1], result is 1.
              level_idx = np.searchsorted(level_boundaries, point)
              level_assignments[i] = level_idx
          else:
@@ -374,7 +386,8 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
         logger.info(f"Only {len(valid_level_indices)} level(s) met the minimum size ({min_level_size}). Applying standard filter.")
         info_dict['multi_level_applied'] = False
         info_dict['fallback_reason'] = "Only <= 1 level met min_level_size"
-        filtered_data, standard_info = standard_filter(original_data)
+        # --- Pass only smoothing_window to standard_filter ---
+        filtered_data, standard_info = standard_filter(original_data, smoothing_window=smoothing_window)
         info_dict.update({'standard_filter_fallback': standard_info})
         return filtered_data, info_dict
 
@@ -419,39 +432,31 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
                   logger.info(f"Transitions not clearly related to box size (Median diff: {median_level_diff:.2f} Å, Box: {effective_box_size:.2f} Å).")
 
         # Check 2: Are transitions very rapid (few frames)?
-        # This check is secondary if box size didn't provide clear evidence
         if not is_likely_pbc and transition_durations:
              median_duration = np.median(transition_durations)
              info_dict['median_frames_between_transitions'] = median_duration
-             # If transitions happen very frequently (e.g., median < ~50 frames) it might indicate instability or rapid PBC jumps
              if median_duration < 50:
                  logger.warning(f"Transitions occur frequently (median duration: {median_duration} frames). Could be PBC or unstable system.")
-                 # Let's not automatically assume PBC just based on frequency, but log it.
              else:
                  logger.info(f"Transitions occur less frequently (median duration: {median_duration} frames). Less likely to be solely PBC artifacts.")
 
-
         # Check 3: Did standard filter already reduce std significantly?
-        # If standard filter worked well, maybe multi-level is not needed.
         temp_filtered, temp_info = standard_filter(original_data)
         std_reduction_standard = temp_info.get('overall_effect_std_reduction_percent', 0)
         info_dict['standard_filter_potential_std_reduction'] = std_reduction_standard
-        if std_reduction_standard > 50: # If standard filter reduced std by > 50%
+        if std_reduction_standard > 50:
              logger.info(f"Standard filter already achieved significant std reduction ({std_reduction_standard:.1f}%). Considering fallback.")
-             # Reduce quality threshold making fallback more likely if other issues exist
              quality_threshold = max(0.1, quality_threshold * 0.5)
-
-
     else: # No transitions between *valid* levels detected
         logger.info("No transitions detected between valid levels. Applying standard filter.")
         info_dict['multi_level_applied'] = False
         info_dict['fallback_reason'] = "No transitions between valid levels"
-        filtered_data, standard_info = standard_filter(original_data)
+        # --- Pass only smoothing_window to standard_filter ---
+        filtered_data, standard_info = standard_filter(original_data, smoothing_window=smoothing_window)
         info_dict.update({'standard_filter_fallback': standard_info})
         return filtered_data, info_dict
 
     # --- Apply Multi-Level Correction ---
-    # Choose the most populated valid level as the reference
     reference_level_idx = max(valid_level_indices, key=lambda idx: level_info[idx]['count'])
     reference_value = level_values_sorted[reference_level_idx]
     logger.info(f"Using level {reference_level_idx} (Value: {reference_value:.2f} Å, Count: {level_info[reference_level_idx]['count']}) as reference.")
@@ -462,14 +467,10 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
     shifts_applied = {}
 
     for level_idx in valid_level_indices:
-        if level_idx == reference_level_idx:
-             continue # No shift needed for reference level
-
+        if level_idx == reference_level_idx: continue
         level_value = level_values_sorted[level_idx]
-        shift = level_value - reference_value # Shift needed to bring this level to reference
-        shifts_applied[level_idx] = -shift # Store the adjustment applied
-
-        # Apply shift to all points assigned to this level
+        shift = level_value - reference_value
+        shifts_applied[level_idx] = -shift
         mask = (level_assignments == level_idx)
         corrected_data[mask] -= shift
         logger.debug(f"Applied shift of {-shift:.2f} Å to level {level_idx} (Value: {level_value:.2f} Å).")
@@ -477,7 +478,6 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
     info_dict['level_shifts_applied'] = shifts_applied
 
     # --- Final Smoothing ---
-    # Apply moving average smoothing to the corrected data
     smoothed_data, smooth_info = moving_average_smooth(corrected_data, window_size=smoothing_window)
     info_dict.update({f"final_smooth_{k}": v for k, v in smooth_info.items()})
 
@@ -490,24 +490,20 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
     quality_passed = True
     quality_issues = []
 
-    # Check 1: Did standard deviation increase significantly? (Allow small increase)
-    if std_change_percent < -15: # Allow up to 15% increase
+    if std_change_percent < -15:
          quality_issues.append(f"StdDev increased significantly ({std_change_percent:.1f}%)")
          quality_passed = False
 
-    # Check 2: Did the mean shift drastically? (Allow moderate shift)
     original_mean = np.nanmean(finite_data)
     final_mean = np.nanmean(smoothed_data[np.isfinite(smoothed_data)])
     mean_shift_percent = abs(final_mean - original_mean) / abs(original_mean) * 100 if abs(original_mean) > 1e-6 else 0
     info_dict['final_mean_shift_percent'] = mean_shift_percent
-    if mean_shift_percent > 15: # Allow up to 15% shift in mean
+    if mean_shift_percent > 15:
          quality_issues.append(f"Mean shifted significantly ({mean_shift_percent:.1f}%)")
          quality_passed = False
 
-    # Check 3: Did correction introduce large spikes? Check max difference.
     max_diff = np.nanmax(np.abs(np.diff(smoothed_data))) if len(smoothed_data) > 1 else 0
     info_dict['max_diff_in_corrected'] = max_diff
-    # Define a threshold for unreasonable jumps (e.g., > 3 * original_std or an absolute value)
     max_reasonable_jump = max(2.0, original_std * 3)
     if max_diff > max_reasonable_jump:
          quality_issues.append(f"Large jump ({max_diff:.2f} Å) detected in corrected data (Threshold: {max_reasonable_jump:.2f} Å)")
@@ -517,11 +513,9 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
     info_dict['quality_control_issues'] = quality_issues
 
     # --- Decide whether to use multi-level corrected data or fallback ---
-    # Fallback if quality checks fail OR if transitions didn't strongly suggest PBC
-    # Use random check against quality_threshold only if issues were found
     should_fallback = False
     if not quality_passed:
-         if np.random.random() > (1.0 - quality_threshold): # Higher threshold = more likely to fallback on issue
+         if np.random.random() > (1.0 - quality_threshold):
              should_fallback = True
              info_dict['fallback_reason'] = f"Quality issues detected ({', '.join(quality_issues)}) and random check failed quality threshold ({quality_threshold:.2f})."
              logger.warning(f"Multi-level correction failed quality checks: {quality_issues}. Falling back to standard filter.")
@@ -529,31 +523,25 @@ def detect_and_correct_multilevel_pbc(data, min_level_size=30, smoothing_window=
              logger.warning(f"Multi-level correction had quality issues ({quality_issues}), but passed random check (threshold {quality_threshold:.2f}). Using multi-level result cautiously.")
              info_dict['quality_control_override'] = "Passed random check despite issues."
     elif not is_likely_pbc:
-         # If transitions didn't look like PBC, maybe prefer standard filter
          logger.info("Transitions did not strongly resemble PBC jumps. Considering standard filter fallback.")
-         # Fallback more readily if standard filter already worked well
-         if std_reduction_standard > 30: # If standard reduced std by > 30%
+         if std_reduction_standard > 30:
               should_fallback = True
               info_dict['fallback_reason'] = f"Transitions not clearly PBC and standard filter was effective (Std Reduc: {std_reduction_standard:.1f}%)."
               logger.info("Falling back to standard filter as transitions were not clearly PBC and standard filter was effective.")
          else:
               logger.info("Proceeding with multi-level correction despite transitions not clearly being PBC.")
 
-
     if should_fallback:
         info_dict['multi_level_applied'] = False
-        filtered_data, standard_info = standard_filter(original_data)
+        # --- Pass only smoothing_window to standard_filter ---
+        filtered_data, standard_info = standard_filter(original_data, smoothing_window=smoothing_window)
         info_dict.update({'standard_filter_fallback': standard_info})
-        # Recalculate final stats based on standard filter
         info_dict['final_mean'] = np.nanmean(filtered_data)
         info_dict['final_std'] = np.nanstd(filtered_data)
-        if original_std > 1e-6:
-             info_dict['final_std_reduction_percent'] = (original_std - info_dict['final_std']) / original_std * 100
-        else:
-             info_dict['final_std_reduction_percent'] = 0.0
+        if original_std > 1e-6: info_dict['final_std_reduction_percent'] = (original_std - info_dict['final_std']) / original_std * 100
+        else: info_dict['final_std_reduction_percent'] = 0.0
         return filtered_data, info_dict
     else:
-        # Use the multi-level corrected and smoothed data
         info_dict['multi_level_applied'] = True
         logger.info(f"Multi-level correction applied. Final std reduction: {std_change_percent:.1f}%")
         return smoothed_data, info_dict
@@ -608,7 +596,14 @@ def standard_filter(data, data_type='com_distance', smoothing_window=5):
     logger.info(f"Standard filter applied. Overall std reduction: {info['overall_effect_std_reduction_percent']:.1f}%")
     return smoothed_data, info
 
-def auto_select_filter(data, data_type='com_distance', std_threshold=1.5, range_threshold=5.0, **kwargs):
+# --- MODIFIED: auto_select_filter to handle kwargs ---
+def auto_select_filter(
+    data: np.ndarray,
+    data_type: str = 'com_distance',
+    std_threshold: float = 1.5,
+    range_threshold: float = 5.0,
+    **kwargs: Any
+) -> tuple[np.ndarray, Dict[str, Any]]:
     """
     Automatically selects and applies the appropriate filter (standard or multi-level)
     based on data characteristics (standard deviation, range).
@@ -625,8 +620,8 @@ def auto_select_filter(data, data_type='com_distance', std_threshold=1.5, range_
     range_threshold : float, optional
         Range (max-min) threshold above which multi-level filtering might be triggered.
     **kwargs : dict
-        Additional keyword arguments passed to the selected filtering function
-        (e.g., box_size, smoothing_window for detect_and_correct_multilevel_pbc).
+        Additional keyword arguments. Only relevant arguments are passed to the
+        selected filtering function (e.g., `box_size`, `smoothing_window`).
 
     Returns:
     -------
@@ -645,28 +640,42 @@ def auto_select_filter(data, data_type='com_distance', std_threshold=1.5, range_
          logger.warning("Insufficient finite data points for filtering. Returning original data.")
          return np.array(data), {'method_applied': 'none', 'reason': 'Insufficient finite data'}
 
-
     std_dev = np.std(finite_data)
     data_range = np.ptp(finite_data)
 
     logger.debug(f"Data characteristics: Std Dev={std_dev:.3f}, Range={data_range:.3f}")
     logger.debug(f"Thresholds: Std Dev={std_threshold:.3f}, Range={range_threshold:.3f}")
 
+    # Define arguments accepted by each filter function
+    standard_filter_args = {'smoothing_window'}
+    multi_level_filter_args = {'min_level_size', 'smoothing_window', 'quality_threshold', 'box_size'}
+
     # --- Decision Logic ---
-    # Force standard filter for G-G distances as multi-level is often too aggressive
     if data_type == 'gg_distance':
         logger.info("Applying standard filtering for G-G distance.")
-        return standard_filter(data, data_type=data_type, **kwargs)
+        # Filter kwargs for standard_filter
+        standard_kwargs = {k: v for k, v in kwargs.items() if k in standard_filter_args}
+        return standard_filter(data, data_type=data_type, **standard_kwargs)
     else: # For COM distance or generic
-        # Trigger multi-level if std dev OR range is high enough
         if std_dev > std_threshold or data_range > range_threshold:
             logger.info(f"High std dev ({std_dev:.3f}) or range ({data_range:.3f}) detected. Attempting multi-level filtering.")
-            # Pass kwargs (like box_size) to the multi-level function
-            return detect_and_correct_multilevel_pbc(data, **kwargs)
+            # Filter kwargs for detect_and_correct_multilevel_pbc
+            # --- FIX: Correctly handle box_z -> box_size ---
+            # The multilevel function expects 'box_size'. If 'box_z' is passed in kwargs,
+            # map it to 'box_size'.
+            multi_level_kwargs = {}
+            if 'box_z' in kwargs and kwargs['box_z'] is not None:
+                 multi_level_kwargs['box_size'] = kwargs['box_z']
+                 logger.debug("Mapping 'box_z' keyword arg to 'box_size' for multi-level filter.")
+            # Include other relevant kwargs if they exist
+            for key in multi_level_filter_args:
+                 if key in kwargs and key != 'box_size': # Avoid overwriting mapped box_size
+                      multi_level_kwargs[key] = kwargs[key]
+            # --- END FIX ---
+            return detect_and_correct_multilevel_pbc(data, **multi_level_kwargs)
         else:
             logger.info(f"Low std dev ({std_dev:.3f}) and range ({data_range:.3f}). Applying standard filtering.")
-            # Pass only relevant kwargs (like smoothing_window) to the standard function
-            standard_kwargs = {}
-            if 'smoothing_window' in kwargs:
-                standard_kwargs['smoothing_window'] = kwargs['smoothing_window']
+            # Filter kwargs for standard_filter
+            standard_kwargs = {k: v for k, v in kwargs.items() if k in standard_filter_args}
             return standard_filter(data, data_type=data_type, **standard_kwargs)
+# --- END MODIFICATION ---

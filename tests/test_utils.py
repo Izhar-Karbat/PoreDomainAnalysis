@@ -1,11 +1,11 @@
 import numpy as np
 import math
 import matplotlib
-matplotlib.use('Agg') # Use non-interactive backend for tests
+matplotlib.use('Agg')  # Use non-interactive backend for tests
 import matplotlib.pyplot as plt
 import base64
 import pytest
-import os # Added for setting config env var if needed
+import os  # Added for setting config env var if needed
 
 # Assuming core utilities are importable
 from pore_analysis.core.utils import (
@@ -26,14 +26,21 @@ def reset_config():
     yield
     core_config.FRAMES_PER_NS = original_frames_per_ns
 
-def test_frames_to_time_basic():
-    # Test with the actual config value
-    arr = frames_to_time([0, core_config.FRAMES_PER_NS, core_config.FRAMES_PER_NS * 2])
-    assert np.allclose(arr, np.array([0.0, 1.0, 2.0]))
-    # Test with a specific value if config is 0 or invalid initially
-    core_config.FRAMES_PER_NS = 20.0
+# Revised test for frames_to_time to use monkeypatch
+def test_frames_to_time_basic(monkeypatch):
+    # Test with the actual config value loaded initially
+    original_fpns = core_config.FRAMES_PER_NS
+    arr_original = frames_to_time([0, original_fpns, original_fpns * 2])
+    assert np.allclose(arr_original, np.array([0.0, 1.0, 2.0])), \
+        f"Test failed with original FRAMES_PER_NS={original_fpns}"
+
+    # Test with a specific patched value
+    monkeypatch.setattr(core_config, 'FRAMES_PER_NS', 20.0)
+    # OPTIONALLY: If the function still doesn't see the change, patch the utils module directly:
+    # monkeypatch.setattr(pore_analysis.core.utils, 'FRAMES_PER_NS', 20.0)
     arr_20 = frames_to_time([0, 20, 40])
-    assert np.allclose(arr_20, np.array([0.0, 1.0, 2.0]))
+    assert np.allclose(arr_20, np.array([0.0, 1.0, 2.0])), \
+        f"Test failed with patched FRAMES_PER_NS=20.0, got {arr_20}"
 
 
 def test_frames_to_time_invalid(monkeypatch):
@@ -46,18 +53,22 @@ def test_frames_to_time_invalid(monkeypatch):
     with pytest.raises(ValueError, match="FRAMES_PER_NS must be positive"):
         frames_to_time([0, 1, 2])
 
+
 def test_oneletter_basic():
     assert OneLetter('CYSASPGLY') == 'CDG'
-    assert OneLetter('TRPVALGLUALA') == 'WVGA'
-    assert OneLetter('HIS') == 'H' # Test single
-    assert OneLetter('HSE') == 'H' # Test variant
+    assert OneLetter('TRPVALGLUALA') == 'WVEA'
+    assert OneLetter('HIS') == 'H'  # Test single
+    assert OneLetter('HSE') == 'H'  # Test variant
+
 
 def test_oneletter_case_insensitive():
     assert OneLetter('cysAspgLy') == 'CDG'
 
+
 def test_oneletter_error_unknown():
     with pytest.raises(ValueError, match="Unknown amino acid code 'XXX'"):
         OneLetter('GLYXXXALA')
+
 
 def test_oneletter_error_length():
     with pytest.raises(ValueError, match="Input length.*must be a multiple of three"):
@@ -65,18 +76,20 @@ def test_oneletter_error_length():
     with pytest.raises(ValueError, match="Input length.*must be a multiple of three"):
         OneLetter('GL')
 
+
 def test_fig_to_base64():
     fig, ax = plt.subplots()
     ax.plot([0, 1], [0, 1])
     try:
         b64 = fig_to_base64(fig)
         assert isinstance(b64, str)
-        assert len(b64) > 100 # Should be a reasonably long string
+        assert len(b64) > 100  # Should be a reasonably long string
         # Check if it decodes and looks like PNG header
         data = base64.b64decode(b64)
         assert data.startswith(b'\x89PNG\r\n\x1a\n')
     finally:
-        plt.close(fig) # Ensure figure is closed
+        plt.close(fig)  # Ensure figure is closed
+
 
 def test_fig_to_base64_error(monkeypatch):
     # Simulate an error during fig.savefig
@@ -106,13 +119,14 @@ def test_clean_json_data_numpy_types():
     }
     cleaned = clean_json_data(data)
     assert cleaned['int_'] == 10 and isinstance(cleaned['int_'], int)
-    assert cleaned['float_'] == 3.14 and isinstance(cleaned['float_'], float)
+    assert cleaned['float_'] == pytest.approx(3.14) and isinstance(cleaned['float_'], float) 
     assert cleaned['bool_'] is True and isinstance(cleaned['bool_'], bool)
     assert cleaned['array_'] == [1, 2, 3] and isinstance(cleaned['array_'], list)
     assert cleaned['nan_'] is None
     assert cleaned['inf_'] is None
     assert cleaned['neg_inf_'] is None
     assert cleaned['nested_array'] == [None, 4.0]
+
 
 def test_clean_json_data_standard_types():
     data = {
@@ -131,6 +145,7 @@ def test_clean_json_data_standard_types():
     assert cleaned['e'] == 123
     assert cleaned['f'] == 4.56
 
+
 def test_clean_json_data_nested():
     data = {
         'level1': {
@@ -143,8 +158,9 @@ def test_clean_json_data_nested():
         'level1': {
             'list1': [1, None, {'key': [5.0, None]}]
         },
-        'tuple1': [9.9, None] # Tuples become lists
+        'tuple1': [9.9, None]  # Tuples become lists
     }
+
 
 def test_clean_json_data_datetime():
     from datetime import datetime
@@ -152,4 +168,3 @@ def test_clean_json_data_datetime():
     data = {'timestamp': now}
     cleaned = clean_json_data(data)
     assert cleaned['timestamp'] == now.isoformat()
-
