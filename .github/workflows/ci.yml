@@ -28,10 +28,15 @@ jobs:
       - name: Download test data from Box
         run: |
           mkdir -p tests/data
-          # Fetch raw PSF and DCD files (dl=1 to get binary, -L to follow redirects)
-          curl -L "https://weizmann.box.com/s/p1uohi0f9fowk33bm55p3qs7tmfbrf8d?dl=1" \
+
+          # step5_input.psf  (public Box token: p1uohi0f9fowk33bm55p3qs7tmfbrf8d)
+          curl -L --fail --silent \
+               "https://weizmann.box.com/shared/static/p1uohi0f9fowk33bm55p3qs7tmfbrf8d" \
                -o tests/data/step5_input.psf
-          curl -L "https://weizmann.box.com/s/uph9a74zmx7z24yh3ulafwcl8xj4kod2?dl=1" \
+
+          # MD_Aligned.dcd  (public Box token: uph9a74zmx7z24yh3ulafwcl8xj4kod2)
+          curl -L --fail --silent \
+               "https://weizmann.box.com/shared/static/uph9a74zmx7z24yh3ulafwcl8xj4kod2" \
                -o tests/data/MD_Aligned.dcd
 
       - name: Cache test data
@@ -45,4 +50,3 @@ jobs:
 
       - name: Run pytest
         run: pytest -q
-
