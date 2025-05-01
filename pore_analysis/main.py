@@ -14,7 +14,7 @@ import argparse
 import time
 from datetime import datetime
 import sqlite3
-from typing import Optional, Dict, Any # Added Dict, Any
+from typing import Optional, Dict, Any
 import json # Import json for error summary
 import traceback # Import traceback for detailed error logging
 
@@ -187,12 +187,13 @@ def _save_error_summary(run_dir, system_name, run_name, error_message):
         logger.error(f"Failed to save error summary JSON to {summary_file_path}: {e_save}")
 
 
-# --- Main Workflow Function (Revised with try/except/finally) ---
+# --- Main Workflow Function (Revised with Status Update Before Summary) ---
 def _run_analysis_workflow(args):
     """
     Main analysis workflow function using database tracking.
     Applies logic based on original script's flag handling.
     Includes try/except/finally block for robust status updates.
+    Sets final status BEFORE generating summary.
     """
     run_dir = os.path.abspath(args.folder)
     if not os.path.isdir(run_dir):
@@ -211,7 +212,12 @@ def _run_analysis_workflow(args):
 
     db_conn: Optional[sqlite3.Connection] = None # Initialize connection variable
     summary = {} # Initialize summary dictionary
-    overall_success = False # Assume failure until proven otherwise
+    # Assume success unless a computation step explicitly fails
+    current_step_success = True
+    final_status_for_db = "failed" # Default to failed unless explicitly set to success
+    run_name = os.path.basename(run_dir) # Define here for use in except/finally
+    parent_dir = os.path.dirname(run_dir)
+    system_name = os.path.basename(parent_dir) if parent_dir and os.path.basename(parent_dir) != '.' else run_name
 
     try:
         # --- Initialize Database ---
@@ -219,10 +225,6 @@ def _run_analysis_workflow(args):
         if db_conn is None:
             # Error already logged by init_db
             return None # Cannot proceed without DB
-
-        run_name = os.path.basename(run_dir)
-        parent_dir = os.path.dirname(run_dir)
-        system_name = os.path.basename(parent_dir) if parent_dir and os.path.basename(parent_dir) != '.' else run_name
 
         # --- Set Initial Metadata, Status, and Store Config ---
         set_simulation_metadata(db_conn, "run_name", run_name)
@@ -246,335 +248,236 @@ def _run_analysis_workflow(args):
             summary = generate_summary_from_database(run_dir, db_conn)
             if not summary:
                  logger.error("Failed to generate summary from database.")
-                 raise RuntimeError("Failed to generate summary") # Treat as failure
+                 current_step_success = False # Mark as failure if summary fails in this mode
+                 raise RuntimeError("Failed to generate summary in summary-only mode.")
 
             if args.report:
                 logger.info("Generating HTML report...")
                 report_path = generate_html_report(run_dir, summary=summary)
                 if not report_path:
                     logger.warning("HTML report generation failed or returned no path")
-                    # Do not treat report failure as overall failure in summary-only
                 else:
                     logger.info(f"HTML report generated: {report_path}")
             else:
                 logger.info("HTML report generation skipped in summary-only mode.")
 
-            overall_success = True # Summary generation is considered success here
-            return summary # Exit workflow early
+            current_step_success = True # Summary generation succeeded
+            # Skip the rest of the analysis, jump towards finalization
+        else:
+            # --- Determine which modules to run (Logic unchanged) ---
+            specific_flags_set = args.core or args.orientation or args.ions or args.water or args.gyration or args.tyrosine or args.dwgates
+            run_all_initially = not specific_flags_set
 
-        # --- Determine which modules to run (Logic unchanged) ---
-        specific_flags_set = args.core or args.orientation or args.ions or args.water or args.gyration or args.tyrosine or args.dwgates
-        run_all_initially = not specific_flags_set
+            run_core = (args.core or run_all_initially) and core_analysis_available
+            run_orientation = (args.orientation or run_all_initially) and orientation_analysis_available
+            run_ions = (args.ions or run_all_initially) and ion_analysis_available
+            run_water = (args.water or run_all_initially) and inner_vestibule_analysis_available
+            run_gyration = (args.gyration or run_all_initially) and gyration_analysis_available
+            run_tyrosine = (args.tyrosine or run_all_initially) and tyrosine_analysis_available
+            run_dwgates = (args.dwgates or run_all_initially) and dw_gate_analysis_available
 
-        run_core = (args.core or run_all_initially) and core_analysis_available
-        run_orientation = (args.orientation or run_all_initially) and orientation_analysis_available
-        run_ions = (args.ions or run_all_initially) and ion_analysis_available
-        run_water = (args.water or run_all_initially) and inner_vestibule_analysis_available
-        run_gyration = (args.gyration or run_all_initially) and gyration_analysis_available
-        run_tyrosine = (args.tyrosine or run_all_initially) and tyrosine_analysis_available
-        run_dwgates = (args.dwgates or run_all_initially) and dw_gate_analysis_available
+            generate_plots = not args.no_plots
 
-        generate_plots = not args.no_plots
+            if specific_flags_set:
+                generate_html = args.report
+            else: # Run all default case
+                generate_html = not args.no_report
 
-        if specific_flags_set:
-            generate_html = args.report
-        else: # Run all default case
-            generate_html = not args.no_report
+            # Log module availability warnings (Logic unchanged)
+            if args.core and not core_analysis_available: logger.warning("Core analysis requested but module is not available/imported.")
+            if args.orientation and not orientation_analysis_available: logger.warning("Orientation analysis requested but module is not available/imported.")
+            if args.ions and not ion_analysis_available: logger.warning("Ion analysis requested but module is not available/imported.")
+            if args.water and not inner_vestibule_analysis_available: logger.warning("Inner Vestibule analysis requested but module is not available/imported.")
+            if args.gyration and not gyration_analysis_available: logger.warning("Gyration analysis requested but module is not available/imported.")
+            if args.tyrosine and not tyrosine_analysis_available: logger.warning("Tyrosine analysis requested but module is not available/imported.")
+            if args.dwgates and not dw_gate_analysis_available: logger.warning("DW Gate analysis requested but module is not available/imported.")
 
-        # Log module availability warnings (Logic unchanged)
-        if args.core and not core_analysis_available: logger.warning("Core analysis requested but module is not available/imported.")
-        if args.orientation and not orientation_analysis_available: logger.warning("Orientation analysis requested but module is not available/imported.")
-        if args.ions and not ion_analysis_available: logger.warning("Ion analysis requested but module is not available/imported.")
-        if args.water and not inner_vestibule_analysis_available: logger.warning("Inner Vestibule analysis requested but module is not available/imported.")
-        if args.gyration and not gyration_analysis_available: logger.warning("Gyration analysis requested but module is not available/imported.")
-        if args.tyrosine and not tyrosine_analysis_available: logger.warning("Tyrosine analysis requested but module is not available/imported.")
-        if args.dwgates and not dw_gate_analysis_available: logger.warning("DW Gate analysis requested but module is not available/imported.")
 
-        logger.info(f"Analysis Plan: Core={run_core}, Orientation={run_orientation}, Ions={run_ions}, Water={run_water}, Gyration={run_gyration}, Tyrosine={run_tyrosine}, DWGates={run_dwgates}")
-        logger.info(f"Generate Plots: {generate_plots}")
-        logger.info(f"Generate HTML Report: {generate_html}")
-        logger.info(f"Force Rerun: {args.force_rerun}")
+            logger.info(f"Analysis Plan: Core={run_core}, Orientation={run_orientation}, Ions={run_ions}, Water={run_water}, Gyration={run_gyration}, Tyrosine={run_tyrosine}, DWGates={run_dwgates}")
+            logger.info(f"Generate Plots: {generate_plots}")
+            logger.info(f"Generate HTML Report: {generate_html}")
+            logger.info(f"Force Rerun: {args.force_rerun}")
 
-        # ===========================================
-        # --- Start of Analysis Module Execution ----
-        # ===========================================
-        # Initialize success flag for the main analysis part
-        current_step_success = True
+            # ===========================================
+            # --- Start of Analysis Module Execution ----
+            # ===========================================
+            # current_step_success is True initially
 
-        # --- Core Analysis Module ---
-        core_analysis_done = False
-        core_filter_status = get_module_status(db_conn, "core_analysis_filtering")
-        core_comp_status = get_module_status(db_conn, "core_analysis")
-        needs_core_run = args.force_rerun or core_comp_status != "success" or core_filter_status != "success"
+            # --- Core Analysis Module ---
+            core_analysis_done = False
+            core_filter_status = get_module_status(db_conn, "core_analysis_filtering")
+            core_comp_status = get_module_status(db_conn, "core_analysis")
+            needs_core_run = args.force_rerun or core_comp_status != "success" or core_filter_status != "success"
 
-        if run_core and needs_core_run:
-            logger.info("Running core distance computation and filtering...")
-            start_time_core = time.time()
-            core_results = analyze_trajectory(run_dir, psf_file, dcd_file)
-            if core_results and core_results['status'] == 'success':
-                set_simulation_metadata(db_conn, "is_control_system", str(core_results['metadata']['is_control_system']))
-                filtering_results = filter_and_save_data(
-                    run_dir, core_results['data']['dist_ac'], core_results['data']['dist_bd'],
-                    core_results['data']['com_distances'], core_results['data']['time_points'],
-                    is_control_system=core_results['metadata']['is_control_system'],
-                    db_conn=db_conn, box_z=args.box_z
-                )
-                if filtering_results and filtering_results['status'] == 'success':
-                    core_analysis_done = True
-                else:
-                    logger.error(f"Core: Distance filtering failed: {filtering_results.get('error', 'Unknown')}")
-                    current_step_success = False
-            elif core_results and core_results['status'] == 'skipped':
-                 logger.warning("Core analysis computation skipped (module not found?)")
-                 current_step_success = False # Consider unavailability as failure if needed
-            else:
-                logger.error(f"Core: Trajectory analysis failed: {core_results.get('error', 'Unknown') if core_results else 'No results returned'}")
-                current_step_success = False
-            logger.info(f"Core computation/filtering finished in {time.time() - start_time_core:.2f} seconds.")
-            # --- Raise error if core step failed critically ---
-            if not current_step_success: raise RuntimeError("Core analysis computation/filtering failed.")
-        elif run_core:
-            logger.info("Skipping core computation/filtering - already completed successfully.")
-            core_analysis_done = True
-        else: # Not running core
-            core_analysis_done = core_filter_status == "success" # Check if previously done
-
-        # Fetch control status AFTER potential core run
-        is_control_system = get_simulation_metadata(db_conn, 'is_control_system') == 'True'
-
-        # Core Viz (Run if needed and computation was done or already successful)
-        core_viz_gg_status = get_module_status(db_conn, "core_analysis_visualization_g_g")
-        core_viz_com_status = get_module_status(db_conn, "core_analysis_visualization_com")
-        needs_core_viz = generate_plots and (args.force_rerun or core_viz_gg_status != "success" or (not is_control_system and core_viz_com_status != "success"))
-        if core_analysis_done and needs_core_viz and core_analysis_available:
-            logger.info("Generating core analysis plots...")
-            plot_distances(run_dir, is_gg=True, db_conn=db_conn)
-            if not is_control_system:
-                plot_distances(run_dir, is_gg=False, db_conn=db_conn)
-                plot_kde_analysis(run_dir, db_conn=db_conn, box_z=args.box_z)
-        # (Logging for skipping viz remains the same)
-
-        # --- Other Analysis Modules ---
-        # (Existing logic for Orientation, Ion, Vestibule, Gyration, Tyrosine, DWGate remains largely the same)
-        # Key change: If a module fails, set current_step_success = False and raise RuntimeError
-        # Example for Orientation:
-
-        # --- Orientation Analysis Module ---
-        orientation_analysis_done = False
-        orient_comp_status = get_module_status(db_conn, "orientation_analysis")
-        orient_viz_status = get_module_status(db_conn, "orientation_analysis_visualization")
-
-        if run_orientation:
-            if is_control_system:
-                # (Skip logic remains the same)
-                orientation_analysis_done = True
-            else:
-                needs_orient_comp_run = args.force_rerun or orient_comp_status != "success"
-                needs_orient_viz_run = generate_plots and (args.force_rerun or orient_viz_status != "success")
-
-                if needs_orient_comp_run or (needs_orient_viz_run and orient_comp_status != 'success'):
-                    logger.info(f"Running orientation analysis computation (Needed: {needs_orient_comp_run})...")
-                    start_time_orient_comp = time.time()
-                    orient_comp_results = run_orientation_analysis(run_dir, psf_file, dcd_file, db_conn=db_conn)
-                    orientation_analysis_done = orient_comp_results.get('status') == 'success'
-                    logger.info(f"Orientation computation completed in {time.time() - start_time_orient_comp:.2f} seconds. Success: {orientation_analysis_done}")
-                    if not orientation_analysis_done:
-                        logger.error(f"Orientation computation failed: {orient_comp_results.get('error', 'Unknown')}")
+            if run_core and needs_core_run:
+                logger.info("Running core distance computation and filtering...")
+                start_time_core = time.time()
+                core_results = analyze_trajectory(run_dir, psf_file, dcd_file)
+                if core_results and core_results['status'] == 'success':
+                    set_simulation_metadata(db_conn, "is_control_system", str(core_results['metadata']['is_control_system']))
+                    filtering_results = filter_and_save_data(
+                        run_dir, core_results['data']['dist_ac'], core_results['data']['dist_bd'],
+                        core_results['data']['com_distances'], core_results['data']['time_points'],
+                        is_control_system=core_results['metadata']['is_control_system'],
+                        db_conn=db_conn, box_z=args.box_z
+                    )
+                    if filtering_results and filtering_results['status'] == 'success':
+                        core_analysis_done = True
+                    else:
+                        logger.error(f"Core: Distance filtering failed: {filtering_results.get('error', 'Unknown')}")
                         current_step_success = False
-                        raise RuntimeError("Orientation analysis computation failed.")
+                        # Raise immediately on critical step failure
+                        raise RuntimeError(f"Core analysis filtering failed: {filtering_results.get('error', 'Unknown')}")
+                elif core_results and core_results['status'] == 'skipped':
+                    logger.warning("Core analysis computation skipped (module not found?)")
+                    current_step_success = False # Unavailable = failure for workflow
+                    raise RuntimeError("Core analysis module is unavailable.")
                 else:
-                    # (Skip logic remains the same)
-                    orientation_analysis_done = True
+                    logger.error(f"Core: Trajectory analysis failed: {core_results.get('error', 'Unknown') if core_results else 'No results returned'}")
+                    current_step_success = False
+                    raise RuntimeError(f"Core trajectory analysis failed: {core_results.get('error', 'Unknown') if core_results else 'No results returned'}")
+                logger.info(f"Core computation/filtering finished in {time.time() - start_time_core:.2f} seconds.")
+            elif run_core:
+                logger.info("Skipping core computation/filtering - already completed successfully.")
+                core_analysis_done = True # Already done
+            else: # Not running core
+                core_analysis_done = core_filter_status == "success" # Check if previously done
 
-                if orientation_analysis_done and needs_orient_viz_run and orientation_analysis_available:
-                    logger.info("Generating orientation analysis plots...")
-                    start_time_orient_viz = time.time()
-                    viz_results = generate_orientation_plots(run_dir, db_conn=db_conn)
-                    if viz_results.get('status') != 'success': logger.error("Orientation visualization failed.") # Log error but might not be critical failure
-                    logger.info(f"Orientation visualization completed in {time.time() - start_time_orient_viz:.2f} seconds.")
-                # (Logging for skipping viz remains the same)
+            is_control_system = get_simulation_metadata(db_conn, 'is_control_system') == 'True'
 
-        # --- Ion Analysis Module ---
-        ion_analysis_done = False
-        ion_comp_status = get_module_status(db_conn, "ion_analysis")
-        ion_viz_status = get_module_status(db_conn, "ion_analysis_visualization")
+            # Core Viz (Run if needed and computation was done or already successful)
+            core_viz_gg_status = get_module_status(db_conn, "core_analysis_visualization_g_g")
+            core_viz_com_status = get_module_status(db_conn, "core_analysis_visualization_com")
+            needs_core_viz = generate_plots and (args.force_rerun or core_viz_gg_status != "success" or (not is_control_system and core_viz_com_status != "success"))
+            if core_analysis_done and needs_core_viz and core_analysis_available:
+                logger.info("Generating core analysis plots...")
+                try:
+                    plot_distances(run_dir, is_gg=True, db_conn=db_conn)
+                    if not is_control_system:
+                        plot_distances(run_dir, is_gg=False, db_conn=db_conn)
+                        plot_kde_analysis(run_dir, db_conn=db_conn, box_z=args.box_z)
+                except Exception as e_plot_core:
+                     logger.error(f"Core plotting failed: {e_plot_core}", exc_info=True)
+                     # Log as error, but might not be a critical workflow failure
+            elif core_analysis_done and generate_plots and not needs_core_viz:
+                logger.info("Skipping core plot generation - already completed successfully.")
+            elif not core_analysis_done and generate_plots:
+                logger.warning("Cannot generate core plots - computation/filtering did not complete successfully.")
 
-        if run_ions:
+            # --- Run Other Modules (Condensed - Apply same pattern as Core/Orientation) ---
+            # Helper function to run a module computation step
+            def run_computation_step(module_flag, run_needed, module_name_comp, run_func, deps_ok=True, dep_err_msg="Dependency failed"):
+                nonlocal current_step_success, db_conn, run_dir, psf_file, dcd_file
+                step_done = False
+                if module_flag:
+                    if not deps_ok:
+                         logger.warning(f"Cannot run {module_name_comp}: {dep_err_msg}")
+                         if get_module_status(db_conn, module_name_comp) != 'skipped': update_module_status(db_conn, module_name_comp, 'skipped', error_message=dep_err_msg)
+                         # Treat dependency failure as skip, not necessarily overall failure
+                         step_done = get_module_status(db_conn, module_name_comp) == 'success' # Check if maybe done previously?
+                    elif run_needed:
+                         logger.info(f"Running {module_name_comp} computation...")
+                         start_comp = time.time()
+                         comp_results = run_func(run_dir, psf_file, dcd_file, db_conn=db_conn)
+                         step_done = comp_results.get('status') == 'success'
+                         logger.info(f"{module_name_comp} computation finished in {time.time() - start_comp:.2f} sec. Success: {step_done}")
+                         if not step_done:
+                              err = comp_results.get('error', 'Unknown')
+                              logger.error(f"{module_name_comp} computation failed: {err}")
+                              current_step_success = False
+                              raise RuntimeError(f"{module_name_comp} computation failed: {err}")
+                    else:
+                         logger.info(f"Skipping {module_name_comp} computation - already completed successfully.")
+                         step_done = True # Already done successfully
+                else:
+                    step_done = get_module_status(db_conn, module_name_comp) == 'success'
+                return step_done
+
+            # Helper function to run a module visualization step
+            def run_visualization_step(module_flag, computation_done, run_needed, module_name_viz, gen_plots_func, module_available):
+                 nonlocal generate_plots, db_conn, run_dir
+                 if module_flag and computation_done and run_needed and module_available:
+                     logger.info(f"Generating {module_name_viz} plots...")
+                     start_viz = time.time()
+                     viz_results = gen_plots_func(run_dir, db_conn=db_conn)
+                     if viz_results.get('status') != 'success': logger.error(f"{module_name_viz} visualization failed: {viz_results.get('error', 'Unknown')}") # Log error but don't fail workflow
+                     logger.info(f"{module_name_viz} visualization finished in {time.time() - start_viz:.2f} sec.")
+                 elif module_flag and computation_done and generate_plots and not run_needed:
+                      logger.info(f"Skipping {module_name_viz} plot generation - already completed successfully.")
+                 elif module_flag and not computation_done and generate_plots:
+                      logger.warning(f"Cannot generate {module_name_viz} plots - computation did not complete successfully.")
+
+            # Orientation
+            orient_comp_status = get_module_status(db_conn, "orientation_analysis")
+            orient_viz_status = get_module_status(db_conn, "orientation_analysis_visualization")
+            needs_orient_comp_run = args.force_rerun or orient_comp_status != "success"
+            needs_orient_viz_run = generate_plots and (args.force_rerun or orient_viz_status != "success")
+            orientation_analysis_done = run_computation_step(run_orientation, needs_orient_comp_run, "orientation_analysis", run_orientation_analysis, deps_ok=(not is_control_system), dep_err_msg="Control system")
+            run_visualization_step(run_orientation, orientation_analysis_done, needs_orient_viz_run, "orientation_analysis_visualization", generate_orientation_plots, orientation_analysis_available)
+
+            # Ion Analysis
+            ion_comp_status = get_module_status(db_conn, "ion_analysis")
+            ion_viz_status = get_module_status(db_conn, "ion_analysis_visualization")
             needs_ion_comp_run = args.force_rerun or ion_comp_status != "success"
             needs_ion_viz_run = generate_plots and (args.force_rerun or ion_viz_status != "success")
+            ion_analysis_done = run_computation_step(run_ions, needs_ion_comp_run, "ion_analysis", run_ion_analysis)
+            run_visualization_step(run_ions, ion_analysis_done, needs_ion_viz_run, "ion_analysis_visualization", generate_ion_plots, ion_analysis_available)
 
-            if needs_ion_comp_run or (needs_ion_viz_run and ion_comp_status != 'success'):
-                logger.info(f"Running ion analysis computation (Needed: {needs_ion_comp_run})...")
-                start_time_ion_comp = time.time()
-                ion_comp_results = run_ion_analysis(run_dir, psf_file, dcd_file, db_conn=db_conn)
-                ion_analysis_done = ion_comp_results.get('status') == 'success'
-                logger.info(f"Ion analysis computation completed in {time.time() - start_time_ion_comp:.2f} seconds. Success: {ion_analysis_done}")
-                if not ion_analysis_done:
-                    logger.error(f"Ion analysis computation failed: {ion_comp_results.get('error', 'Unknown')}")
-                    current_step_success = False
-                    raise RuntimeError("Ion analysis computation failed.")
-            else:
-                # (Skip logic remains the same)
-                ion_analysis_done = True
-
-            if ion_analysis_done and needs_ion_viz_run and ion_analysis_available:
-                logger.info("Generating ion analysis plots...")
-                start_time_ion_viz = time.time()
-                viz_results = generate_ion_plots(run_dir, db_conn=db_conn)
-                if viz_results.get('status') != 'success': logger.error("Ion analysis visualization failed.")
-                logger.info(f"Ion analysis visualization completed in {time.time() - start_time_ion_viz:.2f} seconds.")
-            # (Logging for skipping viz remains the same)
-
-        # --- Inner Vestibule Analysis Module ---
-        inner_vestibule_analysis_done = False
-        vestibule_comp_status = get_module_status(db_conn, "inner_vestibule_analysis")
-        vestibule_viz_status = get_module_status(db_conn, "inner_vestibule_analysis_visualization")
-
-        if run_water:
+            # Inner Vestibule
+            vestibule_comp_status = get_module_status(db_conn, "inner_vestibule_analysis")
+            vestibule_viz_status = get_module_status(db_conn, "inner_vestibule_analysis_visualization")
             needs_vestibule_comp_run = args.force_rerun or vestibule_comp_status != "success"
             needs_vestibule_viz_run = generate_plots and (args.force_rerun or vestibule_viz_status != "success")
+            # Dependency: Requires filter_residues_dict metadata from ion_analysis run
+            filter_res_meta_for_vest = get_simulation_metadata(db_conn, 'filter_residues_dict')
+            vestibule_analysis_done = run_computation_step(run_water, needs_vestibule_comp_run, "inner_vestibule_analysis", run_inner_vestibule_analysis, deps_ok=(filter_res_meta_for_vest is not None), dep_err_msg="filter_residues_dict missing")
+            run_visualization_step(run_water, vestibule_analysis_done, needs_vestibule_viz_run, "inner_vestibule_analysis_visualization", generate_inner_vestibule_plots, inner_vestibule_analysis_available)
 
-            if needs_vestibule_comp_run or (needs_vestibule_viz_run and vestibule_comp_status != 'success'):
-                logger.info(f"Running inner vestibule analysis computation (Needed: {needs_vestibule_comp_run})...")
-                start_time_vestibule_comp = time.time()
-                vestibule_comp_results = run_inner_vestibule_analysis(run_dir, psf_file, dcd_file, db_conn=db_conn)
-                inner_vestibule_analysis_done = vestibule_comp_results.get('status') == 'success'
-                logger.info(f"Inner vestibule computation completed in {time.time() - start_time_vestibule_comp:.2f} seconds. Success: {inner_vestibule_analysis_done}")
-                if not inner_vestibule_analysis_done:
-                    logger.error(f"Inner vestibule computation failed: {vestibule_comp_results.get('error', 'Unknown')}")
-                    current_step_success = False
-                    raise RuntimeError("Inner vestibule analysis computation failed.")
-            else:
-                # (Skip logic remains the same)
-                inner_vestibule_analysis_done = True
-
-            if inner_vestibule_analysis_done and needs_vestibule_viz_run and inner_vestibule_analysis_available:
-                logger.info("Generating inner vestibule analysis plots...")
-                start_time_vestibule_viz = time.time()
-                viz_results = generate_inner_vestibule_plots(run_dir, db_conn=db_conn)
-                if viz_results.get('status') != 'success': logger.error("Inner vestibule visualization failed.")
-                logger.info(f"Inner vestibule visualization completed in {time.time() - start_time_vestibule_viz:.2f} seconds.")
-            # (Logging for skipping viz remains the same)
-
-        # --- Gyration Analysis Module ---
-        gyration_analysis_done = False
-        gyration_comp_status = get_module_status(db_conn, "gyration_analysis")
-        gyration_viz_status = get_module_status(db_conn, "gyration_analysis_visualization")
-
-        if run_gyration:
+            # Gyration
+            gyration_comp_status = get_module_status(db_conn, "gyration_analysis")
+            gyration_viz_status = get_module_status(db_conn, "gyration_analysis_visualization")
             needs_gyration_comp_run = args.force_rerun or gyration_comp_status != "success"
             needs_gyration_viz_run = generate_plots and (args.force_rerun or gyration_viz_status != "success")
+            # Dependency: Ion analysis computation must be done/successful
+            gyration_analysis_done = run_computation_step(run_gyration, needs_gyration_comp_run, "gyration_analysis", run_gyration_analysis, deps_ok=ion_analysis_done, dep_err_msg="Ion analysis failed")
+            run_visualization_step(run_gyration, gyration_analysis_done, needs_gyration_viz_run, "gyration_analysis_visualization", generate_gyration_plots, gyration_analysis_available)
 
-            if not ion_analysis_done: # Check dependency
-                 logger.warning("Cannot run Gyration analysis: Ion analysis did not complete successfully.")
-                 if gyration_comp_status != 'skipped': update_module_status(db_conn, "gyration_analysis", 'skipped', error_message="Dependency failed: ion_analysis")
-                 if gyration_viz_status != 'skipped': update_module_status(db_conn, "gyration_analysis_visualization", 'skipped', error_message="Dependency failed: ion_analysis")
-                 # Treat dependency failure as skip, not critical failure for overall run unless specifically desired
-            elif needs_gyration_comp_run or (needs_gyration_viz_run and gyration_comp_status != 'success'):
-                logger.info(f"Running gyration analysis computation (Needed: {needs_gyration_comp_run})...")
-                start_time_gyration_comp = time.time()
-                gyration_comp_results = run_gyration_analysis(run_dir, psf_file, dcd_file, db_conn=db_conn)
-                gyration_analysis_done = gyration_comp_results.get('status') == 'success'
-                logger.info(f"Gyration analysis computation completed in {time.time() - start_time_gyration_comp:.2f} seconds. Success: {gyration_analysis_done}")
-                if not gyration_analysis_done:
-                    logger.error(f"Gyration analysis computation failed: {gyration_comp_results.get('error', 'Unknown')}")
-                    current_step_success = False
-                    raise RuntimeError("Gyration analysis computation failed.")
-            else:
-                # (Skip logic remains the same)
-                gyration_analysis_done = True
-
-            if gyration_analysis_done and needs_gyration_viz_run and gyration_analysis_available:
-                logger.info("Generating gyration analysis plots...")
-                start_time_gyration_viz = time.time()
-                viz_results = generate_gyration_plots(run_dir, db_conn=db_conn)
-                if viz_results.get('status') != 'success': logger.error("Gyration analysis visualization failed.")
-                logger.info(f"Gyration analysis visualization completed in {time.time() - start_time_gyration_viz:.2f} seconds.")
-            # (Logging for skipping viz remains the same)
-
-        # --- Tyrosine Analysis Module ---
-        tyrosine_analysis_done = False
-        tyrosine_comp_status = get_module_status(db_conn, "tyrosine_analysis")
-        tyrosine_viz_status = get_module_status(db_conn, "tyrosine_analysis_visualization")
-
-        if run_tyrosine:
+            # Tyrosine
+            tyrosine_comp_status = get_module_status(db_conn, "tyrosine_analysis")
+            tyrosine_viz_status = get_module_status(db_conn, "tyrosine_analysis_visualization")
             needs_tyrosine_comp_run = args.force_rerun or tyrosine_comp_status != "success"
             needs_tyrosine_viz_run = generate_plots and (args.force_rerun or tyrosine_viz_status != "success")
+            # Dependency: Ion analysis computation must be done/successful
+            tyrosine_analysis_done = run_computation_step(run_tyrosine, needs_tyrosine_comp_run, "tyrosine_analysis", run_tyrosine_analysis, deps_ok=ion_analysis_done, dep_err_msg="Ion analysis failed")
+            run_visualization_step(run_tyrosine, tyrosine_analysis_done, needs_tyrosine_viz_run, "tyrosine_analysis_visualization", generate_tyrosine_plots, tyrosine_analysis_available)
 
-            if not ion_analysis_done: # Check dependency
-                 logger.warning("Cannot run Tyrosine analysis: Ion analysis did not complete successfully.")
-                 if tyrosine_comp_status != 'skipped': update_module_status(db_conn, "tyrosine_analysis", 'skipped', error_message="Dependency failed: ion_analysis")
-                 if tyrosine_viz_status != 'skipped': update_module_status(db_conn, "tyrosine_analysis_visualization", 'skipped', error_message="Dependency failed: ion_analysis")
-            elif needs_tyrosine_comp_run or (needs_tyrosine_viz_run and tyrosine_comp_status != 'success'):
-                logger.info(f"Running tyrosine analysis computation (Needed: {needs_tyrosine_comp_run})...")
-                start_time_tyrosine_comp = time.time()
-                tyrosine_comp_results = run_tyrosine_analysis(run_dir, psf_file, dcd_file, db_conn=db_conn)
-                tyrosine_analysis_done = tyrosine_comp_results.get('status') == 'success'
-                logger.info(f"Tyrosine analysis computation completed in {time.time() - start_time_tyrosine_comp:.2f} seconds. Success: {tyrosine_analysis_done}")
-                if not tyrosine_analysis_done:
-                    logger.error(f"Tyrosine analysis computation failed: {tyrosine_comp_results.get('error', 'Unknown')}")
-                    current_step_success = False
-                    raise RuntimeError("Tyrosine analysis computation failed.")
-            else:
-                # (Skip logic remains the same)
-                tyrosine_analysis_done = True
-
-            if tyrosine_analysis_done and needs_tyrosine_viz_run and tyrosine_analysis_available:
-                logger.info("Generating tyrosine analysis plots...")
-                start_time_tyrosine_viz = time.time()
-                viz_results = generate_tyrosine_plots(run_dir, db_conn=db_conn)
-                if viz_results.get('status') != 'success': logger.error("Tyrosine analysis visualization failed.")
-                logger.info(f"Tyrosine analysis visualization completed in {time.time() - start_time_tyrosine_viz:.2f} seconds.")
-            # (Logging for skipping viz remains the same)
-
-        # --- DW Gate Analysis Module ---
-        dw_gate_analysis_done = False
-        dw_gate_comp_status = get_module_status(db_conn, "dw_gate_analysis")
-        dw_gate_viz_status = get_module_status(db_conn, "dw_gate_analysis_visualization")
-
-        if run_dwgates:
+            # DW Gate
+            dw_gate_comp_status = get_module_status(db_conn, "dw_gate_analysis")
+            dw_gate_viz_status = get_module_status(db_conn, "dw_gate_analysis_visualization")
             needs_dw_gate_comp_run = args.force_rerun or dw_gate_comp_status != "success"
             needs_dw_gate_viz_run = generate_plots and (args.force_rerun or dw_gate_viz_status != "success")
+            # Dependency: Filter residues metadata from ion_analysis
+            filter_res_meta_for_dw = get_simulation_metadata(db_conn, 'filter_residues_dict')
+            dw_gate_analysis_done = run_computation_step(run_dwgates, needs_dw_gate_comp_run, "dw_gate_analysis", run_dw_gate_analysis, deps_ok=(filter_res_meta_for_dw is not None), dep_err_msg="filter_residues_dict missing")
+            run_visualization_step(run_dwgates, dw_gate_analysis_done, needs_dw_gate_viz_run, "dw_gate_analysis_visualization", generate_dw_gate_plots, dw_gate_analysis_available)
 
-            filter_res_meta = get_simulation_metadata(db_conn, 'filter_residues_dict')
-            if not filter_res_meta: # Check dependency
-                 logger.warning("Cannot run DW Gate analysis: Filter residue dictionary not found in database metadata (dependency: ion_analysis).")
-                 if dw_gate_comp_status != 'skipped': update_module_status(db_conn, "dw_gate_analysis", 'skipped', error_message="Dependency failed: filter_residues_dict")
-                 if dw_gate_viz_status != 'skipped': update_module_status(db_conn, "dw_gate_analysis_visualization", 'skipped', error_message="Dependency failed: filter_residues_dict")
-            elif needs_dw_gate_comp_run or (needs_dw_gate_viz_run and dw_gate_comp_status != 'success'):
-                logger.info(f"Running DW Gate analysis computation (Needed: {needs_dw_gate_comp_run})...")
-                start_time_dw_gate_comp = time.time()
-                dw_gate_comp_results = run_dw_gate_analysis(run_dir, psf_file, dcd_file, db_conn=db_conn)
-                dw_gate_analysis_done = dw_gate_comp_results.get('status') == 'success'
-                logger.info(f"DW Gate analysis computation completed in {time.time() - start_time_dw_gate_comp:.2f} seconds. Success: {dw_gate_analysis_done}")
-                if not dw_gate_analysis_done:
-                    logger.error(f"DW Gate analysis computation failed: {dw_gate_comp_results.get('error', 'Unknown')}")
-                    current_step_success = False
-                    raise RuntimeError("DW Gate analysis computation failed.")
-            else:
-                # (Skip logic remains the same)
-                dw_gate_analysis_done = True
+            # ===========================================
+            # --- End of Analysis Module Execution ------
+            # ===========================================
 
-            if dw_gate_analysis_done and needs_dw_gate_viz_run and dw_gate_analysis_available:
-                logger.info("Generating DW Gate analysis plots...")
-                start_time_dw_gate_viz = time.time()
-                viz_results = generate_dw_gate_plots(run_dir, db_conn=db_conn)
-                if viz_results.get('status') != 'success': logger.error("DW Gate analysis visualization failed.")
-                logger.info(f"DW Gate analysis visualization completed in {time.time() - start_time_dw_gate_viz:.2f} seconds.")
-            # (Logging for skipping viz remains the same)
-
-
-        # ===========================================
-        # --- End of Analysis Module Execution ------
-        # ===========================================
+        # --- Set Final Overall Status BEFORE Summary ---
+        final_status_for_db = 'success' if current_step_success else 'failed'
+        set_simulation_metadata(db_conn, "analysis_status", final_status_for_db)
+        set_simulation_metadata(db_conn, "analysis_end_time", datetime.now().isoformat())
+        db_conn.commit() # Commit final status *before* summary generation
+        logger.info(f"Overall analysis status for this run set to: {final_status_for_db}")
 
         # --- Final Summary and Report ---
         logger.info("Generating final analysis summary...")
         summary = generate_summary_from_database(run_dir, db_conn)
         if not summary:
             logger.warning("Analysis summary generation returned empty result")
-            # Consider if this should mark success as false?
-            # For now, let previous step success dictate overall success
+            summary = {} # Ensure summary is at least an empty dict
 
         if generate_html:
             if summary:
@@ -584,37 +487,20 @@ def _run_analysis_workflow(args):
                     logger.info(f"HTML report generated: {report_path}")
                 else:
                     logger.warning("HTML report generation failed or returned no path")
-                    # Do not mark overall as failure just for report unless required
             else:
                 logger.error("Cannot generate HTML report: Failed to generate summary from database.")
-                # Mark as failure if summary was needed for report?
-                # current_step_success = False # Optional: Fail if summary fails when report needed
-        else:
-            logger.info("Skipping HTML report generation based on flags.")
-
-        # --- Set Final Overall Success Status ---
-        # Only set to success if all critical steps passed
-        if current_step_success:
-             overall_success = True
-             set_simulation_metadata(db_conn, "analysis_status", "success")
-             set_simulation_metadata(db_conn, "analysis_end_time", datetime.now().isoformat())
-             db_conn.commit() # Commit success status
-             logger.info(f"Overall analysis status for this run: success")
-        else:
-             # If current_step_success is False, an error was already logged and status set to failed by the failing step or the except block below will catch it.
-             # No need to explicitly set failed here again unless we want to override a previous success state which shouldn't happen with this logic.
-             logger.info(f"Overall analysis status for this run: failed (due to earlier step failure)")
-
 
     except Exception as e:
         # Catch any unhandled exceptions during the main workflow
         error_message = f"Unhandled Workflow Error: {e}"
         tb_str = traceback.format_exc() # Get detailed traceback
         logger.critical(f"{error_message}\n{tb_str}")
-        overall_success = False # Ensure overall status is marked as failed
+        current_step_success = False # Mark as failed
+        final_status_for_db = "failed" # Ensure final status is marked failed
         # Try to update status and save error summary
         if db_conn:
             try:
+                # Ensure status is marked failed even if it happened after modules
                 set_simulation_metadata(db_conn, "analysis_status", "failed")
                 set_simulation_metadata(db_conn, "analysis_error", f"{error_message[:200]}...") # Store truncated error
                 set_simulation_metadata(db_conn, "analysis_end_time", datetime.now().isoformat())
@@ -623,22 +509,28 @@ def _run_analysis_workflow(args):
                 logger.error(f"Failed to update DB status to failed during critical error handling: {db_e}")
         # Save minimal error summary file
         _save_error_summary(run_dir, system_name, run_name, error_message)
-        # Return None to indicate critical failure to the main() function
-        return None
+        summary = None # Indicate critical failure for return value
 
     finally:
         # --- Ensure DB connection is always closed ---
         if db_conn:
             try:
-                # Final commit just in case (e.g., metadata updates)
-                db_conn.commit()
+                db_conn.commit() # Final commit just in case
                 db_conn.close()
                 logger.info("Database connection closed.")
             except Exception as db_e:
                 logger.error(f"Error closing database connection: {db_e}")
 
-    return summary if overall_success and summary else {} # Return summary only on success, else empty dict
-
+    # Return summary object only if the core analysis steps succeeded
+    # and summary generation produced a result. Otherwise return {} or None.
+    if final_status_for_db == 'success' and isinstance(summary, dict) and summary:
+         return summary
+    elif final_status_for_db == 'success' and (not isinstance(summary, dict) or not summary):
+         logger.warning("Workflow computation succeeded, but summary generation failed or returned empty. Returning empty dict.")
+         return {}
+    else: # final_status_for_db was 'failed'
+         logger.error(f"Workflow failed during computation steps. Final status: {final_status_for_db}. Returning None.")
+         return None # Return None if a critical computation error occurred
 
 # --- Main Execution Guard ---
 def main():
@@ -666,26 +558,28 @@ def main():
     start_run_time = time.time()
 
     # Run the workflow
-    # _run_analysis_workflow now returns the summary dict on success, {} on handled failure, or None on critical failure
     results = _run_analysis_workflow(args)
 
     end_run_time = time.time()
     logger.info(f"--- Analysis finished for {abs_run_dir} at {datetime.now()} (Duration: {end_run_time - start_run_time:.2f} sec) ---")
 
-    # Determine exit code based on the result
+    # Determine exit code based on the return value
     if results is None:
         # Critical failure caught in the workflow's except block
         logger.error("Workflow failed critically.")
         return 1
-    elif isinstance(results, dict) and results.get('metadata', {}).get('analysis_status') == 'success':
-        # Workflow completed successfully (might have warnings, but no critical errors)
+    elif isinstance(results, dict) and results:
+        # Workflow completed successfully AND summary was generated
         logger.info("Workflow completed successfully.")
         return 0
+    elif isinstance(results, dict) and not results:
+         # Workflow computation likely succeeded, but summary generation failed
+         logger.error("Workflow computation finished, but summary generation failed or returned empty. Final status likely 'success' in DB, but returning error code.")
+         return 1 # Return error code because summary step failed
     else:
-        # Workflow completed but ended in a 'failed' state (e.g., a module failed but wasn't caught as critical)
-        # Or summary generation failed after successful analysis steps.
-        logger.error("Workflow completed, but the final status was 'failed' or summary was missing.")
-        return 1
+         # Should not happen with current return logic, but catch-all
+         logger.error("Workflow finished with an unexpected result state.")
+         return 1
 
 
 if __name__ == "__main__":

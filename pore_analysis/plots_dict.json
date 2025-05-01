@@ -98,13 +98,6 @@
     "module_name": "gyration_analysis_visualization"
   },
   {
-    "template_key": "sf_tyrosine_dihedrals",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "dihedrals",
-    "module_name": "tyrosine_analysis_visualization"
-  },
-  {
     "template_key": "sf_tyrosine_rotamer_scatter",
     "product_type": "png",
     "category": "plot",
