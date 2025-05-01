@@ -203,38 +203,47 @@ This section outlines the conventions and workflow for developing new analysis m
     * Use the `setup_style()` function (also defined in `pore_analysis/core/plotting_style.py`) within each visualization script to apply these settings.
     * Be prepared to iteratively adjust `STYLE` values (e.g., font sizes) based on feedback for optimal legibility.
 
+### **Testing**
+
+1.  **Framework:** Tests are written using the `pytest` framework and are located in the `tests/` directory.
+2.  **Dependencies:** To run the tests, ensure you have installed the development dependencies:
+    ```bash
+    pip install -e .[dev]
+    ```
+3.  **Execution:** Run the test suite from the **project root directory** (the directory containing `setup.py`):
+    ```bash
+    pytest
+    ```
+    Or run with verbose output:
+    ```bash
+    pytest -v
+    ```
+4.  **Coverage:** The current test suite covers core functionality and report generation. Contributions that add new analysis modules should ideally include corresponding tests (unit tests for utilities and integration tests for the module workflow if possible).
+
 ### **Module Development Workflow & Checklist**
 
 1.  **Define Goal:** Specify the analysis and desired outputs (data files, metrics, plots).
-2.  **Implement Computation (computation.py):**
+2.  **Implement Computation (`computation.py`):**
     * Add calculation logic.
-    * Save data file(s) (e.g., to run\_dir/module\_name/).
-    * register\_module() start (status='running').
-    * register\_product() for data file(s) (use correct relative\_path, subcategory).
+    * Save data file(s) (e.g., to `run_dir/module_name/`).
+    * `register_module()` start (status='running').
+    * `register_product()` for data file(s) (use correct `relative_path`, `subcategory`).
     * Calculate required metrics.
-    * store\_metric() for each metric (use correct metric\_name, units).
-    * update\_module\_status() end (status='success' or 'failed').
-3.  **Implement Visualization (visualization.py):**
-    * get\_product\_path() to retrieve data file path (using correct subcategory).
+    * `store_metric()` for each metric (use correct `metric_name`, `units`).
+    * `update_module_status()` end (status='success' or 'failed').
+3.  **Implement Visualization (`visualization.py`):**
+    * `get_product_path()` to retrieve data file path (using correct `subcategory`).
     * Load data.
     * Generate plot(s) (adhere to styling, *omit Python titles*).
-    * Save plot file(s) (e.g., to run\_dir/module\_name/).
-    * register\_product() for *each* plot file (use correct relative\_path, *unique subcategory*).
-4.  **Update HTML Reporting (`plots_dict.json` & `templates/`):**
-    * **(`plots_dict.json`):** Add a new JSON object for the plot. Ensure `template_key` is unique and sensible, and `product_type`, `category`, `subcategory`, `module_name` exactly match how the plot was registered in step 3.
-    * **(`templates/`):** Add/modify the relevant section in the appropriate \_tab\_\*.html. Add HTML structure (\<h3\>, plot-container, etc.) for titles and layout. Use {% if plots.get('your\_template\_key') %} to display the image (using the `template_key` from `plots_dict.json`). Add/modify tables to display new metrics using the `metric_name` from step 2.
-5.  **Test & Verify:**
-    * Run the full pipeline (main.py \--\[module\] --report).
-    * Check the database (inspect\_db.py) for correct registration (paths, subcategories, metrics).
+    * Save plot file(s) (e.g., to `run_dir/module_name/`).
+    * `register_product()` for *each* plot file (use correct `relative_path`, *unique `subcategory`*).
+4.  **Update Reporting (`plots_dict.json` & `templates/`):**
+    * **(`plots_dict.json`):** Add/modify JSON object(s) for the plot(s). Ensure `template_key` is unique and `product_type`, `category`, `subcategory`, `module_name` exactly match plot registration.
+    * **(`templates/`):** Add/modify the relevant `_tab_*.html`. Add HTML structure (`<h3>`, `plot-container`, etc.) for titles/layout. Use `{% if plots.get('your_template_key') %}` to display images. Add/modify tables for new metrics.
+5.  **Add Tests (`tests/`):
+    * Add relevant unit or integration tests for the new module's functionality.
+6.  **Test & Verify:** <-- (Renumbered)
+    * Run the full pipeline (`python -m pore_analysis.main ... --report`).
+    * Run the test suite (`pytest`).
+    * Check the database (`analysis_registry.db`) for correct registration.
     * Verify the HTML report: Plots displayed? Metrics correct? Layout/styling okay? Titles correct?
-
-## **Future Enhancements**
-
-Planned improvements for the refactored codebase:
-
-1.  **API Documentation**: Generate comprehensive API documentation (e.g., using Sphinx).
-2.  **Web Interface**: Create a web-based interface for browsing analysis results across multiple runs.
-3.  **Parallel Processing**: Enable parallel execution of independent analysis modules.
-4.  **Version Tracking**: Track software and analysis version numbers in the database.
-5.  **More Visualization Options**: Add interactive visualizations (e.g., using Plotly or Bokeh).
-6.  **Dependency Tracking**: Fully implement the dependencies and product\_relationships tables for robust workflow management.

@@ -19,7 +19,6 @@ setup(
     name="pore_analysis",
     version=version['__version__'], # Read version dynamically
     packages=find_packages(),
-    # <<< --- ADDED for including package data --- >>>
     include_package_data=True,
     package_data={
         # If any package contains *.json or *.html files, include them:
@@ -31,8 +30,6 @@ setup(
         # If data files were in submodules, list them too, e.g.:
         # "pore_analysis.modules.some_module": ["data_file.txt"],
     },
-    # <<< --- END OF ADDED section --- >>>
-
     # List direct dependencies required to run the core analysis package
     install_requires=[
         "numpy",
@@ -50,7 +47,7 @@ setup(
         'dev': [
             'pytest',
             'Pillow', # Needed for some tests that create dummy images
-            # Add other dev tools like black, flake8, etc. here
+            # Add linters (e.g., 'flake8', 'black') or other dev tools here if desired
         ]
     },
     entry_points={
