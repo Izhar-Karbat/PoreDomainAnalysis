@@ -7,10 +7,32 @@ version = {}
 with open("pore_analysis/core/__init__.py") as fp:
     exec(fp.read(), version)
 
+# Read the long description from README.md
+try:
+    with open('README.md', encoding='utf-8') as f:
+        long_description = f.read()
+except FileNotFoundError:
+    long_description = "Suite for analyzing K+ channel molecular dynamics data." # Fallback
+
+
 setup(
     name="pore_analysis",
     version=version['__version__'], # Read version dynamically
     packages=find_packages(),
+    # <<< --- ADDED for including package data --- >>>
+    include_package_data=True,
+    package_data={
+        # If any package contains *.json or *.html files, include them:
+        "pore_analysis": [
+            "plots_dict.json",      # Include pore_analysis/plots_dict.json
+            "templates/*.html",     # Include all .html files in pore_analysis/templates/
+            "templates/_*.html",    # Include partial templates as well
+        ],
+        # If data files were in submodules, list them too, e.g.:
+        # "pore_analysis.modules.some_module": ["data_file.txt"],
+    },
+    # <<< --- END OF ADDED section --- >>>
+
     # List direct dependencies required to run the core analysis package
     install_requires=[
         "numpy",
@@ -40,15 +62,18 @@ setup(
     author="Izhar Karbat", # Optional: Add author info
     author_email="izhar.karbat@weizmann.ac.il", # Optional
     description="Suite for analyzing K+ channel molecular dynamics data.", # Optional
-    long_description=open('README.md').read(), # Optional: Use README
-    long_description_content_type="text/markdown", # Optional
+    long_description=long_description,
+    long_description_content_type="text/markdown", # Specify type for README
     url="https://github.com/Izhar-Karbat/PoreDomainAnalysis", # Optional: Link to repository
     classifiers=[ # Optional: PyPI classifiers
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.9", # Be specific
         "License :: OSI Approved :: MIT License", # Choose your license
         "Operating System :: OS Independent",
-        "Topic :: Scientific/Engineering :: Molecular Dynamics",
-        "Topic :: Scientific/Engineering :: Biophysics",
+        "Topic :: Scientific/Engineering :: Chemistry",
+        "Topic :: Scientific/Engineering :: Bio-Informatics",
+        "Topic :: Scientific/Engineering :: Physics",
+        # Add relevant classifiers
     ],
     python_requires='>=3.9', # Specify minimum Python version
 )

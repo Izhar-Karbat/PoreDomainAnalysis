@@ -1,0 +1,2 @@
+recursive-include pore_analysis/templates *.html
+include pore_analysis/plots_dict.json
