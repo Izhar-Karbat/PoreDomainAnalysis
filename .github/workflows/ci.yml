@@ -22,18 +22,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install . 
+          pip install .
           pip install pytest MDAnalysis plotly
 
       - name: Download test data from Box
         run: |
           mkdir -p tests/data
-          # Added -H 'User-Agent...' to potentially fix Box download issues
-          curl -L -H 'User-Agent: Mozilla/5.0' "https://weizmann.box.com/s/p1uohi0f9fowk33bm55p3qs7tmfbrf8d?dl=1" \
-            -o tests/data/step5_input.psf
-          # Added -H 'User-Agent...' to potentially fix Box download issues
-          curl -L -H 'User-Agent: Mozilla/5.0' "https://weizmann.box.com/s/uph9a74zmx7z24yh3ulafwcl8xj4kod2?dl=1" \
-            -o tests/data/MD_Aligned.dcd
+          # Fetch raw PSF and DCD files (dl=1 to get binary, -L to follow redirects)
+          curl -L "https://weizmann.box.com/s/p1uohi0f9fowk33bm55p3qs7tmfbrf8d?dl=1" \
+               -o tests/data/step5_input.psf
+          curl -L "https://weizmann.box.com/s/uph9a74zmx7z24yh3ulafwcl8xj4kod2?dl=1" \
+               -o tests/data/MD_Aligned.dcd
 
       - name: Cache test data
         uses: actions/cache@v3
@@ -41,8 +40,9 @@ jobs:
           path: tests/data
           key: ${{ runner.os }}-poredata-v1
 
-      - name: Cleanup & smoke‑test
+      - name: Cleanup & smoke-test
         run: python3 -u tests/run_samples.py
 
       - name: Run pytest
         run: pytest -q
+
