@@ -1,0 +1,118 @@
+
+{# filename: pore_analysis/templates/_tab_carbonyl.html (REVISED AGAIN) #}
+<div class="section">
+    <h2>Carbonyl Dynamics (G1/Y Gyration & Flips)</h2>
+    <p>Analysis of the radius of gyration for filter carbonyl groups (Gly1 and Tyr) and detection of flipping events.</p>
+
+    {# Check if the computation module ran successfully #}
+    {% if module_status.get('gyration_analysis') == 'success' %}
+        <h3>Gyration Radius Summary</h3>
+        {# Use metrics dictionary for values AND direct config values passed from html.py #}
+        <div class="info-box">
+            Gyration radius (ρ) measures the distance between the specified carbonyl oxygen atoms and the pore center.
+            Carbonyls are considered 'flipped' when ρ > {{ GYRATION_FLIP_THRESHOLD | default('N/A', true) }} Å.
+            'On' flips represent transitions into the flipped state, 'Off' flips represent returning to the normal state.<br>
+            <i>Note: Flips are confirmed only if the state persists for > {{ GYRATION_FLIP_TOLERANCE_FRAMES | default('N/A', true) }} frames ({{ '%.2f'|format(1.0 / FRAMES_PER_NS | default(0.1, true) * GYRATION_FLIP_TOLERANCE_FRAMES | default(5, true)) }} ns).</i>
+        </div>
+        <table class="stats-table">
+        <thead>
+            <tr>
+                <th>Metric</th><th>G1 Glycine</th><th>Y Tyrosine</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Mean Gyration Radius (Å)</td>
+                <td>{{ metrics.get('Gyration_G1_Mean', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_G1_Mean', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Gyration_Y_Mean', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_Y_Mean', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            <tr>
+                <td>Std Dev Gyration Radius (Å)</td>
+                <td>{{ metrics.get('Gyration_G1_Std', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_G1_Std', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Gyration_Y_Std', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_Y_Std', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            <tr>
+                <td>Confirmed 'On' Flips</td>
+                <td>{{ metrics.get('Gyration_G1_OnFlips', {}).get('value', 'N/A') | int if metrics.get('Gyration_G1_OnFlips', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Gyration_Y_OnFlips', {}).get('value', 'N/A') | int if metrics.get('Gyration_Y_OnFlips', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            <tr>
+                <td>Confirmed 'Off' Flips</td>
+                <td>{{ metrics.get('Gyration_G1_OffFlips', {}).get('value', 'N/A') | int if metrics.get('Gyration_G1_OffFlips', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Gyration_Y_OffFlips', {}).get('value', 'N/A') | int if metrics.get('Gyration_Y_OffFlips', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            <tr>
+                <td>Mean Flipped Duration (ns)</td>
+                <td>{{ metrics.get('Gyration_G1_MeanDuration_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_G1_MeanDuration_ns', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Gyration_Y_MeanDuration_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_Y_MeanDuration_ns', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            <tr>
+                <td>Std Dev Flipped Duration (ns)</td>
+                <td>{{ metrics.get('Gyration_G1_StdDuration_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_G1_StdDuration_ns', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Gyration_Y_StdDuration_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_Y_StdDuration_ns', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            {# <<< ADDED ROW for Max Duration >>> #}
+            <tr>
+                <td>Max Flipped Duration (ns)</td>
+                <td>{{ metrics.get('Gyration_G1_MaxDuration_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_G1_MaxDuration_ns', {}).get('value') is not none else 'N/A' }}</td>
+                <td>{{ metrics.get('Gyration_Y_MaxDuration_ns', {}).get('value', 'N/A') | round(3) if metrics.get('Gyration_Y_MaxDuration_ns', {}).get('value') is not none else 'N/A' }}</td>
+            </tr>
+            {# <<< END ADDED ROW >>> #}
+        </tbody>
+        </table>
+
+        {# Check if visualization module also ran #}
+        {% if module_status.get('gyration_analysis_visualization') == 'success' %}
+            <h3>Gyration Radius Plots</h3>
+            {# Use template_keys from plots_dict.json #}
+            <div class="two-column">
+                <div class="column plot-container">
+                    <h4>Glycine 1 Radius of Gyration</h4>
+                    {# Use the key for the stacked plot #}
+                    {% if plots.get('g1_gyration_radii') %}
+                        <img src="data:image/png;base64,{{ plots.get('g1_gyration_radii') }}" alt="G1 Gyration Radii Plot (Stacked)">
+                    {% else %}
+                        <p><i class="unavailable">Plot not available.</i></p>
+                    {% endif %}
+                </div>
+                <div class="column plot-container">
+                    <h4>Tyrosine Radius of Gyration</h4>
+                     {# Use the key for the stacked plot #}
+                    {% if plots.get('y_gyration_radii') %}
+                        <img src="data:image/png;base64,{{ plots.get('y_gyration_radii') }}" alt="Y Gyration Radii Plot (Stacked)">
+                    {% else %}
+                        <p><i class="unavailable">Plot not available.</i></p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <h3>Flip Duration Plot</h3>
+            <div class="plot-container">
+                <h4>Flip Event Duration Distribution</h4>
+                {% if plots.get('flip_duration_distribution') %}
+                    <img src="data:image/png;base64,{{ plots.get('flip_duration_distribution') }}" alt="Flip Duration Distribution Plot">
+                {% else %}
+                    <p><i class="unavailable">Plot not available.</i></p>
+                {% endif %}
+            </div>
+            <div class="info-box">
+            <p><strong>Interpretation:</strong> Frequent confirmed transitions or long durations spent in the 'flipped' state (radius > threshold) can indicate carbonyl orientations less favorable for ion coordination. Compare the number of 'On' and 'Off' flips; imbalance might suggest persistent changes or incomplete transitions. The duration distribution shows how long confirmed flipped states typically last.</p>
+            </div>
+        {% else %}
+             <div class="warning-box">
+                 <h4>Visualization Incomplete</h4>
+                 <p>Gyration analysis visualization did not complete successfully (Status: {{ module_status.get('gyration_analysis_visualization', 'Unknown') }}). Plots may be missing.</p>
+             </div>
+        {% endif %} {# End viz check #}
+
+    {% elif module_status.get('gyration_analysis') == 'skipped' %}
+        <div class="info-box">
+            <p>Carbonyl gyration analysis was skipped for this run.</p>
+        </div>
+    {% else %}
+        <div class="warning-box">
+           <h4>Analysis Incomplete or Failed</h4>
+           <p>Carbonyl gyration analysis did not complete successfully (Status: {{ module_status.get('gyration_analysis', 'Unknown') }}). Plots and metrics may be missing or incomplete.</p>
+        </div>
+    {% endif %} {# End computation check #}
+</div>

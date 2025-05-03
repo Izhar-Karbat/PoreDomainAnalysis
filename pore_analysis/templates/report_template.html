@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ run_name }} - MD Analysis Report</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; margin: 0; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 1200px; margin: 20px auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.1); }
+        h1, h2, h3 { color: #0056b3; padding-bottom: 5px; }
+        h1 { text-align: center; border-bottom: 2px solid #0056b3; margin-bottom: 20px;}
+        h2 { border-bottom: 2px solid #0056b3; margin-top: 30px; }
+        h3 { border-bottom: 1px solid #ddd; margin-top: 25px; }
+        .section { margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+        .section:last-child { border-bottom: none; }
+        .plot-container { margin: 20px 0; text-align: center; }
+        .plot-container img { max-width: 95%; height: auto; border: 1px solid #ddd; padding: 5px; background: #fff; margin-bottom: 5px; }
+        .stats-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.9em;}
+        .stats-table th, .stats-table td { padding: 8px 10px; border: 1px solid #ddd; text-align: left; }
+        .stats-table th { background-color: #e9ecef; font-weight: bold; }
+        .stats-table tr:nth-child(even) { background-color: #f8f9fa; }
+        .two-column { display: flex; flex-wrap: wrap; gap: 20px; }
+        .column { flex: 1; min-width: 48%; }
+        .info-box { background-color: #e7f1ff; border-left: 5px solid #0056b3; padding: 15px; margin: 15px 0; border-radius: 4px; font-size: 0.9em;}
+        .warning-box { background-color: #fff3cd; border-left: 5px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 4px; font-size: 0.9em;}
+        .warning-box h4 { color: #856404; margin-top: 0; }
+        .error-box { background-color: #f8d7da; border-left: 5px solid #dc3545; padding: 15px; margin: 15px 0; border-radius: 4px; font-size: 0.9em;}
+        .error-box h4 { color: #721c24; margin-top: 0; }
+        .control-system-banner { background-color: #17a2b8; color: white; text-align: center; padding: 10px; margin: 15px 0; border-radius: 4px; font-weight: bold; font-size: 1.1em; }
+        pre { background-color: #f8f9fa; padding: 10px; border: 1px solid #ddd; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-size: 0.9em; max-height: 300px; overflow-y: auto;}
+        .footer { text-align: center; margin-top: 30px; font-size: 0.8em; color: #666; }
+        td, th { word-wrap: break-word; } /* Prevent table cell overflow */
+
+        /* Tab Styles */
+        .tab-nav { list-style: none; padding: 0; margin: 0 0 20px 0; border-bottom: 2px solid #0056b3; display: flex; overflow-x: auto; white-space: nowrap; }
+        .tab-nav li { margin-right: 5px; }
+        .tab-nav a {
+            display: inline-block;
+            padding: 10px 15px;
+            text-decoration: none;
+            color: #0056b3;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            border-bottom: none;
+            border-radius: 5px 5px 0 0;
+            position: relative;
+            bottom: -2px; /* Align with container border */
+            transition: background-color 0.2s ease;
+        }
+        .tab-nav a.active {
+            background-color: white;
+            border-color: #0056b3 #0056b3 white;
+            border-bottom: 2px solid white; /* Cover the container border */
+            color: #333;
+            font-weight: bold;
+        }
+        .tab-nav a:hover:not(.active) {
+            background-color: #e0e0e0;
+        }
+        .tab-content { display: none; } /* Hide content by default */
+        .tab-content.active { display: block; } /* Show active content */
+
+        /* Additional specific styles */
+        .analysis-header { 
+            border-bottom: 2px solid #0056b3; 
+            text-align: center;
+            margin-bottom: 1.5em;
+            padding-bottom: 0.5em;
+        }
+        .unavailable { 
+            font-style: italic; 
+            color: #6c757d; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="analysis-header">MD Analysis Report</h1>
+        {% if is_control_system %}
+        <div class="control-system-banner">CONTROL SYSTEM (NO TOXIN)</div>
+        {% endif %}
+        <p class="footer">Generated: {{ analysis_date }} | Analysis Version: 1.6.1</p>
+
+        <!-- Tab Navigation -->
+        <ul class="tab-nav">
+            <li><a href="#tab-overview" class="tab-link active">Overview & Distances</a></li>
+            <li><a href="#tab-toxin" class="tab-link">Toxin Interface</a></li>
+            <li><a href="#tab-pore-ions" class="tab-link">Pore Ions</a></li>
+            <li><a href="#tab-inner-vestibule" class="tab-link">Inner Vestibule</a></li>
+            <li><a href="#tab-carbonyl" class="tab-link">Carbonyl Dynamics</a></li>
+            <li><a href="#tab-tyrosine" class="tab-link">SF Tyrosine</a></li>
+            <li><a href="#tab-dw-gate" class="tab-link">DW Gate</a></li>
+            <li><a href="#tab-pocket" class="tab-link">Pocket Waters</a></li>
+        </ul>
+
+        <!-- Tab Content Containers -->
+        <div id="tab-overview" class="tab-content active">
+            {% include '_tab_overview.html' %}
+        </div>
+
+        <div id="tab-toxin" class="tab-content">
+            {% include '_tab_toxin.html' %}
+        </div>
+
+        <div id="tab-pore-ions" class="tab-content">
+            {% include '_tab_pore_ions.html' %}
+        </div>
+
+        <div id="tab-inner-vestibule" class="tab-content">
+            {% include '_tab_inner_vestibule.html' %}
+        </div>
+
+        <div id="tab-carbonyl" class="tab-content">
+            {% include '_tab_carbonyl.html' %}
+        </div>
+
+        <div id="tab-tyrosine" class="tab-content">
+            {% include '_tab_tyrosine.html' %}
+        </div>
+
+        <div id="tab-dw-gate" class="tab-content">
+            {% include '_tab_dw_gate.html' %}
+        </div>
+
+        <div id="tab-pocket" class="tab-content">
+            {% include '_tab_pocket_analysis.html' %}
+        </div>
+
+        <div class="footer">
+            Generated by Pore Analysis Suite v2.0.0 | {{ analysis_date }}
+        </div>
+    </div>
+
+    <!-- JavaScript for Tab Switching -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const tabLinks = document.querySelectorAll('.tab-link');
+            const tabContents = document.querySelectorAll('.tab-content');
+
+            tabLinks.forEach(link => {
+                link.addEventListener('click', function(event) {
+                    event.preventDefault(); // Prevent default anchor behavior
+
+                    // Deactivate all tabs and content
+                    tabLinks.forEach(l => l.classList.remove('active'));
+                    tabContents.forEach(c => c.classList.remove('active'));
+
+                    // Activate the clicked tab and corresponding content
+                    this.classList.add('active');
+                    const targetId = this.getAttribute('href').substring(1);
+                    document.getElementById(targetId).classList.add('active');
+                });
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+{# pore_analysis/templates/_tab_pocket_analysis.html #}
+<div class="section">
+    <h2>Peripheral Pocket Water Analysis (ML-Based)</h2>
+    <p>Analysis of water molecule classification, occupancy, and residence times in the four peripheral pockets (A, B, C, D) using an Equivariant Transformer model.</p>
+
+    {# Check if computation module completed successfully #}
+    {% if module_status.get('pocket_analysis') == 'success' %}
+
+        <h3>Pocket Occupancy Summary</h3>
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Pocket</th>
+                    <th>Mean Occupancy</th>
+                    <th>Std Dev Occupancy</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pocket_label in ['A', 'B', 'C', 'D'] %}
+                <tr>
+                    <td>{{ pocket_label }}</td>
+                    {# Use .get() with default {} and another .get() for value safely #}
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_MeanOccupancy', {}).get('value', 'N/A') | round(2) if metrics.get('Pocket'~pocket_label~'_MeanOccupancy', {}).get('value') is not none else 'N/A' }}</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_OccupancyStd', {}).get('value', 'N/A') | round(2) if metrics.get('Pocket'~pocket_label~'_OccupancyStd', {}).get('value') is not none else 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h3>Residence Time Summary (ns)</h3>
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Pocket</th>
+                    <th>Mean Residence Time</th>
+                    <th>Median Residence Time</th>
+                    <th>Max Residence Time</th>
+                    <th>Num. Periods (&ge; {{ POCKET_ANALYSIS_RESIDENCE_THRESHOLD / FRAMES_PER_NS if FRAMES_PER_NS else '?' }} ns)</th>
+                    <th>% Short-lived (&lt; {{ POCKET_ANALYSIS_SHORT_LIVED_THRESH_NS }} ns)</th>
+                    <th>% Long-lived (&gt; {{ POCKET_ANALYSIS_LONG_LIVED_THRESH_NS }} ns)</th>
+                    <th>Skewness</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pocket_label in ['A', 'B', 'C', 'D'] %}
+                <tr>
+                    <td>{{ pocket_label }}</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_MeanResidence_ns', {}).get('value', 'N/A') | round(2) if metrics.get('Pocket'~pocket_label~'_MeanResidence_ns', {}).get('value') is not none else 'N/A' }}</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_MedianResidence_ns', {}).get('value', 'N/A') | round(2) if metrics.get('Pocket'~pocket_label~'_MedianResidence_ns', {}).get('value') is not none else 'N/A' }}</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_MaxResidence_ns', {}).get('value', 'N/A') | round(2) if metrics.get('Pocket'~pocket_label~'_MaxResidence_ns', {}).get('value') is not none else 'N/A' }}</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_ResidencePeriods', {}).get('value', 'N/A') | int if metrics.get('Pocket'~pocket_label~'_ResidencePeriods', {}).get('value') is not none else 'N/A' }}</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_ShortLivedPct', {}).get('value', 'N/A') | round(1) if metrics.get('Pocket'~pocket_label~'_ShortLivedPct', {}).get('value') is not none else 'N/A' }}%</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_LongLivedPct', {}).get('value', 'N/A') | round(1) if metrics.get('Pocket'~pocket_label~'_LongLivedPct', {}).get('value') is not none else 'N/A' }}%</td>
+                    <td>{{ metrics.get('Pocket'~pocket_label~'_RTSkewness', {}).get('value', 'N/A') | round(3) if metrics.get('Pocket'~pocket_label~'_RTSkewness', {}).get('value') is not none else 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h3>Imbalance Metrics</h3>
+         <table class="stats-table" style="width: auto; margin-left: 0;"> {# More compact table #}
+            <thead>
+                <tr><th>Metric</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Occupancy Ratio (Max Mean / Min Mean)</td><td>{{ metrics.get('PocketWater_OccupancyRatio', {}).get('value', 'N/A') | round(2) if metrics.get('PocketWater_OccupancyRatio', {}).get('value') is not none else 'N/A' }}</td></tr>
+                <tr><td>CV of Mean Residence Times</td><td>{{ metrics.get('CV_of_Mean_Residence_Times', {}).get('value', 'N/A') | round(3) if metrics.get('CV_of_Mean_Residence_Times', {}).get('value') is not none else 'N/A' }}</td></tr>
+                <tr><td>Gini Coefficient (Total Residence Time)</td><td>{{ metrics.get('Gini_Coefficient_TotalTime', {}).get('value', 'N/A') | round(3) if metrics.get('Gini_Coefficient_TotalTime', {}).get('value') is not none else 'N/A' }}</td></tr>
+                <tr><td>Entropy (Total Residence Time)</td><td>{{ metrics.get('Entropy_TotalTime', {}).get('value', 'N/A') | round(3) if metrics.get('Entropy_TotalTime', {}).get('value') is not none else 'N/A' }}</td></tr>
+                <tr><td>Normalized Range (Median RTs)</td><td>{{ metrics.get('Normalized_Range_Median_RTs', {}).get('value', 'N/A') | round(3) if metrics.get('Normalized_Range_Median_RTs', {}).get('value') is not none else 'N/A' }}</td></tr>
+                 <tr><td>Max Pairwise KS Statistic (RTs)</td><td>{{ metrics.get('Max_Pairwise_KS_Statistic', {}).get('value', 'N/A') | round(3) if metrics.get('Max_Pairwise_KS_Statistic', {}).get('value') is not none else 'N/A' }}</td></tr>
+                {# Add pairwise KS stats if needed, might make table large #}
+                {# {% for p1 in ['A', 'B', 'C'] %}{% for p2 in ['B', 'C', 'D'] %}{% if p1 < p2 %}
+                 <tr><td>KS Statistic ({{p1}} vs {{p2}})</td><td>{{ metrics.get('PocketWater_KS_'~p1~'_'~p2, {}).get('value', 'N/A') | round(3) if metrics.get('PocketWater_KS_'~p1~'_'~p2, {}).get('value') is not none else 'N/A' }}</td></tr>
+                 {% endif %}{% endfor %}{% endfor %} #}
+            </tbody>
+        </table>
+
+
+        {# Check if visualization module also completed successfully #}
+        {% if module_status.get('pocket_analysis_visualization') == 'success' %}
+            <h3>Pocket Water Plots</h3>
+            {# Use template_keys defined in plots_dict.json #}
+            <div class="plot-container">
+                <h4>Water Count per Pocket</h4>
+                {% if plots.get('pocket_occupancy') %}
+                    <img src="data:image/png;base64,{{ plots.pocket_occupancy }}" alt="Pocket Water Occupancy Plot">
+                    <p>Number of water molecules classified into each peripheral pocket over time.</p>
+                {% else %}
+                    <p><i class="unavailable">Plot not available. Check pocket_analysis_visualization module status and logs.</i></p>
+                {% endif %}
+            </div>
+            <div class="plot-container">
+                <h4>Comprehensive Residence Time Analysis</h4>
+                {% if plots.get('pocket_residence_analysis') %}
+                    <img src="data:image/png;base64,{{ plots.pocket_residence_analysis }}" alt="Comprehensive Pocket Water Residence Time Analysis">
+                    <p>Four-panel analysis of pocket water residence: Residence time categories (top-left), short-lived water molecules (top-right), 
+                    K-S test statistics comparing Pocket D to others (bottom-left), and cumulative residence time distribution (bottom-right).</p>
+                {% else %}
+                    <p><i class="unavailable">Comprehensive analysis plot not available. Check pocket_analysis_visualization module status and logs.</i></p>
+                {% endif %}
+            </div>
+        {% else %}
+             <div class="warning-box"> {# Use warning box for viz issues #}
+                 <h4>Visualization Incomplete</h4>
+                 <p>Pocket water visualization did not complete successfully (Status: {{ module_status.get('pocket_analysis_visualization', 'Unknown') }}). Plots may be missing.</p>
+             </div>
+        {% endif %}
+
+    {% elif module_status.get('pocket_analysis') == 'skipped' %}
+        <div class="info-box"> {# Use info box for skipped #}
+            <p>Peripheral pocket water analysis was skipped for this run (e.g., dependencies missing or calculation failed).</p>
+        </div>
+    {% else %}
+        {# Case where computation module failed or is pending #}
+         <div class="warning-box">
+            <h4>Analysis Incomplete or Failed</h4>
+            <p>Pocket water analysis computation did not complete successfully (Status: {{ module_status.get('pocket_analysis', 'Unknown') }}). Plots and metrics may be missing or incomplete.</p>
+        </div>
+    {% endif %}
+</div>
