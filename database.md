@@ -131,6 +131,8 @@ Intended to track relationships between analysis products (e.g., a plot derived 
 * `ion_analysis_visualization`: Ion analysis plotting.
 * `inner_vestibule_analysis`: Inner vestibule water computation.
 * `inner_vestibule_analysis_visualization`: Inner vestibule water plotting.
+* `pocket_analysis`: Peripheral pocket water analysis computation (ML-based).
+* `pocket_analysis_visualization`: Peripheral pocket water analysis plotting.
 * `report_generation`: HTML report generation process.
 * *(Future modules: gyration, tyrosine, dwgates...)*
 
@@ -191,6 +193,17 @@ This section lists typical files generated, identified by their `subcategory`.
 * Category: `plot`, Subcategory: `count_plot`, Type: `png`, Path: `inner_vestibule_analysis/inner_vestibule_count_plot.png`
 * Category: `plot`, Subcategory: `residence_hist`, Type: `png`, Path: `inner_vestibule_analysis/inner_vestibule_residence_hist.png`
 
+**Module: `pocket_analysis`**
+* Category: `data`, Subcategory: `pocket_occupancy_timeseries`, Type: `csv`, Path: `pocket_analysis/pocket_occupancy.csv`
+* Category: `data`, Subcategory: `pocket_residence_stats`, Type: `json`, Path: `pocket_analysis/pocket_residence_stats.json`
+* Category: `data`, Subcategory: `pocket_assignments_per_frame`, Type: `pkl`, Path: `pocket_analysis/pocket_assignments.pkl`
+* Category: `data`, Subcategory: `pocket_imbalance_metrics`, Type: `csv`, Path: `pocket_analysis/pocket_imbalance_metrics.csv`
+* Category: `summary`, Subcategory: `pocket_analysis_summary`, Type: `txt`, Path: `pocket_analysis/pocket_summary.txt`
+
+**Module: `pocket_analysis_visualization`**
+* Category: `plot`, Subcategory: `pocket_occupancy_plot`, Type: `png`, Path: `pocket_analysis/pocket_occupancy_plot.png`
+* Category: `plot`, Subcategory: `pocket_residence_histogram`, Type: `png`, Path: `pocket_analysis/pocket_residence_distribution.png`
+
 **Module: `summary`**
 * Category: `summary`, Subcategory: `analysis_summary`, Type: `json`, Path: `analysis_summary.json`
 
@@ -249,5 +262,25 @@ This section lists typical metrics stored, identified by `metric_name`.
 * `InnerVestibule_MedianResidenceTime_ns`: (Units: ns) Median residence time of water in vestibule.
 * `InnerVestibule_StdOcc`: (Units: count) Std Dev number of water molecules in vestibule.
 * `InnerVestibule_TotalExitEvents`: (Units: count) Total confirmed water exit events.
+
+**Module: `pocket_analysis`**
+* `Pocket{A/B/C/D}_MeanOccupancy`: (Units: count) Mean water occupancy in Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_OccupancyStd`: (Units: count) Std Dev of water occupancy in Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_MeanResidence_ns`: (Units: ns) Mean residence time in Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_MedianResidence_ns`: (Units: ns) Median residence time in Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_MaxResidence_ns`: (Units: ns) Max residence time in Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_ResidencePeriods`: (Units: count) Number of residence periods >= threshold in Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_RTSkewness`: (Units: ) Skewness of residence time distribution for Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_ShortLivedPct`: (Units: %) Percentage of residence times < ShortLivedThreshold in Pocket {A/B/C/D}.
+* `Pocket{A/B/C/D}_LongLivedPct`: (Units: %) Percentage of residence times > LongLivedThreshold in Pocket {A/B/C/D}.
+* `PocketWater_OccupancyRatio`: (Units: ) Ratio of Max Mean Occupancy / Min Mean Occupancy across pockets.
+* `PocketWater_KS_{P1}_{P2}`: (Units: KS stat) Kolmogorov-Smirnov statistic comparing RT distributions between Pocket {P1} and {P2} (e.g., `PocketWater_KS_A_B`).
+* `CV_of_Mean_Residence_Times`: (Units: ) Coefficient of Variation of mean residence times across pockets.
+* `Gini_Coefficient_TotalTime`: (Units: ) Gini coefficient based on total residence time per pocket.
+* `Entropy_TotalTime`: (Units: ) Entropy based on total residence time per pocket.
+* `Max_Pairwise_KS_Statistic`: (Units: KS stat) Maximum KS statistic found between any pair of pockets.
+* `Normalized_Range_Median_RTs`: (Units: ) Normalized range of median residence times across pockets.
+* `ANOVA_inspired_F_statistic`: (Units: ) Ratio of between-pocket to within-pocket variance in residence times. (Note: Interpretation needs care).
+* `Multivariate_Dispersion_Index`: (Units: ) Average distance from centroid based on normalized residence times. (Note: Interpretation needs care).
 
 ---

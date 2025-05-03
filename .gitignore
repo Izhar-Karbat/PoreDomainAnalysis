@@ -25,3 +25,5 @@ Thumbs.db
 tests/data/
 _tests/data/
 pore_analysis.egg-info/
+
+**/.claude/settings.local.json

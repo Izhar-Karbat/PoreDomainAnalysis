@@ -28,6 +28,7 @@ The analysis includes specialized filtering routines designed to correct artifac
 * **SF Carbonyl Gyration:** Analyzes the gyration radius of SF carbonyl groups to detect conformational flips.
 * **SF Tyrosine Rotamers (HMM-based):** Analyzes the rotameric states (Chi1/Chi2) of key tyrosine residues in the selectivity filter using HMM.
 * **DW Gate Dynamics:** Analyzes the open/closed state dynamics of the Asp-Trp gate near the extracellular entrance.
+* **Peripheral Pocket Water Analysis (Optional, ML-based):** Uses a pre-trained Equivariant Transformer model to classify water molecules in peripheral pockets, analyzing occupancy, residence times, and imbalance metrics (requires `torch`, `torchmd-net`, and CUDA setup - see Installation).
 * **Reporting:**
     * Generates a comprehensive HTML report per run using data queried from the database.
     * Saves detailed analysis results (data, metrics) to the database and associated files (CSVs, JSON, PNGs) within module-specific subdirectories in the run folder.
@@ -46,6 +47,12 @@ The analysis includes specialized filtering routines designed to correct artifac
 * Jinja2 (for HTML report generation)
 * tqdm (for progress bars)
 
+**Optional Dependencies (for Pocket Analysis):**
+* PyTorch (`torch`)
+* PyTorch Geometric (`torch_geometric`)
+* TorchMD-Net (`torchmd-net`)
+* CUDA-enabled GPU and corresponding CUDA Toolkit (recommended for performance)
+
 *(See `setup.py` for specific versions and development dependencies like `pytest`, `Pillow`)*
 
 ## Installation
@@ -53,14 +60,24 @@ The analysis includes specialized filtering routines designed to correct artifac
 1.  **Clone the repository** (or download the source code).
 2.  **Create a Python environment** (recommended):
     ```bash
-    python -m venv pore_env
-    source pore_env/bin/activate # Linux/macOS
-    # pore_env\Scripts\activate # Windows
+    # Using conda/mamba (recommended for managing PyTorch/CUDA)
+    mamba create -n poreanalysis python=3.9 -c conda-forge -y
+    mamba activate poreanalysis
+
+    # Or using venv
+    # python -m venv pore_env
+    # source pore_env/bin/activate # Linux/macOS
+    # # pore_env\Scripts\activate # Windows
     ```
-3.  **Install the package:** Navigate to the directory containing `setup.py` and run:
-    ```bash
-    pip install -e .
-    ```
-    *(Using `-e` installs in editable mode. This installs `pore_analysis` and its dependencies listed in `setup.py`)*
+3.  **Install the package:** Navigate to the directory containing `setup.py`.
+    * **Minimal Installation (without Pocket Analysis):**
+        ```bash
+        pip install -e .
+        ```
+    * **Full Installation (including Pocket Analysis):** This requires PyTorch, TorchMD-Net, and potentially a specific CUDA setup first (see `INSTALL_ADVANCED.md` for details). Once prerequisites are met, run:
+        ```bash
+        pip install -e .[pocket]
+        # Or potentially: pip install -e .[all]
+        ```
 
 ## Project Structure
