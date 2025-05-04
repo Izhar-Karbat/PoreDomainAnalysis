@@ -83,8 +83,8 @@
             {# Use template_keys defined in plots_dict.json #}
             <div class="plot-container">
                 <h4>Water Count per Pocket</h4>
-                {% if plots.get('pocket_occupancy') %}
-                    <img src="data:image/png;base64,{{ plots.pocket_occupancy }}" alt="Pocket Water Occupancy Plot">
+                {% if plots.get('pocket_occupancy_plot') %}
+                    <img src="data:image/png;base64,{{ plots.pocket_occupancy_plot }}" alt="Pocket Water Occupancy Plot">
                     <p>Number of water molecules classified into each peripheral pocket over time.</p>
                 {% else %}
                     <p><i class="unavailable">Plot not available. Check pocket_analysis_visualization module status and logs.</i></p>

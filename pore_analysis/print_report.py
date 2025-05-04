@@ -234,7 +234,7 @@ def generate_print_report(run_dir: str, output_file: Optional[str] = None) -> Op
             loader=FileSystemLoader(template_dir),
             autoescape=select_autoescape(['html', 'xml'])
         )
-        template = env.get_template('print_sections_template.html') # Use the correct template name
+        template = env.get_template('print_report_template.html') # Use the correct template name
         html_content = template.render(**report_data) # Pass data using **
 
         # --- Write HTML File ---
