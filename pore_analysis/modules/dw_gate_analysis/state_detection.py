@@ -73,11 +73,12 @@ def assign_initial_state(
 
                 # Apply threshold: closed if <= threshold, open if > threshold
                 # Handle NaNs: Assign NaN state if distance is NaN
-                df_with_states[state_col_name] = np.where(
-                    df_with_states[dist_col].isna(),
-                    np.nan, # Keep NaN as NaN
-                    np.where(df_with_states[dist_col] <= threshold, CLOSED_STATE, OPEN_STATE)
-                )
+                # First create the column with object dtype to avoid type promotion issues in NumPy 2.0+
+                df_with_states[state_col_name] = pd.Series(dtype=object, index=df_with_states.index)
+                # Now use loc to set values based on conditions
+                df_with_states.loc[df_with_states[dist_col].isna(), state_col_name] = np.nan
+                df_with_states.loc[df_with_states[dist_col] <= threshold, state_col_name] = CLOSED_STATE  
+                df_with_states.loc[df_with_states[dist_col] > threshold, state_col_name] = OPEN_STATE
                 logger.debug(f"Assigned initial states to column '{state_col_name}'.")
                 num_processed += 1
             else:

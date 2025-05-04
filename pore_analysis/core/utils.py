@@ -87,12 +87,10 @@ def clean_json_data(data):
     elif isinstance(data, (list, tuple)):
         return [clean_json_data(item) for item in data]
     # --- Numpy type handling ---
-    elif isinstance(data, (np.int_, np.intc, np.intp, np.int8,
-                            np.int16, np.int32, np.int64, np.uint8,
-                            np.uint16, np.uint32, np.uint64)):
+    elif isinstance(data, (np.int8, np.int16, np.int32, np.int64, np.intc, np.intp,
+                           np.uint8, np.uint16, np.uint32, np.uint64)):
         return int(data)
-    elif isinstance(data, (np.float_, np.float16, np.float32,
-                            np.float64)):
+    elif isinstance(data, (np.float16, np.float32, np.float64)):
         # Check for nan/inf specifically for numpy floats
         if np.isnan(data) or np.isinf(data):
             return None  # Represent as JSON null

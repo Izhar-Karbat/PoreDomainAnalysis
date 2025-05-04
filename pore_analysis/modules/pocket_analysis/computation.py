@@ -83,10 +83,8 @@ except ImportError as e:
 try:
     from torchmdnet.models.torchmd_et import TorchMD_ET
 except ImportError as e_tmd:
-    print(f"WARNING: Could not import TorchMD_ET from torchmdnet: {e_tmd}. Pocket analysis will fail if torchmd-net is not installed.", file=sys.stderr)
-    class TorchMD_ET(nn.Module):
-        def __init__(self, *args, **kwargs): super().__init__(); print("WARNING: Using dummy TorchMD_ET class.")
-        def forward(self, *args, **kwargs): raise NotImplementedError("TorchMD_ET dummy class.")
+    # Don't create a dummy class, as this causes more issues than it solves
+    raise ImportError(f"Failed to import TorchMD_ET from torchmdnet: {e_tmd}. The torchmd-net package must be installed for pocket analysis to work.")
 
 logger = logging.getLogger(__name__)
 
@@ -585,8 +583,24 @@ def prepare_data(universe, labels_dict, frames_mask, filter_res_map, # Pass filt
 # Custom Model Class Definition (Copied from Train_ET.py)
 class CustomTorchMD_ET(TorchMD_ET):
     def __init__(self, num_subunits, subunit_embedding_dim, rmsf_embedding_dim, label_embedding_dim, hidden_channels, num_layers, num_heads, num_rbf, rbf_type, activation, attn_activation, neighbor_embedding, cutoff_lower, cutoff_upper, max_z, max_num_neighbors, *args, **kwargs):
-        # Call parent constructor EXACTLY as in the original script
-        super().__init__(*args, **kwargs)
+        # Important: Pass only the parameters that TorchMD_ET expects
+        super().__init__(
+            hidden_channels=hidden_channels,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            num_rbf=num_rbf,
+            rbf_type=rbf_type,
+            activation=activation,
+            attn_activation=attn_activation,
+            neighbor_embedding=neighbor_embedding,
+            cutoff_lower=cutoff_lower,
+            cutoff_upper=cutoff_upper,
+            max_z=max_z,
+            max_num_neighbors=max_num_neighbors
+        )
+
+        # Explicitly store hidden_channels (don't rely on parent class)
+        self.hidden_channels = hidden_channels
 
         # Initialize custom layers
         self.subunit_embedding = nn.Embedding(num_subunits, subunit_embedding_dim)
@@ -601,18 +615,24 @@ class CustomTorchMD_ET(TorchMD_ET):
         self.rmsf_embedding_dim = rmsf_embedding_dim
         self.label_embedding_dim = label_embedding_dim
 
-        # Re-calculate feature_dim based on original logic (max of 3 embeddings)
+        # Calculate feature_dim exactly as in the original script
         feature_dim = max(self.subunit_embedding_dim, self.rmsf_embedding_dim, self.label_embedding_dim)
         
-        # Get hidden_channels AFTER super() call, assuming parent sets it
+        # Use the stored hidden_channels value
         classifier_input_dim = self.hidden_channels + feature_dim
         
-        # Classifier setup
+        # Classifier setup - ensure it matches the trained model dimensions
+        # Based on the error message, the trained model has:
+        # classifier.0: Linear(in=160, out=64)
+        # classifier.3: Linear(in=64, out=1)
+        half_hidden = self.hidden_channels // 2
+        
+        # Allow flexible classifier dimensions for compatibility with different model versions
         self.classifier = nn.Sequential(
-            nn.Linear(classifier_input_dim, self.hidden_channels // 2),
+            nn.Linear(classifier_input_dim, half_hidden),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(self.hidden_channels // 2, 1)
+            nn.Linear(half_hidden, 1)
         )
 
     # Modify forward pass to NOT use label_embedding during inference
@@ -673,58 +693,59 @@ def load_model_config(config_path):
         raise RuntimeError(f"Error loading model config {config_path}: {e}") from e
 
 def load_analysis_model(model_path, model_config, device):
-    """Loads the pre-trained ET model for analysis."""
-    try:
-        checkpoint = torch.load(model_path, map_location=device)
-        num_subunits = model_config.get('num_subunits', 4) # Should match training
+    """
+    Load the trained CustomTorchMD_ET model.
 
-        # Create a dictionary with ONLY the arguments explicitly expected by CustomTorchMD_ET
-        init_args = {
-            'num_subunits': num_subunits,
-            'subunit_embedding_dim': model_config['subunit_embedding_dim'],
-            'rmsf_embedding_dim': model_config['rmsf_embedding_dim'],
-            'label_embedding_dim': model_config['label_embedding_dim'],
-            'hidden_channels': model_config['hidden_channels'],
-            'num_layers': model_config['num_layers'],
-            'num_heads': model_config['num_heads'],
-            'num_rbf': model_config['num_rbf'],
-            'rbf_type': model_config['rbf_type'],
-            'activation': model_config['activation'],
-            'attn_activation': model_config['attn_activation'],
-            'neighbor_embedding': model_config['neighbor_embedding'],
-            'cutoff_lower': model_config['cutoff_lower'],
-            'cutoff_upper': model_config['cutoff_upper'],
-            'max_z': model_config['max_z'],
-            'max_num_neighbors': model_config['max_num_neighbors']
-            # DO NOT include: dtype, embedding_dimension, attn_dropout, dropout etc. here
-        }
+    Args:
+        model_path (str): Path to the saved model file.
+        model_config (dict): Configuration dictionary containing model parameters.
+        device (torch.device): Device to load the model onto.
 
-        # Initialize the model using the strictly controlled arguments
-        model = CustomTorchMD_ET(**init_args).to(device)
+    Returns:
+        CustomTorchMD_ET: Loaded model.
+    """
+    # Add safe globals for numpy components to avoid security restrictions in PyTorch 2.6+
+    import torch.serialization
+    torch.serialization.add_safe_globals(['numpy._core.multiarray.scalar'])
+    
+    # Load the checkpoint - allow weights_only=False since this is our own trusted checkpoint
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
-        # Load state_dict
-        state_dict_to_load = checkpoint
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            state_dict_to_load = checkpoint['model_state_dict']
+    # Determine num_subunits from the config or use a default value
+    num_subunits = model_config.get('num_subunits', 4)  # Default to 4 if not specified
 
-        # Load weights (with fallback for non-strict loading)
-        try:
-            model.load_state_dict(state_dict_to_load, strict=True)
-        except RuntimeError as e_load:
-            logger.error("\n--- ERROR during model.load_state_dict() [Strict Mode] ---")
-            logger.error(str(e_load))
-            logger.warning("Attempting load with strict=False...")
-            # Try loading non-strictly to see if it proceeds
-            model.load_state_dict(state_dict_to_load, strict=False)
-            logger.warning("Loaded with strict=False. WARNING: Model may not be fully compatible.")
-            # Continue with warning rather than failing
+    # Initialize the model with config values
+    model = CustomTorchMD_ET(
+        num_subunits=num_subunits,
+        subunit_embedding_dim=model_config['subunit_embedding_dim'],
+        rmsf_embedding_dim=model_config['rmsf_embedding_dim'],
+        label_embedding_dim=model_config['label_embedding_dim'],
+        hidden_channels=model_config['hidden_channels'],
+        num_layers=model_config['num_layers'],
+        num_heads=model_config['num_heads'],
+        num_rbf=model_config['num_rbf'],
+        rbf_type=model_config['rbf_type'],
+        activation=model_config['activation'],
+        attn_activation=model_config['attn_activation'],
+        neighbor_embedding=model_config['neighbor_embedding'],
+        cutoff_lower=model_config['cutoff_lower'],
+        cutoff_upper=model_config['cutoff_upper'],
+        max_z=model_config['max_z'],
+        max_num_neighbors=model_config['max_num_neighbors'],
+        dtype=torch.float32
+    ).to(device)
 
-        model.eval() # Set to evaluation mode
-        return model
-    except FileNotFoundError:
-         raise FileNotFoundError(f"Model weights file not found: {model_path}")
-    except Exception as e:
-         raise RuntimeError(f"Error loading model from {model_path}: {e}") from e
+    # Load the state dict
+    if 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(checkpoint)
+
+    # Set the model to evaluation mode
+    model.eval()
+
+    logger.info(f"Model loaded successfully. Number of subunits: {num_subunits}")
+    return model
 
 def predict_and_assign_pockets(frame_data, model, device, filter_residues_map, universe):
     """Predicts water states and assigns to nearest subunit's filter for one frame."""
