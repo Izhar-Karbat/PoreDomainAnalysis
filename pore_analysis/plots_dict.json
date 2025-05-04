@@ -98,6 +98,20 @@
     "module_name": "gyration_analysis_visualization"
   },
   {
+    "template_key": "sf_tyrosine_chi1_dihedrals",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "dihedrals_chi1",
+    "module_name": "tyrosine_analysis_visualization"
+  },
+  {
+    "template_key": "sf_tyrosine_chi2_dihedrals",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "dihedrals_chi2",
+    "module_name": "tyrosine_analysis_visualization"
+  },
+  {
     "template_key": "sf_tyrosine_rotamer_scatter",
     "product_type": "png",
     "category": "plot",
@@ -117,146 +131,6 @@
     "category": "plot",
     "subcategory": "distance_distribution",
     "module_name": "dw_gate_analysis_visualization"
-  },
-  {
-    "template_key": "dw_distance_vs_state",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "distance_vs_state",
-    "module_name": "dw_gate_analysis_visualization"
-  },
-  {
-    "template_key": "dw_open_probability",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "open_probability",
-    "module_name": "dw_gate_analysis_visualization"
-  },
-  {
-    "template_key": "dw_state_heatmap",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "state_heatmap",
-    "module_name": "dw_gate_analysis_visualization"
-  },
-  {
-    "template_key": "K_Ion_Combined_Plot",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "combined_plot",
-    "module_name": "ion_analysis_visualization"
-  },
-  {
-    "template_key": "K_Ion_Occupancy_Heatmap",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "occupancy_heatmap",
-    "module_name": "ion_analysis_visualization"
-  },
-  {
-    "template_key": "K_Ion_Average_Occupancy",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "average_occupancy",
-    "module_name": "ion_analysis_visualization"
-  },
-  {
-    "template_key": "binding_sites_g1_centric_visualization",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "binding_sites_visualization",
-    "module_name": "ion_analysis_visualization"
-  },
-  {
-    "template_key": "hmm_transitions_plot",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "hmm_transitions_plot",
-    "module_name": "ion_analysis_visualization"
-  },
-  {
-    "template_key": "quality_metrics_plot",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "quality_metrics_plot",
-    "module_name": "ion_analysis_visualization"
-  },
-  {
-    "template_key": "site_optimization_plot",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "site_optimization_plot",
-    "module_name": "ion_analysis"
-  },
-  {
-    "template_key": "inner_vestibule_count_plot",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "count_plot",
-    "module_name": "inner_vestibule_analysis_visualization"
-  },
-  {
-    "template_key": "inner_vestibule_residence_hist",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "residence_hist",
-    "module_name": "inner_vestibule_analysis_visualization"
-  },
-  {
-      "template_key": "g1_gyration_radii",
-      "product_type": "png",
-      "category": "plot",
-      "subcategory": "g1_gyration",
-      "module_name": "gyration_analysis_visualization"
-    },
-    {
-      "template_key": "y_gyration_radii",
-      "product_type": "png",
-      "category": "plot",
-      "subcategory": "y_gyration",
-      "module_name": "gyration_analysis_visualization"
-    },
-    {
-      "template_key": "flip_duration_distribution",
-      "product_type": "png",
-      "category": "plot",
-      "subcategory": "flip_duration",
-      "module_name": "gyration_analysis_visualization"
-    },
-    { 
-      "template_key": "sf_tyrosine_chi1_dihedrals",
-      "product_type": "png",
-      "category": "plot",
-      "subcategory": "dihedrals_chi1",
-      "module_name": "tyrosine_analysis_visualization"
-    },
-    { 
-      "template_key": "sf_tyrosine_chi2_dihedrals",
-      "product_type": "png",
-      "category": "plot",
-      "subcategory": "dihedrals_chi2",
-      "module_name": "tyrosine_analysis_visualization"
-    },
-  {
-    "template_key": "sf_tyrosine_rotamer_scatter",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "rotamer_scatter",
-    "module_name": "tyrosine_analysis_visualization"
-  },
-  {
-    "template_key": "sf_tyrosine_rotamer_population",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "rotamer_population",
-    "module_name": "tyrosine_analysis_visualization"
-  },
-  {
-    "template_key": "dw_distance_distribution",
-    "product_type": "png",
-    "category": "plot",
-    "subcategory": "distance_distribution",
-    "module_name": "dw_gate_analysis_visualization" 
   },
   {
     "template_key": "dw_distance_vs_state",
@@ -287,14 +161,14 @@
     "module_name": "dw_gate_analysis_visualization"
   },
   {
-    "template_key": "pocket_occupancy",
+    "template_key": "pocket_occupancy_plot",
     "product_type": "png",
     "category": "plot",
     "subcategory": "pocket_occupancy_plot",
     "module_name": "pocket_analysis_visualization"
   },
   {
-    "template_key": "pocket_residence",
+    "template_key": "pocket_residence_histogram",
     "product_type": "png",
     "category": "plot",
     "subcategory": "pocket_residence_histogram",
