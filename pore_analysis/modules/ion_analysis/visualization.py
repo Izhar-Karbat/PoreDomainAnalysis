@@ -147,7 +147,7 @@ def _plot_binding_site_schematic(
         plt.close(fig)
         logger.info(f"Binding site visualization saved to {figure_path}")
         register_product(db_conn, module_name, "png", "plot", rel_path,
-                         subcategory="binding_sites_visualization", # Keep consistent subcategory
+                         subcategory="binding_sites_g1_centric_visualization", # FIXED: Match the subcategory expected in the template
                          description=f"Schematic of {plot_title_suffix} binding site positions relative to G1 C-alpha (Ref Z={g1_ca_z_ref_str} Å).")
         return rel_path
     except Exception as e:

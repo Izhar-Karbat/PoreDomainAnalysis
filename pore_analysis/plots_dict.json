@@ -1,5 +1,12 @@
 [
   {
+    "template_key": "binding_sites_g1_centric_visualization",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "binding_sites_g1_centric_visualization",
+    "module_name": "ion_analysis_visualization"
+  },
+  {
     "template_key": "subunit_comparison",
     "product_type": "png",
     "category": "plot",
@@ -60,6 +67,20 @@
     "product_type": "png",
     "category": "plot",
     "subcategory": "occupancy_heatmap",
+    "module_name": "ion_analysis_visualization"
+  },
+  {
+    "template_key": "k_ion_average_occupancy",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "average_occupancy",
+    "module_name": "ion_analysis_visualization"
+  },
+  {
+    "template_key": "hmm_transitions_plot",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "hmm_transitions_plot",
     "module_name": "ion_analysis_visualization"
   },
   {

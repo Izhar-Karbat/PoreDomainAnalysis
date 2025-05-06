@@ -44,7 +44,7 @@
         <div class="plot-container">
             <h4>Average Site Occupancy</h4>
              {% if plots.get('k_ion_average_occupancy') %} {# Use correct key from plots_dict.json #}
-                 <img src="data:image/png;base64,{{ plots.get('k_ion_Average_occupancy') }}" alt="Average Ion Occupancy">
+                 <img src="data:image/png;base64,{{ plots.get('k_ion_average_occupancy') }}" alt="Average Ion Occupancy">
              {% else %}
                  <p><i class="unavailable">Plot not available.</i></p>
              {% endif %}
