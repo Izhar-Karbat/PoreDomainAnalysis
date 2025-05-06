@@ -107,10 +107,24 @@ try:
         run_pocket_analysis, generate_pocket_plots
     )
     pocket_analysis_available = True
-except ImportError:
+except ImportError as e_pocket:
     pocket_analysis_available = False
-    def run_pocket_analysis(*args, **kwargs): logging.warning("Pocket analysis module not found."); return {'status': 'skipped', 'error': 'Module not found'}
-    def generate_pocket_plots(*args, **kwargs): logging.warning("Pocket analysis module not found."); return {'status': 'skipped', 'error': 'Module not found'}
+    # Capture specific error message for better diagnostics
+    pocket_error_msg = str(e_pocket)
+    # Check for the specific torchmdnet dependency error
+    if "torchmdnet" in pocket_error_msg:
+        pocket_unavailable_reason = f"Pocket analysis unavailable: Missing torchmdnet dependency. {pocket_error_msg}"
+    else:
+        pocket_unavailable_reason = f"Pocket analysis unavailable: {pocket_error_msg}"
+    
+    # Log at import time so it's always visible
+    if 'logging' in globals():
+        logging.warning(pocket_unavailable_reason)
+    else:
+        print(f"WARNING: {pocket_unavailable_reason}", file=sys.stderr)
+    
+    def run_pocket_analysis(*args, **kwargs): logging.warning(pocket_unavailable_reason); return {'status': 'skipped', 'error': pocket_unavailable_reason}
+    def generate_pocket_plots(*args, **kwargs): logging.warning(pocket_unavailable_reason); return {'status': 'skipped', 'error': pocket_unavailable_reason}
 
 try:
     # Core Utilities
@@ -316,6 +330,29 @@ def _run_analysis_workflow(args):
             run_tyrosine = (args.tyrosine or run_all_initially) and tyrosine_analysis_available
             run_dwgates = (args.dwgates or run_all_initially) and dw_gate_analysis_available
             run_pocket = (args.pocket or run_all_initially) and pocket_analysis_available
+            
+            # Log availability status for modules when running all (explicitly note when a module is skipped)
+            if run_all_initially:
+                logger.info("No specific analysis modules requested - determining available modules...")
+                if not core_analysis_available:
+                    logger.warning("Core analysis module is NOT available. This module will be skipped.")
+                if not orientation_analysis_available:
+                    logger.warning("Orientation analysis module is NOT available. This module will be skipped.")
+                if not ion_analysis_available:
+                    logger.warning("Ion analysis module is NOT available. This module will be skipped.")
+                if not inner_vestibule_analysis_available:
+                    logger.warning("Inner vestibule analysis module is NOT available. This module will be skipped.")
+                if not gyration_analysis_available:
+                    logger.warning("Gyration analysis module is NOT available. This module will be skipped.")
+                if not tyrosine_analysis_available:
+                    logger.warning("Tyrosine analysis module is NOT available. This module will be skipped.")
+                if not dw_gate_analysis_available:
+                    logger.warning("DW-Gate analysis module is NOT available. This module will be skipped.")
+                if not pocket_analysis_available:
+                    if 'pocket_unavailable_reason' in globals():
+                        logger.warning(f"{pocket_unavailable_reason} This module will be skipped.")
+                    else:
+                        logger.warning("Pocket analysis module is NOT available (check torch/torchmdnet installation?). This module will be skipped.")
 
             generate_plots = not args.no_plots
 
@@ -324,15 +361,26 @@ def _run_analysis_workflow(args):
             else: # Run all default case
                 generate_html = not args.no_report
 
-            # Log module availability warnings
-            if args.core and not core_analysis_available: logger.warning("Core analysis requested but module is not available/imported.")
-            if args.orientation and not orientation_analysis_available: logger.warning("Orientation analysis requested but module is not available/imported.")
-            if args.ions and not ion_analysis_available: logger.warning("Ion analysis requested but module is not available/imported.")
-            if args.water and not inner_vestibule_analysis_available: logger.warning("Inner Vestibule analysis requested but module is not available/imported.")
-            if args.gyration and not gyration_analysis_available: logger.warning("Gyration analysis requested but module is not available/imported.")
-            if args.tyrosine and not tyrosine_analysis_available: logger.warning("Tyrosine analysis requested but module is not available/imported.")
-            if args.dwgates and not dw_gate_analysis_available: logger.warning("DW Gate analysis requested but module is not available/imported.")
-            if args.pocket and not pocket_analysis_available: logger.warning("Pocket analysis requested but module is not available/imported (check torch/torchmdnet installation?).")
+            # Log module availability warnings with specific reasons when possible
+            if args.core and not core_analysis_available: 
+                logger.warning("Core analysis requested but module is not available/imported.")
+            if args.orientation and not orientation_analysis_available: 
+                logger.warning("Orientation analysis requested but module is not available/imported.")
+            if args.ions and not ion_analysis_available: 
+                logger.warning("Ion analysis requested but module is not available/imported.")
+            if args.water and not inner_vestibule_analysis_available: 
+                logger.warning("Inner Vestibule analysis requested but module is not available/imported.")
+            if args.gyration and not gyration_analysis_available: 
+                logger.warning("Gyration analysis requested but module is not available/imported.")
+            if args.tyrosine and not tyrosine_analysis_available: 
+                logger.warning("Tyrosine analysis requested but module is not available/imported.")
+            if args.dwgates and not dw_gate_analysis_available: 
+                logger.warning("DW Gate analysis requested but module is not available/imported.")
+            if args.pocket and not pocket_analysis_available: 
+                if 'pocket_unavailable_reason' in globals():
+                    logger.warning(pocket_unavailable_reason)
+                else:
+                    logger.warning("Pocket analysis requested but module is not available/imported (check torch/torchmdnet installation?).")
 
 
             logger.info(f"Analysis Plan: Core={run_core}, Orientation={run_orientation}, Ions={run_ions}, Water={run_water}, Gyration={run_gyration}, Tyrosine={run_tyrosine}, DWGates={run_dwgates}, Pocket={run_pocket}")

@@ -7,13 +7,100 @@ and validation checks adapted for the Pore Analysis Suite.
 import logging
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Set
+from collections import defaultdict
 
 # Import necessary components from the suite (adjust as needed)
 # from pore_analysis.core.config import HMM_EPSILON, HMM_SELF_TRANSITION_P, HMM_EMISSION_SIGMA, HMM_FLICKER_NS
 # from pore_analysis.core.utils import frames_to_time # If time conversion needed here
 
 logger = logging.getLogger(__name__)
+
+# Warning aggregator for tracking HMM warnings
+class WarningAggregator:
+    def __init__(self):
+        # For tracking warnings by type and affected ions
+        self.warning_counts = defaultdict(int)
+        self.warning_ions = defaultdict(set)
+        self.warning_examples = {}
+        # For tracking specific per-ion warnings
+        self.invalid_state_warnings = defaultdict(int)
+        self.suspicious_state_warnings = defaultdict(int)
+        self.rapid_transition_warnings = defaultdict(int)
+        
+    def add_warning(self, warning_type, ion_name, message=None):
+        """Add a warning of a specific type for an ion"""
+        self.warning_counts[warning_type] += 1
+        self.warning_ions[warning_type].add(ion_name)
+        if message and warning_type not in self.warning_examples:
+            self.warning_examples[warning_type] = message
+            
+    def add_invalid_state(self, ion_name, time_idx):
+        """Track invalid state index warnings"""
+        self.invalid_state_warnings[ion_name] += 1
+        warning_type = "invalid_state_index"
+        self.warning_counts[warning_type] += 1
+        self.warning_ions[warning_type].add(ion_name)
+        if warning_type not in self.warning_examples:
+            self.warning_examples[warning_type] = f"Invalid state index detected (example: at time {time_idx} for {ion_name})"
+    
+    def add_suspicious_state(self, ion_name, count=1):
+        """Track suspicious state assignment warnings"""
+        self.suspicious_state_warnings[ion_name] += count
+        warning_type = "suspicious_state_assignment"
+        self.warning_counts[warning_type] += count
+        self.warning_ions[warning_type].add(ion_name)
+    
+    def add_rapid_transition(self, ion_name, count=1):
+        """Track rapid transition warnings"""
+        self.rapid_transition_warnings[ion_name] += count
+        warning_type = "rapid_transitions"
+        self.warning_counts[warning_type] += count
+        self.warning_ions[warning_type].add(ion_name)
+        
+    def log_summary(self):
+        """Log a summary of all warnings"""
+        if not self.warning_counts:
+            return
+            
+        logger.info("=== HMM Warning Summary ===")
+        
+        # Log invalid state warnings
+        if self.invalid_state_warnings:
+            total = sum(self.invalid_state_warnings.values())
+            ion_count = len(self.invalid_state_warnings)
+            top_offenders = sorted(self.invalid_state_warnings.items(), key=lambda x: x[1], reverse=True)[:5]
+            example = self.warning_examples.get("invalid_state_index", "Invalid state indices detected")
+            logger.warning(f"Invalid state indices: {total} occurrences across {ion_count} ions. Example: {example}")
+            logger.warning(f"  Top affected ions: " + ", ".join([f"{ion}({count})" for ion, count in top_offenders]))
+            
+        # Log suspicious state assignment warnings
+        if self.suspicious_state_warnings:
+            total = sum(self.suspicious_state_warnings.values())
+            ion_count = len(self.suspicious_state_warnings)
+            top_offenders = sorted(self.suspicious_state_warnings.items(), key=lambda x: x[1], reverse=True)[:5]
+            logger.warning(f"Suspicious state assignments: {total} occurrences across {ion_count} ions")
+            logger.warning(f"  Top affected ions: " + ", ".join([f"{ion}({count})" for ion, count in top_offenders]))
+            
+        # Log rapid transition warnings
+        if self.rapid_transition_warnings:
+            total = sum(self.rapid_transition_warnings.values())
+            ion_count = len(self.rapid_transition_warnings)
+            top_offenders = sorted(self.rapid_transition_warnings.items(), key=lambda x: x[1], reverse=True)[:5]
+            logger.warning(f"Rapid transitions: {total} occurrences across {ion_count} ions")
+            logger.warning(f"  Top affected ions: " + ", ".join([f"{ion}({count})" for ion, count in top_offenders]))
+            
+        # Log any other warning types
+        for warning_type, count in self.warning_counts.items():
+            if warning_type not in ["invalid_state_index", "suspicious_state_assignment", "rapid_transitions"]:
+                ions = self.warning_ions[warning_type]
+                example = self.warning_examples.get(warning_type, "")
+                logger.warning(f"{warning_type}: {count} occurrences across {len(ions)} ions. {example}")
+                
+        logger.info("=== End of HMM Warning Summary ===")
+
+# Create a global warning aggregator
+warning_aggregator = WarningAggregator()
 
 # --- HMM Core Functions (Adapted from provided code) ---
 
@@ -133,16 +220,19 @@ def validate_path(path: np.ndarray, adjacency: Dict[int, List[int]], time_points
 def physical_plausibility_check(path: np.ndarray, obs: np.ndarray, site_centers: np.ndarray, time_points: np.ndarray, ion_name: str, site_names: List[str], threshold: float = 2.5) -> Tuple[bool, np.ndarray]:
     """
     Check if the inferred path is physically plausible given the raw data.
-    Logs warnings for suspicious assignments and returns a boolean flag array.
+    Aggregates warnings for suspicious assignments and returns a boolean flag array.
     """
     plausible = True
     suspicious_flags = np.zeros(len(path), dtype=bool)
     suspicious_count = 0
+    invalid_state_count = 0
     suspicious_examples = []
 
     for t in range(len(path)):
         if path[t] < 0 or path[t] >= len(site_centers): # Should not happen if Viterbi worked
-             logger.warning(f"Invalid state index {path[t]} at time {t} for {ion_name}")
+             # Aggregate warning instead of logging each occurrence
+             invalid_state_count += 1
+             warning_aggregator.add_invalid_state(ion_name, t)
              continue
 
         assigned_site_center = site_centers[path[t]]
@@ -151,7 +241,7 @@ def physical_plausibility_check(path: np.ndarray, obs: np.ndarray, site_centers:
         if deviation > threshold:
             suspicious_flags[t] = True
             suspicious_count += 1
-            if suspicious_count <= 5: # Log first few examples
+            if suspicious_count <= 5: # Store first few examples for later reporting
                  time_str = f"{time_points[t]:.3f} ns" if t < len(time_points) else f"index {t}"
                  suspicious_examples.append(
                      f"at {time_str}: assigned to {site_names[path[t]]} ({assigned_site_center:.2f} Å), "
@@ -159,29 +249,50 @@ def physical_plausibility_check(path: np.ndarray, obs: np.ndarray, site_centers:
                  )
             plausible = False # Mark as potentially implausible if any point deviates significantly
 
+    # Log summary for suspicious state assignments if any found
     if suspicious_count > 0:
-         logger.warning(f"Found {suspicious_count} suspicious site assignments (deviation > {threshold} Å) for {ion_name}:")
-         for example in suspicious_examples:
-             logger.warning(f"  Example: {example}")
-         if suspicious_count > 5:
-             logger.warning(f"  ... and {suspicious_count - 5} more.")
+        # Save just a brief example for aggregation
+        if suspicious_examples:
+            example_msg = f"Example: {suspicious_examples[0]}"
+            warning_aggregator.add_warning("suspicious_state_details", ion_name, example_msg)
+        # Add to aggregated counts
+        warning_aggregator.add_suspicious_state(ion_name, suspicious_count)
+        
+        # Log detailed examples immediately only if there are just a few
+        if suspicious_count <= 5:
+            logger.debug(f"Found {suspicious_count} suspicious site assignments for {ion_name}")
+            for example in suspicious_examples:
+                logger.debug(f"  {example}")
 
     # Add check for rapid transitions skipping sites (from original code)
     transitions_checked = 0
+    rapid_transition_examples = []
+    
     for t in range(1, len(path) - 1):
         if path[t-1] >= 0 and path[t] >= 0 and path[t+1] >= 0: # Ensure valid states
              # Check if jump is > 1 site and the intermediate state is different from start/end
              if abs(path[t+1] - path[t-1]) > 1 and path[t] not in [path[t-1], path[t+1]]:
-                 if transitions_checked < 3:  # Only log a few examples
+                 if transitions_checked < 3:  # Store only a few examples
                      time_str = f"{time_points[t]:.3f} ns" if t < len(time_points) else f"index {t}"
-                     logger.warning(f"Suspicious rapid transition for {ion_name} at {time_str}: "
-                                   f"{site_names[path[t-1]]} -> {site_names[path[t]]} -> {site_names[path[t+1]]}")
+                     rapid_transition_examples.append(
+                         f"at {time_str}: {site_names[path[t-1]]} -> {site_names[path[t]]} -> {site_names[path[t+1]]}"
+                     )
                  transitions_checked += 1
                  plausible = False # Consider this implausible
 
-    if transitions_checked > 3:
-        logger.warning(f"... and {transitions_checked - 3} more suspicious rapid transitions for {ion_name}")
-
+    # Add rapid transitions to aggregator
+    if transitions_checked > 0:
+        warning_aggregator.add_rapid_transition(ion_name, transitions_checked)
+        # Save an example for the warning summary
+        if rapid_transition_examples:
+            example_msg = f"Example: {rapid_transition_examples[0]}"
+            warning_aggregator.add_warning("rapid_transition_details", ion_name, example_msg)
+            
+        # Log detailed examples immediately only if there are just a few
+        if transitions_checked <= 3:
+            logger.debug(f"Found {transitions_checked} suspicious rapid transitions for {ion_name}")
+            for example in rapid_transition_examples:
+                logger.debug(f"  {example}")
 
     return plausible, suspicious_flags
 
@@ -358,6 +469,8 @@ def process_ion_with_hmm(
 
          # Ensure no NaNs within the identified segment (shouldn't happen with identify_continuous_segments)
          if np.any(np.isnan(segment_data)):
+              warning_aggregator.add_warning("nan_in_segment", ion_name, 
+                                           f"NaN found within supposedly continuous segment {seg_idx+1} for {ion_name}")
               logger.warning(f"NaN found within supposedly continuous segment {seg_idx+1} for ion {ion_name}. Skipping segment.")
               continue
 
@@ -367,6 +480,8 @@ def process_ion_with_hmm(
          if len(hmm_path_indices) == len(segment_data):
               full_hmm_path[start_frame : end_frame + 1] = hmm_path_indices
          else:
+              warning_aggregator.add_warning("length_mismatch", ion_name, 
+                                          f"Length mismatch between HMM path and segment data for {ion_name}")
               logger.error(f"Length mismatch between HMM path ({len(hmm_path_indices)}) and segment data ({len(segment_data)}) for ion {ion_name}, segment {seg_idx+1}.")
               # Handle error - potentially skip segment or fill with -1? Fill with -1 for safety.
               full_hmm_path[start_frame : end_frame + 1] = -1
@@ -381,13 +496,16 @@ def process_ion_with_hmm(
          segment_path = full_hmm_path[start_frame : end_frame + 1]
          if not validate_path(segment_path, adjacency, time_points[start_frame : end_frame + 1], ion_name, site_names):
               is_valid_overall = False
+              warning_aggregator.add_warning("non_adjacent_transition", ion_name, 
+                                         f"Non-adjacent transition found within segment for {ion_name}")
               logger.error(f"Non-adjacent transition found within a segment for ion {ion_name}. Check Viterbi/Matrix.")
               # Attempt basic correction? Keep previous state? For now, just log error.
 
     # 4. Perform plausibility check and get quality flags
     plausible, quality_flags = physical_plausibility_check(full_hmm_path, ion_z_g1_nan, site_centers, time_points, ion_name, site_names)
     if not plausible:
-         logger.warning(f"Physical plausibility concerns raised for ion {ion_name}.")
+        # The physical_plausibility_check already adds detailed warnings to the aggregator
+        logger.debug(f"Physical plausibility concerns raised for ion {ion_name}.")
 
 
     # 5. Segment the *full* path (including -1 states) and filter
@@ -408,34 +526,14 @@ def process_ion_with_hmm(
                    'site_label': seg_dict['label']
               })
          else:
+              warning_aggregator.add_warning("invalid_frame_indices", ion_name,
+                                          f"Invalid frame indices in filtered segment for {ion_name}")
               logger.warning(f"Invalid frame indices in filtered segment for ion {ion_name}: {seg_dict}")
 
     logger.info(f"Processing ion {ion_name} complete. Found {len(final_transitions)} final dwell events.")
     return final_transitions, full_hmm_path, entry_exit, quality_flags
 
 
-# --- Placeholder for Warning Aggregator ---
-# This would ideally be integrated into the main logging setup
-class WarningAggregator(logging.Handler):
-    def __init__(self):
-        super().__init__()
-        self.warning_counts = {}
-        self.warning_examples = {}
-    def emit(self, record):
-        if record.levelno == logging.WARNING:
-             msg = record.getMessage()
-             key = msg.split(":")[0] # Simple key based on first part of warning
-             self.warning_counts[key] = self.warning_counts.get(key, 0) + 1
-             if key not in self.warning_examples: self.warning_examples[key] = msg
-    def summarize(self):
-        if self.warning_counts:
-             logger.info("=== Aggregated Warning Summary ===")
-             for key, count in self.warning_counts.items():
-                 logger.warning(f"[{count}x] {self.warning_examples[key]}")
-             logger.info("================================")
-
-# Example Initialization (if used directly in this module)
-# warning_aggregator = WarningAggregator()
-# logger.addHandler(warning_aggregator)
-# At the end: warning_aggregator.summarize()
+# This has been replaced with an active implementation at the top of the file
+# The warning_aggregator instance is created there and used throughout the code
 

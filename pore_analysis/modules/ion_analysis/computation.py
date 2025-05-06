@@ -17,7 +17,7 @@ from collections import defaultdict
 from .structure import find_filter_residues, calculate_g1_reference, calculate_binding_sites
 from .tracking import track_ion_positions, _save_ion_position_csvs
 from .occupancy import calculate_occupancy
-from .hmm import build_transition_matrix, process_ion_with_hmm
+from .hmm import build_transition_matrix, process_ion_with_hmm, warning_aggregator
 
 # Import from core modules
 try:
@@ -506,6 +506,9 @@ def run_ion_analysis(
         hmm_cond_path = _calculate_and_save_hmm_conduction(run_dir, all_final_transitions, site_names_hmm, db_conn, module_name)
         if hmm_cond_path: results['files']['hmm_conduction_events'] = hmm_cond_path
 
+        # Log aggregated warnings for HMM processing
+        warning_aggregator.log_summary()
+        
         hmm_success = True
 
     except Exception as e_hmm:
