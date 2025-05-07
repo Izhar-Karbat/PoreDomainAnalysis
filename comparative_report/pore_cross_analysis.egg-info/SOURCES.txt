@@ -1,0 +1,14 @@
+README.md
+cross_analysis_main.py
+setup.py
+cross_analysis/__init__.py
+cross_analysis/ai_insights.py
+cross_analysis/comparative_analysis.py
+cross_analysis/extract_metrics.py
+cross_analysis/html_report.py
+cross_analysis/templates/cross_report_template.html
+pore_cross_analysis.egg-info/PKG-INFO
+pore_cross_analysis.egg-info/SOURCES.txt
+pore_cross_analysis.egg-info/dependency_links.txt
+pore_cross_analysis.egg-info/requires.txt
+pore_cross_analysis.egg-info/top_level.txt
