@@ -119,7 +119,9 @@ def track_ion_positions(
     filter_residues: Dict[str, List[int]],
     run_dir: str,
     db_conn: sqlite3.Connection,
-    module_name: str = "ion_analysis"
+    module_name: str = "ion_analysis",
+    start_frame: int = 0,
+    end_frame: Optional[int] = None
 ) -> Tuple[Optional[Dict[int, np.ndarray]], Optional[np.ndarray], Optional[List[int]]]:
     """
     Track K+ ions near the selectivity filter over the trajectory.
@@ -132,6 +134,8 @@ def track_ion_positions(
         run_dir: Path to the run directory for saving output.
         db_conn: Active database connection.
         module_name: Name of the calling module for registration.
+        start_frame: Starting frame index for analysis (0-based). Defaults to 0.
+        end_frame: Ending frame index for analysis (exclusive). If None, goes to the end.
 
     Returns:
         Tuple (ions_z_abs, time_points, ion_indices):
@@ -140,10 +144,27 @@ def track_ion_positions(
             - ion_indices: List of tracked ion indices, or None on error.
     """
     logger.info("Tracking K+ ion positions near the filter...")
-    n_frames = len(universe.trajectory)
-    if n_frames == 0:
+    n_frames_total = len(universe.trajectory)
+    if n_frames_total == 0:
         logger.warning("Trajectory has 0 frames.")
         return None, None, None
+        
+    # Handle frame range
+    if end_frame is None:
+        end_frame = n_frames_total
+        
+    # Validate frame range
+    if start_frame < 0 or start_frame >= n_frames_total:
+        logger.error(f"Invalid start_frame: {start_frame}. Must be between 0 and {n_frames_total-1}")
+        return None, None, None
+        
+    if end_frame <= start_frame or end_frame > n_frames_total:
+        logger.error(f"Invalid end_frame: {end_frame}. Must be between {start_frame+1} and {n_frames_total}")
+        return None, None, None
+        
+    # Calculate the actual number of frames to process
+    n_frames = end_frame - start_frame
+    logger.info(f"Analyzing frame range {start_frame} to {end_frame} (total: {n_frames} frames)")
 
     if not filter_residues:
         logger.error("Filter residues dictionary is empty.")
@@ -195,7 +216,10 @@ def track_ion_positions(
 
     # --- Trajectory Iteration ---
     try:
-        for ts in tqdm(universe.trajectory, desc=f"Tracking K+ ({os.path.basename(run_dir)})", unit="frame", disable=not logger.isEnabledFor(logging.INFO)):
+        for ts in tqdm(universe.trajectory[start_frame:end_frame], 
+                       desc=f"Tracking K+ ({os.path.basename(run_dir)})", 
+                       unit="frame", 
+                       disable=not logger.isEnabledFor(logging.INFO)):
             frame_idx = ts.frame
             frame_indices.append(frame_idx)
 

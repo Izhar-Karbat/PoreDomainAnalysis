@@ -102,9 +102,12 @@ def _save_vestibule_data_files(
 
 def run_inner_vestibule_analysis(
     run_dir: str,
-    psf_file: str,
-    dcd_file: str,
-    db_conn: sqlite3.Connection
+    universe=None,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
+    db_conn: sqlite3.Connection = None,
+    psf_file: Optional[str] = None,
+    dcd_file: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Computes water occupancy and residence time in the channel inner vestibule.
@@ -113,9 +116,12 @@ def run_inner_vestibule_analysis(
 
     Args:
         run_dir (str): Path to the specific run directory.
-        psf_file (str): Path to the PSF topology file.
-        dcd_file (str): Path to the DCD trajectory file.
-        db_conn (sqlite3.Connection): Active database connection.
+        universe (MDAnalysis.Universe, optional): Pre-loaded MDAnalysis Universe object.
+        start_frame (int, optional): Starting frame index for analysis (0-based). Defaults to 0.
+        end_frame (int, optional): Ending frame index for analysis (exclusive). If None, goes to the end.
+        db_conn (sqlite3.Connection, optional): Active database connection.
+        psf_file (str, optional): Path to the PSF topology file. Only used if universe is not provided.
+        dcd_file (str, optional): Path to the DCD trajectory file. Only used if universe is not provided.
 
     Returns:
         dict: A dictionary containing status ('success', 'failed', 'skipped')
@@ -201,14 +207,68 @@ def run_inner_vestibule_analysis(
         update_module_status(db_conn, module_name, 'failed', error_message=results['error'])
         return results
 
-    # --- Load Universe ---
+    # --- Universe Handling ---
     try:
-        u = mda.Universe(psf_file, dcd_file)
-        n_frames = len(u.trajectory)
-        if n_frames < 2: raise ValueError("Trajectory has < 2 frames.")
-        logger.info(f"Universe loaded ({n_frames} frames).")
+        if universe is not None:
+            # Use the provided universe
+            u = universe
+            logger.info(f"{module_name}: Using provided Universe object")
+        else:
+            # Need to load the universe from files
+            if psf_file is None or dcd_file is None:
+                error_msg = "Neither universe nor psf_file/dcd_file were provided."
+                logger.error(f"{module_name}: {error_msg}")
+                update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+                results['error'] = error_msg
+                return results
+                
+            logger.info(f"{module_name}: Loading topology: {psf_file}")
+            logger.info(f"{module_name}: Loading trajectory: {dcd_file}")
+            u = mda.Universe(psf_file, dcd_file)
+            logger.info(f"{module_name}: Universe loaded successfully")
+            
+        # Validate universe
+        n_frames_total = len(u.trajectory)
+        logger.info(f"{module_name}: Universe has {n_frames_total} frames total")
+        
+        if n_frames_total < 2:
+            error_msg = "Trajectory has < 2 frames."
+            logger.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            results['error'] = error_msg
+            return results
+             
+        # Handle frame range
+        if end_frame is None:
+            end_frame = n_frames_total
+            
+        # Validate frame range
+        if start_frame < 0 or start_frame >= n_frames_total:
+            error_msg = f"Invalid start_frame: {start_frame}. Must be between 0 and {n_frames_total-1}"
+            logger.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            results['error'] = error_msg
+            return results
+            
+        if end_frame <= start_frame or end_frame > n_frames_total:
+            error_msg = f"Invalid end_frame: {end_frame}. Must be between {start_frame+1} and {n_frames_total}"
+            logger.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            results['error'] = error_msg
+            return results
+            
+        # Store frame range info in the database for later reference
+        store_metric(db_conn, module_name, "start_frame", start_frame, "frame", "Starting frame index for inner vestibule analysis")
+        store_metric(db_conn, module_name, "end_frame", end_frame, "frame", "Ending frame index for inner vestibule analysis")
+        store_metric(db_conn, module_name, "frames_analyzed", end_frame - start_frame, "frames", "Number of frames analyzed")
+            
+        logger.info(f"{module_name}: Analyzing frame range {start_frame} to {end_frame} (total: {end_frame - start_frame} frames)")
+        
+        # The number of frames we'll actually process
+        n_frames = end_frame - start_frame
+        
     except Exception as e:
-        results['error'] = f"Failed to load Universe: {e}"
+        results['error'] = f"Failed to load or validate Universe: {e}"
         logger.error(results['error'], exc_info=True)
         update_module_status(db_conn, module_name, 'failed', error_message=results['error'])
         return results
@@ -217,7 +277,8 @@ def run_inner_vestibule_analysis(
     try:
         if FRAMES_PER_NS <= 0: raise ValueError(f"FRAMES_PER_NS ({FRAMES_PER_NS}) must be positive.")
         time_per_frame = 1.0 / FRAMES_PER_NS
-        time_points = frames_to_time(np.arange(n_frames))
+        frame_indices = np.arange(start_frame, end_frame)
+        time_points = frames_to_time(frame_indices)
 
         Z_S4_abs = filter_sites_rel['S4'] + g1_ref
         Z_upper_boundary = Z_S4_abs - 5.0
@@ -255,8 +316,13 @@ def run_inner_vestibule_analysis(
 
         # --- Trajectory Iteration ---
         logger.info("Iterating trajectory for vestibule analysis...")
-        for ts in tqdm(u.trajectory, desc=f"Vestibule Water ({os.path.basename(run_dir)})", unit="frame", disable=not logger.isEnabledFor(logging.INFO)):
+        for ts in tqdm(u.trajectory[start_frame:end_frame], 
+                      desc=f"Vestibule Water ({os.path.basename(run_dir)})", 
+                      unit="frame", 
+                      disable=not logger.isEnabledFor(logging.INFO)):
             frame_idx = ts.frame
+            # Use a local index for storing in our arrays
+            local_idx = frame_idx - start_frame
             try:
                 pore_center_xy = g1_ca_atoms.center_of_geometry()[:2]
                 water_pos = water_O_atoms.positions
@@ -267,8 +333,8 @@ def run_inner_vestibule_analysis(
                 inside_mask = z_mask & r_mask
                 current_waters_indices_inside = set(water_O_atoms[inside_mask].indices)
 
-                water_counts_per_frame[frame_idx] = len(current_waters_indices_inside)
-                waters_indices_per_frame[frame_idx] = current_waters_indices_inside
+                water_counts_per_frame[local_idx] = len(current_waters_indices_inside)
+                waters_indices_per_frame[local_idx] = current_waters_indices_inside
                 outside_this_frame = set(water_O_atoms.indices) - current_waters_indices_inside
 
                 # --- State Update Logic (Identical to original) ---
@@ -306,8 +372,8 @@ def run_inner_vestibule_analysis(
                 # Update currently outside set for next frame
                 waters_currently_outside = outside_this_frame
             except Exception as e_frame:
-                 logger.error(f"Error analyzing frame {frame_idx}: {e_frame}", exc_info=True)
-                 water_counts_per_frame[frame_idx] = -1 # Mark frame as failed
+                 logger.error(f"Error analyzing frame {frame_idx} (local index {local_idx}): {e_frame}", exc_info=True)
+                 water_counts_per_frame[local_idx] = -1 # Mark frame as failed
 
         # --- Flatten Residence Times ---
         all_residence_times_ns = [rt for times in water_residence_times.values() for rt in times if rt > 0] # Ensure only positive times stored

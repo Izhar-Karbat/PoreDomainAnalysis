@@ -45,34 +45,50 @@ def load_universe(psf_file: str, dcd_file: str) -> Optional[mda.Universe]:
 
 def calculate_dw_distances(
     universe: mda.Universe,
-    gate_residues: Dict[str, GateResidues]
-    # dt_ns removed - time axis handled by computation.py
+    gate_residues: Dict[str, GateResidues],
+    start_frame: int = 0,
+    end_frame: Optional[int] = None
 ) -> Optional[pd.DataFrame]:
     """
     Calculates the minimum distance between Asp/Glu carboxylates (OD1/OD2/OE1/OE2)
-    and Trp indole nitrogen (NE1) for each identified gate pair across all frames.
+    and Trp indole nitrogen (NE1) for each identified gate pair across specified frames.
 
     Args:
         universe: MDAnalysis Universe, trajectory must be loaded.
         gate_residues: Dictionary mapping chain ID to GateResidues objects.
+        start_frame: Starting frame index for analysis (0-based).
+        end_frame: Ending frame index for analysis (exclusive). If not specified, analyzes to the end.
 
     Returns:
         Pandas DataFrame containing distance columns for each chain
-        (e.g., 'Dist_PROA', 'Dist_PROB'), indexed by frame number, or None if calculation fails.
-        Distances are in Angstroms.
+        (e.g., 'Dist_PROA', 'Dist_PROB'), indexed by frame number (local indices, 0-based), 
+        or None if calculation fails. Distances are in Angstroms.
     """
     if not gate_residues:
         logger.error("Cannot calculate distances: No valid gate residues provided.")
         return None
 
     valid_segids = sorted(list(gate_residues.keys()))
-    n_frames = len(universe.trajectory)
+    n_frames_total = len(universe.trajectory)
 
-    if n_frames == 0:
+    if n_frames_total == 0:
         logger.warning("Cannot calculate distances: Trajectory has 0 frames.")
         # Return an empty DataFrame with expected columns?
         cols = [f"Dist_{segid}" for segid in valid_segids]
         return pd.DataFrame(columns=cols)
+        
+    # Process frame range
+    actual_end = n_frames_total if end_frame is None else end_frame
+    actual_start = max(0, start_frame)
+    actual_end = min(n_frames_total, actual_end)
+    
+    if actual_start >= actual_end:
+        logger.error(f"Invalid frame range: start={actual_start}, end={actual_end}")
+        return None
+        
+    # Number of frames to analyze
+    frames_to_analyze = actual_end - actual_start
+    logger.info(f"Analyzing frame range {actual_start} to {actual_end} ({frames_to_analyze} frames)")
 
 
     # Prepare atom selections
@@ -99,13 +115,17 @@ def calculate_dw_distances(
         logger.error("No valid chains remaining after preparing atom selections for distance calculation.")
         return None
 
-    logger.info(f"Calculating DW-gate distances for chains: {valid_segids} over {n_frames} frames...")
-    # Initialize dict to hold numpy arrays for performance
-    distance_data_np = {f"Dist_{segid}": np.full(n_frames, np.nan) for segid in valid_segids}
+    logger.info(f"Calculating DW-gate distances for chains: {valid_segids} over {frames_to_analyze} frames...")
+    # Initialize dict to hold numpy arrays for performance - now using frames_to_analyze for length
+    distance_data_np = {f"Dist_{segid}": np.full(frames_to_analyze, np.nan) for segid in valid_segids}
 
-    # Iterate through trajectory
-    for ts in tqdm(universe.trajectory, desc="DW-gate Distances", total=n_frames, disable=not logger.isEnabledFor(logging.INFO)):
-        frame_idx = ts.frame
+    # Iterate through trajectory slice
+    for i, ts in enumerate(tqdm(universe.trajectory[actual_start:actual_end], 
+                               desc="DW-gate Distances", 
+                               total=frames_to_analyze, 
+                               disable=not logger.isEnabledFor(logging.INFO))):
+        # Use local frame index for storing in arrays (0-based for the analyzed window)
+        local_idx = i
         for segid in valid_segids:
             try:
                 # Get atom groups for the current frame (positions updated automatically by MDA)
@@ -118,16 +138,16 @@ def calculate_dw_distances(
 
                 # Find the minimum distance for this frame and chain
                 min_dist = np.min(dist_matrix) if dist_matrix.size > 0 else np.nan
-                distance_data_np[f"Dist_{segid}"][frame_idx] = min_dist
+                distance_data_np[f"Dist_{segid}"][local_idx] = min_dist
 
             except Exception as e:
                 # Log only once per chain if errors persist?
-                if frame_idx == 0: # Log first instance
-                    logger.warning(f"Error calculating distance for chain {segid} at frame {ts.frame}: {e}", exc_info=False)
+                if local_idx == 0: # Log first instance
+                    logger.warning(f"Error calculating distance for chain {segid} at frame {ts.frame} (local_idx={local_idx}): {e}", exc_info=False)
                 # Keep NaN value assigned during initialization
 
-    # Create DataFrame from the numpy arrays
-    df_raw = pd.DataFrame(distance_data_np, index=pd.RangeIndex(start=0, stop=n_frames, name='Frame'))
+    # Create DataFrame from the numpy arrays - use range starting from 0 for local indexing
+    df_raw = pd.DataFrame(distance_data_np, index=pd.RangeIndex(start=0, stop=frames_to_analyze, name='Frame'))
 
     logger.info(f"Finished calculating DW-gate distances. DataFrame shape: {df_raw.shape}")
     # Log summary stats for debugging

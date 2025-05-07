@@ -1140,12 +1140,27 @@ def summarize_pocket_analysis(occupancy_df, processed_residence_times_ns):
 
 def run_pocket_analysis(
     run_dir: str,
-    psf_file: str,
-    dcd_file: str,
-    db_conn: sqlite3.Connection
+    universe=None,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
+    db_conn: sqlite3.Connection = None,
+    psf_file: Optional[str] = None,
+    dcd_file: Optional[str] = None
 ) -> Dict[str, any]:
     """
     Orchestrates the peripheral pocket water analysis computation.
+    
+    Args:
+        run_dir: Path to the specific run directory.
+        universe: MDAnalysis Universe object (if provided, psf_file and dcd_file are ignored).
+        start_frame: Starting frame index for analysis (0-based).
+        end_frame: Ending frame index for analysis (exclusive). If not specified, analyzes to the end.
+        db_conn: Active database connection.
+        psf_file: Path to the PSF topology file (used only if universe is not provided).
+        dcd_file: Path to the DCD trajectory file (used only if universe is not provided).
+        
+    Returns:
+        Dictionary containing status and error message if applicable.
     """
     module_name = "pocket_analysis"
     start_time = time.time()
@@ -1196,14 +1211,46 @@ def run_pocket_analysis(
 
     # --- Main Analysis Workflow ---
     try:
-        # 1. Load Universe
-        logger_local.info("Loading Universe...")
-        universe = mda.Universe(psf_file, dcd_file)
-        n_frames_total = len(universe.trajectory)
-        if n_frames_total < 2: raise ValueError("Trajectory has < 2 frames.")
-        # Define frames_mask (currently processes all frames, add slicing later if needed)
-        frames_mask = list(range(n_frames_total)) # Process all frames
-        logger_local.info(f"Universe loaded ({n_frames_total} frames). Processing all frames.")
+        # 1. Load or Use Provided Universe
+        logger_local.info("Setting up Universe...")
+        if universe is not None:
+            u = universe
+            logger_local.info("Using provided Universe object.")
+        else:
+            if psf_file is None or dcd_file is None:
+                raise ValueError("If universe is not provided, both psf_file and dcd_file must be specified.")
+            logger_local.info(f"Loading Universe from files: {psf_file}, {dcd_file}")
+            u = mda.Universe(psf_file, dcd_file)
+            logger_local.info("Universe loaded from files.")
+        
+        # Validate and process frame range
+        n_frames_total = len(u.trajectory)
+        logger_local.info(f"Trajectory has {n_frames_total} frames total.")
+        
+        if start_frame < 0 or start_frame >= n_frames_total:
+            error_msg = f"Invalid start_frame: {start_frame}. Must be between 0 and {n_frames_total-1}"
+            logger_local.error(error_msg)
+            raise ValueError(error_msg)
+            
+        actual_end = end_frame if end_frame is not None else n_frames_total
+        if actual_end <= start_frame or actual_end > n_frames_total:
+            error_msg = f"Invalid end_frame: {actual_end}. Must be between {start_frame+1} and {n_frames_total}"
+            logger_local.error(error_msg)
+            raise ValueError(error_msg)
+            
+        logger_local.info(f"Using frame range: {start_frame} to {actual_end} (analyzing {actual_end-start_frame} frames)")
+        
+        # Store frame range metrics
+        store_metric(db_conn, module_name, "start_frame", start_frame, "frame", "Starting frame index for pocket analysis")
+        store_metric(db_conn, module_name, "end_frame", actual_end, "frame", "Ending frame index for pocket analysis")
+        store_metric(db_conn, module_name, "frames_analyzed", actual_end - start_frame, "frame", "Number of frames analyzed")
+        
+        if n_frames_total < 2: 
+            raise ValueError("Trajectory has < 2 frames.")
+            
+        # Define frames_mask based on the validated frame range
+        frames_mask = list(range(start_frame, actual_end)) 
+        logger_local.info(f"Analyzing {len(frames_mask)} frames from indices {start_frame} to {actual_end-1}.")
 
         # 2. Get Filter Residues from DB Metadata
         logger_local.info("Retrieving filter residue map from database...")
@@ -1220,7 +1267,7 @@ def run_pocket_analysis(
         logger_local.info("Preparing data for ET model...")
         # Pass parameters from config
         data_list = prepare_data(
-            universe, None, frames_mask, filter_res_map, # Pass None for labels_dict
+            u, None, frames_mask, filter_res_map, # Pass None for labels_dict
             n_upstream, n_downstream, cyl_radius, init_height,
             min_waters, rmsf_window
         )
@@ -1228,7 +1275,7 @@ def run_pocket_analysis(
 
         # 4. Compute Occupancy & Residence Times using Model
         occupancy_df, processed_residence_times_ns, detailed_residence_times, pockets_dict = compute_occupancy_and_residence(
-            data_list, model, device, filter_res_map, res_thresh_frames, traj_tolerance, universe
+            data_list, model, device, filter_res_map, res_thresh_frames, traj_tolerance, u
         )
         # detailed_residence_times contains per-water, per-pocket residence times
         

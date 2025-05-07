@@ -249,9 +249,12 @@ def _calculate_gyration_statistics(gyration_data, state_analysis_results):
 # --- Main Computation Function ---
 def run_gyration_analysis(
     run_dir: str,
-    psf_file: Optional[str],
-    dcd_file: Optional[str],
-    db_conn: sqlite3.Connection
+    universe=None,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
+    db_conn: sqlite3.Connection = None,
+    psf_file: Optional[str] = None,
+    dcd_file: Optional[str] = None
     ) -> Dict[str, Any]:
     """
     Performs gyration radius calculation and state analysis for G1/Y carbonyls.
@@ -259,9 +262,12 @@ def run_gyration_analysis(
 
     Args:
         run_dir: Path to the specific run directory.
-        psf_file: Path to the PSF topology file.
-        dcd_file: Path to the DCD trajectory file.
+        universe: Pre-loaded MDAnalysis Universe object.
+        start_frame: Starting frame index for analysis (0-based). Defaults to 0.
+        end_frame: Ending frame index for analysis (exclusive). If None, goes to the end.
         db_conn: Active database connection.
+        psf_file: Path to the PSF topology file. Only used if universe is not provided.
+        dcd_file: Path to the DCD trajectory file. Only used if universe is not provided.
 
     Returns:
         Dictionary containing status and error message if applicable.
@@ -276,28 +282,80 @@ def run_gyration_analysis(
     output_dir = os.path.join(run_dir, module_name) # Save outputs in module-specific folder
     os.makedirs(output_dir, exist_ok=True)
 
-    # Validate input files
-    psf_file = psf_file or os.path.join(run_dir, "step5_input.psf")
-    dcd_file = dcd_file or os.path.join(run_dir, "MD_Aligned.dcd")
-    if not os.path.exists(psf_file) or not os.path.exists(dcd_file):
-        results['error'] = f"PSF or DCD file not found: {psf_file}, {dcd_file}"
-        logger_local.error(results['error'])
-        update_module_status(db_conn, module_name, 'failed', error_message=results['error'])
-        return results
-
-    # Load trajectory
+    # --- Universe Handling ---
     try:
-        u = mda.Universe(psf_file, dcd_file)
-        n_frames = len(u.trajectory)
+        if universe is not None:
+            # Use the provided universe
+            u = universe
+            logger_local.info(f"{module_name}: Using provided Universe object")
+        else:
+            # Need to load the universe from files
+            if psf_file is None or dcd_file is None:
+                # Fallback to default file paths if not provided
+                psf_file = os.path.join(run_dir, "step5_input.psf")
+                dcd_file = os.path.join(run_dir, "MD_Aligned.dcd")
+                
+            if not os.path.exists(psf_file) or not os.path.exists(dcd_file):
+                error_msg = f"PSF or DCD file not found: {psf_file}, {dcd_file}"
+                logger_local.error(f"{module_name}: {error_msg}")
+                update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+                results['error'] = error_msg
+                return results
+                
+            logger_local.info(f"{module_name}: Loading topology: {psf_file}")
+            logger_local.info(f"{module_name}: Loading trajectory: {dcd_file}")
+            u = mda.Universe(psf_file, dcd_file)
+            logger_local.info(f"{module_name}: Universe loaded successfully")
+            
+        # Validate universe
+        n_frames_total = len(u.trajectory)
+        logger_local.info(f"{module_name}: Universe has {n_frames_total} frames total")
+        
+        if n_frames_total < 2:
+            error_msg = "Trajectory has < 2 frames."
+            logger_local.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            results['error'] = error_msg
+            return results
+             
+        # Handle frame range
+        if end_frame is None:
+            end_frame = n_frames_total
+            
+        # Validate frame range
+        if start_frame < 0 or start_frame >= n_frames_total:
+            error_msg = f"Invalid start_frame: {start_frame}. Must be between 0 and {n_frames_total-1}"
+            logger_local.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            results['error'] = error_msg
+            return results
+            
+        if end_frame <= start_frame or end_frame > n_frames_total:
+            error_msg = f"Invalid end_frame: {end_frame}. Must be between {start_frame+1} and {n_frames_total}"
+            logger_local.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            results['error'] = error_msg
+            return results
+            
+        # Store frame range info in the database for later reference
+        store_metric(db_conn, module_name, "start_frame", start_frame, "frame", "Starting frame index for gyration analysis")
+        store_metric(db_conn, module_name, "end_frame", end_frame, "frame", "Ending frame index for gyration analysis")
+        store_metric(db_conn, module_name, "frames_analyzed", end_frame - start_frame, "frames", "Number of frames analyzed")
+        
+        # The number of frames we'll actually process
+        n_frames = end_frame - start_frame
+        logger_local.info(f"{module_name}: Analyzing frame range {start_frame} to {end_frame} (total: {n_frames} frames)")
+        
         # Use config value for FRAMES_PER_NS fetched from DB or default
         # For computation, it's safer to import directly for now
         if core_config.FRAMES_PER_NS <= 0: raise ValueError("FRAMES_PER_NS must be positive.")
         dt = 1.0 / core_config.FRAMES_PER_NS # Time step in ns
-        logger_local.info(f"Loaded trajectory: {n_frames} frames, dt={dt:.4f} ns")
+        
         if n_frames < core_config.GYRATION_FLIP_TOLERANCE_FRAMES:
-            logger_local.warning(f"Trajectory has {n_frames} frames, fewer than tolerance {core_config.GYRATION_FLIP_TOLERANCE_FRAMES}. State analysis may be skipped or limited.")
+            logger_local.warning(f"Trajectory has {n_frames} frames in analysis range, fewer than tolerance {core_config.GYRATION_FLIP_TOLERANCE_FRAMES}. State analysis may be skipped or limited.")
+        
     except Exception as e:
-        results['error'] = f"Error loading trajectory: {e}"
+        results['error'] = f"Failed to load or validate Universe: {e}"
         logger_local.error(results['error'], exc_info=True)
         update_module_status(db_conn, module_name, 'failed', error_message=results['error'])
         return results

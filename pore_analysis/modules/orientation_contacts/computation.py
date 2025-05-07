@@ -226,7 +226,7 @@ def analyze_interface_contacts(u, toxin_sel, channel_sel, cutoff=3.5):
 
 # --- Main Analysis Function ---
 
-def run_orientation_analysis(run_dir, psf_file, dcd_file, stride=None, db_conn=None):
+def run_orientation_analysis(run_dir, universe=None, start_frame=0, end_frame=None, stride=None, db_conn=None, psf_file=None, dcd_file=None):
     """
     Performs orientation, rotation, and contact analysis for toxin-channel systems.
     Saves time-series data and residue contact frequencies to CSV files.
@@ -234,10 +234,13 @@ def run_orientation_analysis(run_dir, psf_file, dcd_file, stride=None, db_conn=N
 
     Args:
         run_dir (str): Path to the specific run directory.
-        psf_file (str): Path to the PSF topology file.
-        dcd_file (str): Path to the DCD trajectory file.
+        universe (MDAnalysis.Universe, optional): Pre-loaded MDAnalysis Universe object.
+        start_frame (int, optional): Starting frame index for analysis (0-based). Defaults to 0.
+        end_frame (int, optional): Ending frame index for analysis (exclusive). If None, goes to the end.
         stride (int, optional): Frame stride for analysis. Defaults to analyzing ~500 frames.
         db_conn (sqlite3.Connection, optional): Database connection. If None, connects automatically.
+        psf_file (str, optional): Path to the PSF topology file. Only used if universe is not provided.
+        dcd_file (str, optional): Path to the DCD trajectory file. Only used if universe is not provided.
 
     Returns:
         dict: Contains status ('success', 'skipped', 'failed') and error message if applicable.
@@ -269,17 +272,54 @@ def run_orientation_analysis(run_dir, psf_file, dcd_file, stride=None, db_conn=N
     # Register module start
     register_module(db_conn, module_name, status='running')
 
-    # --- Load Universe ---
+    # --- Universe Handling ---
     try:
-        logger.info(f"{module_name}: Loading topology: {psf_file}")
-        logger.info(f"{module_name}: Loading trajectory: {dcd_file}")
-        u = mda.Universe(psf_file, dcd_file)
-        n_frames = len(u.trajectory)
-        logger.info(f"{module_name}: Universe loaded with {n_frames} frames.")
-        if n_frames < 2:
+        if universe is not None:
+            # Use the provided universe
+            u = universe
+            logger.info(f"{module_name}: Using provided Universe object")
+        else:
+            # Need to load the universe from files
+            if psf_file is None or dcd_file is None:
+                error_msg = "Neither universe nor psf_file/dcd_file were provided."
+                logger.error(f"{module_name}: {error_msg}")
+                update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+                return {'status': 'failed', 'error': error_msg}
+                
+            logger.info(f"{module_name}: Loading topology: {psf_file}")
+            logger.info(f"{module_name}: Loading trajectory: {dcd_file}")
+            u = mda.Universe(psf_file, dcd_file)
+            logger.info(f"{module_name}: Universe loaded successfully")
+        
+        # Validate universe
+        n_frames_total = len(u.trajectory)
+        logger.info(f"{module_name}: Universe has {n_frames_total} frames total")
+        
+        if n_frames_total < 2:
              raise ValueError("Trajectory has < 2 frames. Orientation/contact analysis requires at least 2 frames.")
+             
+        # Handle frame range
+        if end_frame is None:
+            end_frame = n_frames_total
+            
+        # Validate frame range
+        if start_frame < 0 or start_frame >= n_frames_total:
+            error_msg = f"Invalid start_frame: {start_frame}. Must be between 0 and {n_frames_total-1}"
+            logger.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            return {'status': 'failed', 'error': error_msg}
+            
+        if end_frame <= start_frame or end_frame > n_frames_total:
+            error_msg = f"Invalid end_frame: {end_frame}. Must be between {start_frame+1} and {n_frames_total}"
+            logger.error(f"{module_name}: {error_msg}")
+            update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
+            return {'status': 'failed', 'error': error_msg}
+            
+        n_frames = end_frame - start_frame
+        logger.info(f"{module_name}: Analyzing frame range {start_frame} to {end_frame} (total: {n_frames} frames)")
+            
     except Exception as e:
-        error_msg = f"Failed to load Universe: {e}"
+        error_msg = f"Failed to load or validate Universe: {e}"
         logger.error(f"{module_name}: {error_msg}", exc_info=True)
         update_module_status(db_conn, module_name, 'failed', error_message=error_msg)
         return {'status': 'failed', 'error': error_msg}
@@ -318,11 +358,11 @@ def run_orientation_analysis(run_dir, psf_file, dcd_file, stride=None, db_conn=N
     # --- Trajectory Iteration Setup ---
     if stride is None: stride = max(1, n_frames // 500)
     logger.info(f"{module_name}: Using stride: {stride} (~{n_frames // stride} frames)")
-    frame_iter = u.trajectory[::stride]
+    frame_iter = u.trajectory[start_frame:end_frame:stride]
 
-    # Get reference structure (first frame)
+    # Get reference structure (first frame of analysis range)
     try:
-        ts_ref = u.trajectory[0]
+        ts_ref = u.trajectory[start_frame]
         ref_toxin_atoms = u.select_atoms(toxin_sel)
         if not ref_toxin_atoms: raise ValueError("Failed to select toxin in first frame for reference.")
         reference_coords_centered = ref_toxin_atoms.positions - ref_toxin_atoms.center_of_mass()
@@ -441,6 +481,12 @@ def run_orientation_analysis(run_dir, psf_file, dcd_file, stride=None, db_conn=N
 
     # --- Calculate and Store Metrics ---
     try:
+        # Store frame range information
+        store_metric(db_conn, module_name, "start_frame", start_frame, "frame", "Starting frame index for orientation analysis")
+        store_metric(db_conn, module_name, "end_frame", end_frame, "frame", "Ending frame index for orientation analysis")
+        store_metric(db_conn, module_name, "frames_analyzed", analyzed_frame_count, "frames", "Number of frames analyzed")
+        store_metric(db_conn, module_name, "stride", stride, "frames", "Frame stride used for analysis")
+        
         # Use nan-aware functions
         metrics = {
             'Orient_Angle_Mean': np.nanmean(orientation_angles),

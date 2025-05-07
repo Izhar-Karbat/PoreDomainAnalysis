@@ -202,9 +202,12 @@ def _save_stats_dataframes(
 # --- Main Computation Function ---
 def run_dw_gate_analysis(
     run_dir: str,
-    psf_file: str,
-    dcd_file: str,
-    db_conn: sqlite3.Connection
+    universe=None,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
+    db_conn: sqlite3.Connection = None,
+    psf_file: Optional[str] = None,
+    dcd_file: Optional[str] = None
 ) -> Dict[str, any]:
     """
     Orchestrates the DW-Gate analysis computational workflow.
@@ -214,9 +217,12 @@ def run_dw_gate_analysis(
 
     Args:
         run_dir: Path to the specific run directory.
-        psf_file: Path to the PSF topology file.
-        dcd_file: Path to the DCD trajectory file.
+        universe: MDAnalysis Universe object (if provided, psf_file and dcd_file are ignored).
+        start_frame: Starting frame index for analysis (0-based).
+        end_frame: Ending frame index for analysis (exclusive). If not specified, analyzes to the end.
         db_conn: Active database connection.
+        psf_file: Path to the PSF topology file (used only if universe is not provided).
+        dcd_file: Path to the DCD trajectory file (used only if universe is not provided).
 
     Returns:
         Dictionary containing status and error message if applicable.
@@ -260,12 +266,41 @@ def run_dw_gate_analysis(
         dt_ns = 1.0 / frames_per_ns
         logger_local.info(f"DW Gate Params: Tolerance={tolerance_frames} frames, AutoRefs={auto_detect_refs}, Defaults=[{default_closed_ref:.2f}, {default_open_ref:.2f}] Å, dt={dt_ns:.4f} ns")
 
-        # --- 1. Load Universe ---
-        logger_local.info("Step 1: Loading Universe...")
-        universe = data_collection.load_universe(psf_file, dcd_file)
-        if universe is None: raise ValueError("Universe loading failed.")
-        n_frames = len(universe.trajectory)
-        if n_frames < 2: raise ValueError("Trajectory has insufficient frames (< 2).")
+        # --- 1. Load or Use Provided Universe ---
+        logger_local.info("Step 1: Setting up Universe...")
+        if universe is not None:
+            u = universe
+            logger_local.info("Using provided Universe object.")
+        else:
+            if psf_file is None or dcd_file is None:
+                raise ValueError("If universe is not provided, both psf_file and dcd_file must be specified.")
+            logger_local.info(f"Loading Universe from files: {psf_file}, {dcd_file}")
+            u = data_collection.load_universe(psf_file, dcd_file)
+            if u is None: raise ValueError("Universe loading failed.")
+        
+        # Validate and process frame range
+        n_frames_total = len(u.trajectory)
+        logger_local.info(f"Trajectory has {n_frames_total} frames total.")
+        
+        if start_frame < 0 or start_frame >= n_frames_total:
+            error_msg = f"Invalid start_frame: {start_frame}. Must be between 0 and {n_frames_total-1}"
+            logger_local.error(error_msg)
+            raise ValueError(error_msg)
+            
+        actual_end = end_frame if end_frame is not None else n_frames_total
+        if actual_end <= start_frame or actual_end > n_frames_total:
+            error_msg = f"Invalid end_frame: {actual_end}. Must be between {start_frame+1} and {n_frames_total}"
+            logger_local.error(error_msg)
+            raise ValueError(error_msg)
+            
+        logger_local.info(f"Using frame range: {start_frame} to {actual_end} (analyzing {actual_end-start_frame} frames)")
+        
+        # Store frame range metrics
+        store_metric(db_conn, module_name, "start_frame", start_frame, "frame", "Starting frame index for DW-gate analysis")
+        store_metric(db_conn, module_name, "end_frame", actual_end, "frame", "Ending frame index for DW-gate analysis")
+        store_metric(db_conn, module_name, "frames_analyzed", actual_end - start_frame, "frame", "Number of frames analyzed")
+        
+        if n_frames_total < 2: raise ValueError("Trajectory has insufficient frames (< 2).")
 
         # --- 2. Identify Filter & Gate Residues ---
         logger_local.info("Step 2: Identifying Filter and Gate Residues...")
@@ -286,9 +321,24 @@ def run_dw_gate_analysis(
 
         # --- 3. Calculate Raw Distances ---
         logger_local.info("Step 3: Calculating Raw Distances...")
-        df_distances_wide = data_collection.calculate_dw_distances(universe, gate_residues)
+        # Pass the universe and frame range to the distance calculation
+        df_distances_wide = data_collection.calculate_dw_distances(
+            universe=u, 
+            gate_residues=gate_residues,
+            start_frame=start_frame,
+            end_frame=actual_end
+        )
         if df_distances_wide is None or df_distances_wide.empty: raise ValueError("Raw distance calculation failed.")
-        if 'Frame' not in df_distances_wide.columns: df_distances_wide['Frame'] = df_distances_wide.index
+        
+        # The frame indices in the DataFrame are now local (0-based for the analyzed window)
+        # We need to convert them back to global trajectory frames
+        if 'Frame' not in df_distances_wide.columns:
+            # If Frame is index, convert to column and add start_frame offset
+            df_distances_wide['Frame'] = df_distances_wide.index + start_frame
+        else:
+            # If Frame is already a column, add start_frame offset
+            df_distances_wide['Frame'] = df_distances_wide['Frame'] + start_frame
+            
         if 'Time (ns)' not in df_distances_wide.columns:
             time_points = frames_to_time(df_distances_wide['Frame'].values)
             df_distances_wide.insert(0, 'Time (ns)', time_points)

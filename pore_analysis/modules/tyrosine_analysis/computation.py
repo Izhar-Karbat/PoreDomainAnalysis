@@ -268,9 +268,12 @@ def _calculate_and_store_tyr_hmm_stats(all_dwell_events, state_names, db_conn, m
 # --- Main Computation Function --- #
 def run_tyrosine_analysis(
     run_dir: str,
-    psf_file: str,
-    dcd_file: str,
-    db_conn: sqlite3.Connection
+    universe=None,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
+    db_conn: sqlite3.Connection = None,
+    psf_file: Optional[str] = None,
+    dcd_file: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Performs SF Tyrosine rotamer analysis using HMM, saves data, calculates/stores metrics.
@@ -278,9 +281,12 @@ def run_tyrosine_analysis(
 
     Args:
         run_dir: Path to the specific run directory.
-        psf_file: Path to the PSF topology file.
-        dcd_file: Path to the DCD trajectory file.
+        universe: MDAnalysis Universe object (if provided, psf_file and dcd_file are ignored).
+        start_frame: Starting frame index for analysis (0-based).
+        end_frame: Ending frame index for analysis (exclusive). If not specified, analyzes to the end.
         db_conn: Active database connection.
+        psf_file: Path to the PSF topology file (used only if universe is not provided).
+        dcd_file: Path to the DCD trajectory file (used only if universe is not provided).
 
     Returns:
         Dictionary containing status and error message if applicable.
@@ -297,13 +303,41 @@ def run_tyrosine_analysis(
     os.makedirs(output_dir, exist_ok=True)
 
     try:
-        # Load Universe
-        logger_local.info(f"Loading topology: {psf_file}")
-        logger_local.info(f"Loading trajectory: {dcd_file}")
-        u = mda.Universe(psf_file, dcd_file)
-        n_frames = len(u.trajectory)
-        logger_local.info(f"Universe loaded ({n_frames} frames).")
-        if n_frames < 2: raise ValueError("Trajectory has < 2 frames.")
+        # Load Universe if not provided
+        if universe is not None:
+            u = universe
+            logger_local.info("Using provided Universe object.")
+        else:
+            if psf_file is None or dcd_file is None:
+                raise ValueError("If universe is not provided, both psf_file and dcd_file must be specified.")
+            logger_local.info(f"Loading topology: {psf_file}")
+            logger_local.info(f"Loading trajectory: {dcd_file}")
+            u = mda.Universe(psf_file, dcd_file)
+            logger_local.info("Universe loaded from files.")
+        
+        # Validate frame range
+        n_frames_total = len(u.trajectory)
+        logger_local.info(f"Trajectory has {n_frames_total} frames total.")
+        
+        if start_frame < 0 or start_frame >= n_frames_total:
+            error_msg = f"Invalid start_frame: {start_frame}. Must be between 0 and {n_frames_total-1}"
+            logger_local.error(error_msg)
+            raise ValueError(error_msg)
+            
+        actual_end = end_frame if end_frame is not None else n_frames_total
+        if actual_end <= start_frame or actual_end > n_frames_total:
+            error_msg = f"Invalid end_frame: {actual_end}. Must be between {start_frame+1} and {n_frames_total}"
+            logger_local.error(error_msg)
+            raise ValueError(error_msg)
+            
+        logger_local.info(f"Using frame range: {start_frame} to {actual_end} (analyzing {actual_end-start_frame} frames)")
+        
+        # Store frame range metrics
+        store_metric(db_conn, module_name, "start_frame", start_frame, "frame", "Starting frame index for tyrosine analysis")
+        store_metric(db_conn, module_name, "end_frame", actual_end, "frame", "Ending frame index for tyrosine analysis")
+        store_metric(db_conn, module_name, "frames_analyzed", actual_end - start_frame, "frame", "Number of frames analyzed")
+        
+        if n_frames_total < 2: raise ValueError("Trajectory has < 2 frames.")
 
         # Retrieve Filter Residues from DB
         logger_local.info("Retrieving filter residue definitions from database...")
@@ -331,16 +365,23 @@ def run_tyrosine_analysis(
 
         # Calculate Dihedrals
         time_points_list = []
-        # Pre-allocate numpy arrays correctly
-        chi1_values = {chain: np.full(n_frames, np.nan) for chain in chains_to_analyze}
-        chi2_values = {chain: np.full(n_frames, np.nan) for chain in chains_to_analyze}
+        # Pre-allocate numpy arrays for the specified frame range
+        frames_to_analyze = actual_end - start_frame
+        chi1_values = {chain: np.full(frames_to_analyze, np.nan) for chain in chains_to_analyze}
+        chi2_values = {chain: np.full(frames_to_analyze, np.nan) for chain in chains_to_analyze}
 
         logger_local.info("Calculating SF Tyrosine dihedrals...")
         chi1_selections = {chain: u.select_atoms(f"segid {chain} and resid {sf_tyrosine_resids[chain]} and name N CA CB CG") for chain in chains_to_analyze}
         chi2_selections = {chain: u.select_atoms(f"segid {chain} and resid {sf_tyrosine_resids[chain]} and name CA CB CG CD1") for chain in chains_to_analyze}
 
-        for ts in tqdm(u.trajectory, desc="SF Tyr Dihedrals", unit="frame", disable=not logger_local.isEnabledFor(logging.INFO)):
+        # Iterate over specified frame range
+        for ts in tqdm(u.trajectory[start_frame:actual_end], 
+                       desc="SF Tyr Dihedrals", 
+                       unit="frame", 
+                       disable=not logger_local.isEnabledFor(logging.INFO)):
             frame_idx = ts.frame
+            # Calculate local index for storing in arrays
+            local_idx = frame_idx - start_frame
             time_points_list.append(frames_to_time([frame_idx])[0])
 
             for chain in chains_to_analyze:
@@ -348,9 +389,10 @@ def run_tyrosine_analysis(
                     chi1_sel = chi1_selections[chain]
                     chi2_sel = chi2_selections[chain]
                     if len(chi1_sel) == 4 and len(chi2_sel) == 4:
-                        chi1_values[chain][frame_idx] = calc_dihedral(*(chi1_sel[i].position for i in range(4)))
-                        chi2_values[chain][frame_idx] = calc_dihedral(*(chi2_sel[i].position for i in range(4)))
-                    elif frame_idx == 0:
+                        # Store values at the local index position
+                        chi1_values[chain][local_idx] = calc_dihedral(*(chi1_sel[i].position for i in range(4)))
+                        chi2_values[chain][local_idx] = calc_dihedral(*(chi2_sel[i].position for i in range(4)))
+                    elif local_idx == 0:
                          logger_local.warning(f"Incorrect atom count for dihedrals in chain {chain}")
                 except Exception as e_calc: pass # Keep iterating other chains/frames
 
@@ -405,7 +447,7 @@ def run_tyrosine_analysis(
 
             if len(chain_obs_2d) > 0:
                 path_indices, _ = viterbi_2d_angles(chain_obs_2d, state_centers, log_pi, logA, tyr_hmm_sigma)
-                full_chain_path = np.full(n_frames, -1, dtype=int) # -1 for 'Outside'/NaN
+                full_chain_path = np.full(frames_to_analyze, -1, dtype=int) # -1 for 'Outside'/NaN
                 valid_indices_for_chain = np.where(valid_chain_mask)[0]
 
                 if len(path_indices) == len(valid_indices_for_chain):
@@ -419,17 +461,21 @@ def run_tyrosine_analysis(
                 chain_dwells_dict = segment_and_filter(full_chain_path, state_names, time_points, tyr_hmm_flicker, f"Tyr_{chain}")
                 chain_dwells = []
                 for seg_dict in chain_dwells_dict:
+                     # Local frame indices within our analysis window
                      start_f, end_f = seg_dict['start'], seg_dict['end']
-                     if 0 <= start_f < n_frames and 0 <= end_f < n_frames:
+                     if 0 <= start_f < frames_to_analyze and 0 <= end_f < frames_to_analyze:
+                         # Translate to original frame indices for reporting
+                         orig_start_f = start_f + start_frame
+                         orig_end_f = end_f + start_frame
                          chain_dwells.append({
-                              'start_frame': start_f, 'end_frame': end_f,
+                              'start_frame': orig_start_f, 'end_frame': orig_end_f,
                               'start_time': time_points[start_f], 'end_time': time_points[end_f],
                               'site_label': seg_dict['label']
                          })
                 all_final_dwells[chain] = chain_dwells
             else:
                  logger_local.warning(f"No valid dihedral data points for chain {chain}, skipping HMM.")
-                 all_hmm_paths[chain] = np.full(n_frames, -1, dtype=int)
+                 all_hmm_paths[chain] = np.full(frames_to_analyze, -1, dtype=int)
                  all_final_dwells[chain] = []
 
         # --- Save HMM Dwell Events ---

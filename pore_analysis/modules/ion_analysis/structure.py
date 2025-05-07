@@ -124,14 +124,16 @@ def find_filter_residues(universe: mda.Universe) -> Optional[Dict[str, List[int]
 # --- G1 Reference Calculation (NEW FUNCTION) ---
 def calculate_g1_reference(
     universe: mda.Universe,
-    filter_residues: Dict[str, List[int]]
+    filter_residues: Dict[str, List[int]],
+    start_frame: int = 0
 ) -> Optional[float]:
     """
     Calculates the absolute Z-coordinate of the G1 C-alpha reference plane.
 
     Args:
-        universe: Universe object (frame 0 used).
+        universe: Universe object.
         filter_residues: Dictionary mapping chain segids to filter resids.
+        start_frame: Which frame to use for reference (defaults to 0).
 
     Returns:
         Absolute Z-coordinate of the G1 C-alpha plane, or None on error.
@@ -142,7 +144,13 @@ def calculate_g1_reference(
         return None
 
     try:
-        universe.trajectory[0] # Go to first frame
+        # Use the specified start_frame as the reference frame
+        if start_frame < 0 or start_frame >= len(universe.trajectory):
+            logger.warning(f"Invalid start_frame {start_frame} for G1 reference. Using frame 0 instead.")
+            universe.trajectory[0]
+        else:
+            universe.trajectory[start_frame]
+            logger.info(f"Using frame {start_frame} for G1 reference calculation.")
         residue_by_position = defaultdict(list)
         position_map = {0: 'T', 1: 'V', 2: 'G1', 3: 'Y', 4: 'G2'} # Assuming TVGYG order
         valid_chains = {segid: resids for segid, resids in filter_residues.items() if len(resids) == 5}

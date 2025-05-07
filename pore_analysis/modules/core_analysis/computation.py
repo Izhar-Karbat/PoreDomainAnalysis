@@ -31,16 +31,20 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
-def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
+def analyze_trajectory(run_dir, universe=None, start_frame=0, end_frame=None, psf_file=None, dcd_file=None):
     """
     Analyze a single trajectory file to extract raw G-G and COM distances.
-    Opens the trajectory, calculates metrics per frame, and saves raw data to CSV files.
+    Uses a provided MDAnalysis Universe object and frame range for analysis.
+    Calculates metrics per frame, and saves raw data to CSV files.
     Detects if this is a control system (no toxin) and records this information.
 
     Args:
         run_dir (str): Path to the specific run directory (used for output and logging).
-        psf_file (str, optional): Path to the PSF topology file. Defaults to 'step5_input.psf' in run_dir.
-        dcd_file (str, optional): Path to the DCD trajectory file. Defaults to 'MD_Aligned.dcd' in run_dir.
+        universe (MDAnalysis.Universe, optional): Pre-loaded MDAnalysis Universe object.
+        start_frame (int, optional): Starting frame index for analysis (0-based). Defaults to 0.
+        end_frame (int, optional): Ending frame index for analysis (exclusive). If None, goes to the end.
+        psf_file (str, optional): Path to the PSF topology file. Only used if universe is not provided.
+        dcd_file (str, optional): Path to the DCD trajectory file. Only used if universe is not provided.
 
     Returns:
         dict: A dictionary with analysis results and status information, including:
@@ -84,44 +88,53 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Core analysis outputs will be saved to: {output_dir}")
 
-    # --- File Handling ---
-    if psf_file is None:
-        psf_file = os.path.join(run_dir, "step5_input.psf")
-    if dcd_file is None:
-        dcd_file = os.path.join(run_dir, "MD_Aligned.dcd")
-
-    if not os.path.exists(psf_file):
-        logger.error(f"PSF file not found: {psf_file}")
-        update_module_status(db_conn, "core_analysis", "failed", error_message="PSF file not found")
-        if db_conn: db_conn.close()
-        return {
-            'status': 'failed',
-            'error': 'PSF file not found',
-            'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
-            'metadata': {'system_dir': system_dir, 'is_control_system': True},
-            'files': {}
-        }
-
-    if not os.path.exists(dcd_file):
-        logger.error(f"DCD file not found: {dcd_file}")
-        update_module_status(db_conn, "core_analysis", "failed", error_message="DCD file not found")
-        if db_conn: db_conn.close()
-        return {
-            'status': 'failed',
-            'error': 'DCD file not found',
-            'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
-            'metadata': {'system_dir': system_dir, 'is_control_system': True},
-            'files': {}
-        }
-
-    # --- Load Universe ---
+    # --- Universe Handling ---
+    u = None
     try:
-        logger.info(f"Loading topology: {psf_file}")
-        logger.info(f"Loading trajectory: {dcd_file}")
-        u = mda.Universe(psf_file, dcd_file)
-        n_frames = len(u.trajectory)
-        logger.info(f"Successfully loaded universe with {n_frames} frames")
-        if n_frames == 0:
+        if universe is not None:
+            # Use the provided universe
+            u = universe
+            logger.info("Using provided Universe object")
+        else:
+            # Need to load the universe from files
+            if psf_file is None:
+                psf_file = os.path.join(run_dir, "step5_input.psf")
+            if dcd_file is None:
+                dcd_file = os.path.join(run_dir, "MD_Aligned.dcd")
+
+            if not os.path.exists(psf_file):
+                logger.error(f"PSF file not found: {psf_file}")
+                update_module_status(db_conn, "core_analysis", "failed", error_message="PSF file not found")
+                if db_conn: db_conn.close()
+                return {
+                    'status': 'failed',
+                    'error': 'PSF file not found',
+                    'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
+                    'metadata': {'system_dir': system_dir, 'is_control_system': True},
+                    'files': {}
+                }
+
+            if not os.path.exists(dcd_file):
+                logger.error(f"DCD file not found: {dcd_file}")
+                update_module_status(db_conn, "core_analysis", "failed", error_message="DCD file not found")
+                if db_conn: db_conn.close()
+                return {
+                    'status': 'failed',
+                    'error': 'DCD file not found',
+                    'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
+                    'metadata': {'system_dir': system_dir, 'is_control_system': True},
+                    'files': {}
+                }
+            
+            logger.info(f"Loading topology: {psf_file}")
+            logger.info(f"Loading trajectory: {dcd_file}")
+            u = mda.Universe(psf_file, dcd_file)
+            
+        # Validate universe
+        n_frames_total = len(u.trajectory)
+        logger.info(f"Successfully loaded universe with {n_frames_total} frames")
+        
+        if n_frames_total == 0:
             logger.warning("Trajectory contains 0 frames.")
             update_module_status(db_conn, "core_analysis", "failed", error_message="Trajectory contains 0 frames")
             if db_conn: db_conn.close()
@@ -132,13 +145,22 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
                 'metadata': {'system_dir': system_dir, 'is_control_system': True},
                 'files': {}
             }
+            
+        # Handle frame range
+        if end_frame is None:
+            end_frame = n_frames_total
+            
+        # Log the frame range we'll use
+        n_frames_in_slice = end_frame - start_frame
+        logger.info(f"Analyzing frame range {start_frame} to {end_frame} (total: {n_frames_in_slice} frames)")
+        
     except Exception as e:
-        logger.error(f"Failed to load MDAnalysis Universe: {e}", exc_info=True)
-        update_module_status(db_conn, "core_analysis", "failed", error_message=f"Failed to load Universe: {str(e)}")
+        logger.error(f"Failed to load or validate Universe: {e}", exc_info=True)
+        update_module_status(db_conn, "core_analysis", "failed", error_message=f"Failed to load or validate Universe: {str(e)}")
         if db_conn: db_conn.close()
         return {
             'status': 'failed',
-            'error': f'Failed to load Universe: {str(e)}',
+            'error': f'Failed to load or validate Universe: {str(e)}',
             'data': {'dist_ac': np.array([]), 'dist_bd': np.array([]), 'com_distances': None, 'time_points': np.array([])},
             'metadata': {'system_dir': system_dir, 'is_control_system': True},
             'files': {}
@@ -238,9 +260,9 @@ def analyze_trajectory(run_dir, psf_file=None, dcd_file=None):
         logger.info(f"Toxin found with selection '{pep_sel}'. This appears to be a toxin-channel complex system.")
 
     # --- Trajectory Iteration ---
-    logger.info(f"Starting trajectory analysis loop ({n_frames} frames)...")
+    logger.info(f"Starting trajectory analysis loop ({n_frames_in_slice} frames, range {start_frame}:{end_frame})...")
     try:
-        for ts in u.trajectory:
+        for ts in u.trajectory[start_frame:end_frame:1]:
             frame_indices.append(ts.frame)
 
             # G-G Calculation
@@ -435,7 +457,9 @@ def filter_and_save_data(
     time_points: np.ndarray,
     db_conn: Optional[sqlite3.Connection], # <-- Added db_conn parameter
     box_z: Optional[float] = None,
-    is_control_system: bool = False
+    is_control_system: bool = False,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None
     ) -> Dict[str, Any]: # Added return type hint
     """
     Apply filtering to raw distance data, calculate stats (Mean, Std, Min, Max),
@@ -450,6 +474,9 @@ def filter_and_save_data(
         db_conn (sqlite3.Connection, optional): Existing database connection. Must be provided.
         box_z (float, optional): Z dimension of the simulation box.
         is_control_system (bool): Whether this is a control system without toxin.
+        start_frame (int, optional): Starting frame index used for analysis (0-based). Defaults to 0.
+        end_frame (int, optional): Ending frame index used for analysis (exclusive). 
+                                   If None, assumed to be the last frame.
 
     Returns:
         dict: Analysis results dictionary with status, data, files, and potential errors.
@@ -478,6 +505,12 @@ def filter_and_save_data(
     # Register this module run (sub-process of core_analysis)
     try:
         module_id = register_module(db_conn, module_name, "running")
+        
+        # Store frame range information
+        store_metric(db_conn, module_name, "start_frame", start_frame, "frame", "Starting frame index for filtering")
+        if end_frame is not None:
+            store_metric(db_conn, module_name, "end_frame", end_frame, "frame", "Ending frame index for filtering")
+            store_metric(db_conn, module_name, "frames_analyzed", end_frame - start_frame, "frames", "Number of frames filtered")
     except Exception as e_reg:
          logger.error(f"{module_name}: Failed to register module start: {e_reg}", exc_info=True)
          # Decide how to handle this - potentially return failure?
@@ -539,6 +572,7 @@ def filter_and_save_data(
             # Save filtered G-G data
             df_g_g = pd.DataFrame({
                 'Time (ns)': time_points,
+                'Frame': np.arange(start_frame, start_frame + len(time_points)),  # Add frame indices
                 'G_G_Distance_AC_Raw': dist_ac, 'G_G_Distance_BD_Raw': dist_bd,
                 'G_G_Distance_AC_Filt': filtered_ac, 'G_G_Distance_BD_Filt': filtered_bd
             })
@@ -612,6 +646,7 @@ def filter_and_save_data(
             # Save filtered COM data
             df_com = pd.DataFrame({
                 'Time (ns)': time_points,
+                'Frame': np.arange(start_frame, start_frame + len(time_points)),  # Add frame indices
                 'COM_Distance_Raw': com_distances,
                 'COM_Distance_Filt': filtered_com
             })
