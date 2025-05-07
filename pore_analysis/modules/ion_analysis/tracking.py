@@ -216,12 +216,15 @@ def track_ion_positions(
 
     # --- Trajectory Iteration ---
     try:
-        for ts in tqdm(universe.trajectory[start_frame:end_frame], 
+        for i, ts in enumerate(tqdm(universe.trajectory[start_frame:end_frame], 
                        desc=f"Tracking K+ ({os.path.basename(run_dir)})", 
                        unit="frame", 
-                       disable=not logger.isEnabledFor(logging.INFO)):
-            frame_idx = ts.frame
-            frame_indices.append(frame_idx)
+                       disable=not logger.isEnabledFor(logging.INFO))):
+            # Store the global frame index for reference
+            global_frame_idx = ts.frame
+            # Use a local frame index (0-based for the slice) for array access
+            local_frame_idx = i
+            frame_indices.append(global_frame_idx)
 
             filter_atoms_pos = filter_atoms_group.positions
             potassium_pos = potassium_atoms.positions
@@ -231,30 +234,30 @@ def track_ion_positions(
             min_dists = np.min(dist_matrix, axis=1)
             ions_near_this_frame = set(potassium_atoms[min_dists <= cutoff].indices)
 
-            if frame_idx > 0:
+            if i == 0:  # First frame in the slice
+                exited_now, stayed_outside = set(), set(k.index for k in potassium_atoms) - ions_near_this_frame
+                entered_now = ions_near_this_frame
+            else:
                 exited_now = ions_currently_inside - ions_near_this_frame
                 entered_now = ions_near_this_frame - ions_currently_inside
                 stayed_outside = set(k.index for k in potassium_atoms) - ions_near_this_frame - ions_currently_inside
-            else:
-                exited_now, stayed_outside = set(), set(k.index for k in potassium_atoms) - ions_near_this_frame
-                entered_now = ions_near_this_frame
 
-            # State update logic
+            # State update logic - use local_frame_idx for array access
             for idx in entered_now:
                 tracked_ion_indices.add(idx)
                 ions_currently_inside.add(idx)
                 ion_pos_idx = np.where(potassium_atoms.indices == idx)[0][0]
-                ions_z_positions_abs[idx][frame_idx] = potassium_pos[ion_pos_idx, 2]
+                ions_z_positions_abs[idx][local_frame_idx] = potassium_pos[ion_pos_idx, 2]
                 ions_outside_streak.pop(idx, None)
                 ions_pending_exit_confirmation.pop(idx, None)
 
             for idx in ions_currently_inside - exited_now:
                 ion_pos_idx = np.where(potassium_atoms.indices == idx)[0][0]
-                ions_z_positions_abs[idx][frame_idx] = potassium_pos[ion_pos_idx, 2]
+                ions_z_positions_abs[idx][local_frame_idx] = potassium_pos[ion_pos_idx, 2]
 
             for idx in exited_now:
                 if idx not in ions_pending_exit_confirmation:
-                    ions_pending_exit_confirmation[idx] = frame_idx - 1
+                    ions_pending_exit_confirmation[idx] = global_frame_idx - 1  # Store global frame for reference
                 ions_outside_streak[idx] += 1
                 ions_currently_inside.discard(idx) # Use discard for sets
 
@@ -273,18 +276,19 @@ def track_ion_positions(
                     ions_outside_streak.pop(idx, None)
                     ions_currently_inside.add(idx)
                     # Position already added if it's in entered_now or stayed_inside logic handled above
-                    if idx not in ions_z_positions_abs or np.isnan(ions_z_positions_abs[idx][frame_idx]):
+                    if idx not in ions_z_positions_abs or np.isnan(ions_z_positions_abs[idx][local_frame_idx]):
                         ion_pos_idx = np.where(potassium_atoms.indices == idx)[0][0]
-                        ions_z_positions_abs[idx][frame_idx] = potassium_pos[ion_pos_idx, 2]
+                        ions_z_positions_abs[idx][local_frame_idx] = potassium_pos[ion_pos_idx, 2]
 
     except Exception as e:
         logger.error(f"Error during ion tracking loop: {e}", exc_info=True)
         return None, None, None
 
     # --- Post-Processing ---
+    # Convert frames list to original frame indices from the trajectory
     time_points = frames_to_time(np.array(frame_indices))
     final_tracked_indices = sorted(list(tracked_ion_indices))
-    logger.info(f"Identified {len(final_tracked_indices)} unique K+ ions passing through the filter.")
+    logger.info(f"Identified {len(final_tracked_indices)} unique K+ ions passing through the filter in the analyzed range.")
 
     # Filter the main dictionary to keep only tracked ions
     ions_z_tracked_abs = {idx: ions_z_positions_abs[idx] for idx in final_tracked_indices}
