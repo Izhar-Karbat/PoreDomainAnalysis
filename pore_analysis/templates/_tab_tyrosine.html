@@ -98,6 +98,78 @@
                     <p><i class="unavailable">Plot not available.</i></p>
                 {% endif %}
             </div>
+            
+            <!-- Tyr-Thr Hydrogen Bond Analysis Section -->
+            <h3>Tyr445-Thr439 Hydrogen Bond Analysis</h3>
+            <p>Analysis of the inter-subunit hydrogen bond between Tyr445 (OH) and Thr439 (OG1) of the adjacent subunit.</p>
+            
+            <!-- Tyr-Thr H-bond Metrics Table -->
+            <div class="info-box">
+                <p>The Tyr445-Thr439 hydrogen bond is formed when the distance between 
+                   the hydroxyl oxygen of Tyr445 and the hydroxyl oxygen of Thr439 is 
+                   below {{ metrics.get('TYR_THR_DEFAULT_FORMED_REF_DIST', {'value': '3.5'}).value }} Å. 
+                   The bond is considered broken when the distance exceeds 
+                   {{ metrics.get('TYR_THR_DEFAULT_BROKEN_REF_DIST', {'value': '4.5'}).value }} Å.</p>
+            </div>
+            
+            <!-- Metrics table for each H-bond pair -->
+            <table class="stats-table">
+                <tr>
+                    <th>Chain Pair</th>
+                    <th>H-bond Formed (%)</th>
+                    <th>H-bond Broken (%)</th>
+                    <th>Mean Formed Duration (ns)</th>
+                    <th>Mean Broken Duration (ns)</th>
+                </tr>
+                
+                {% set chain_pairs = ['PROA_PROB', 'PROB_PROC', 'PROC_PROD', 'PROD_PROA'] %}
+                {% for pair in chain_pairs %}
+                    {% set formed_fraction_metric = 'TyrThr_' ~ pair ~ '_Formed_Fraction' %}
+                    {% set broken_fraction_metric = 'TyrThr_' ~ pair ~ '_Broken_Fraction' %}
+                    {% set formed_mean_metric = 'TyrThr_' ~ pair ~ '_formed_Mean_ns' %}
+                    {% set broken_mean_metric = 'TyrThr_' ~ pair ~ '_broken_Mean_ns' %}
+                    
+                    <tr>
+                        <td>{{ pair }}</td>
+                        <td>{{ "%.1f"|format(metrics.get(formed_fraction_metric, {'value': 'N/A'}).value) if metrics.get(formed_fraction_metric, {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ "%.1f"|format(metrics.get(broken_fraction_metric, {'value': 'N/A'}).value) if metrics.get(broken_fraction_metric, {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ "%.2f"|format(metrics.get(formed_mean_metric, {'value': 'N/A'}).value) if metrics.get(formed_mean_metric, {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ "%.2f"|format(metrics.get(broken_mean_metric, {'value': 'N/A'}).value) if metrics.get(broken_mean_metric, {}).get('value') is not none else 'N/A' }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+            
+            <!-- Tyr-Thr H-bond Plots -->
+            <div class="two-column">
+                <div class="column plot-container">
+                    <h4>Tyr445-Thr439 H-bond Distances</h4>
+                    {% if plots.get('tyr_thr_hbond_distances') %}
+                        <img src="data:image/png;base64,{{ plots.tyr_thr_hbond_distances }}" alt="Tyr-Thr H-bond Distances">
+                        <p>Time series of Tyr445-Thr439 inter-subunit hydrogen bond distances.</p>
+                    {% else %}
+                        <p><i class="unavailable">H-bond distances plot not available.</i></p>
+                    {% endif %}
+                </div>
+                <div class="column plot-container">
+                    <h4>Tyr445-Thr439 H-bond States</h4>
+                    {% if plots.get('tyr_thr_hbond_states') %}
+                        <img src="data:image/png;base64,{{ plots.tyr_thr_hbond_states }}" alt="Tyr-Thr H-bond States">
+                        <p>Time series of Tyr445-Thr439 inter-subunit hydrogen bond states (formed/broken).</p>
+                    {% else %}
+                        <p><i class="unavailable">H-bond states plot not available.</i></p>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="plot-container">
+                <h4>Tyr445-Thr439 H-bond Statistics</h4>
+                {% if plots.get('tyr_thr_hbond_statistics') %}
+                    <img src="data:image/png;base64,{{ plots.tyr_thr_hbond_statistics }}" alt="Tyr-Thr H-bond Statistics">
+                    <p>Statistics of Tyr445-Thr439 hydrogen bond events, including durations and event counts.</p>
+                {% else %}
+                    <p><i class="unavailable">H-bond statistics plot not available.</i></p>
+                {% endif %}
+            </div>
         {% else %}
              <div class="warning-box">
                  <h4>Visualization Incomplete</h4>

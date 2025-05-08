@@ -29,12 +29,23 @@ GYRATION_FLIP_TOLERANCE_FRAMES = 5
 EXIT_BUFFER_FRAMES = 5
 
 
-# --- DW Gate Analysis ---
-DW_GATE_TOLERANCE_FRAMES = 5 # Frames a DW gate must stay open/closed to count as a confirmed event
-# NEW DW Gate parameters:
-DW_GATE_AUTO_DETECT_REFS: bool = True # If True, use KDE+KMeans to find refs; else use defaults below
+# === DW Gate and Tyr-Thr Hydrogen Bond Analysis Parameters ===
+# These parameters are used for both DW gate and Tyr-Thr hydrogen bond analysis
+
+# Frames to tolerate when debouncing transitions between states
+DW_GATE_TOLERANCE_FRAMES = 5 # Used for both DW gate and Tyr-Thr H-bond debouncing
+
+# Whether to auto-detect reference distances from KDE
+DW_GATE_AUTO_DETECT_REFS: bool = True # Used for both DW gate and Tyr-Thr H-bond state detection
+
+# Default reference distances if auto-detection is disabled or fails
+# For DW Gate:
 DW_GATE_DEFAULT_CLOSED_REF_DIST: float = 2.70 # Default reference distance (Å) for CLOSED state if auto-detect fails
 DW_GATE_DEFAULT_OPEN_REF_DIST: float = 4.70 # Default reference distance (Å) for OPEN state if auto-detect fails
+
+# For Tyr-Thr H-bond: 
+TYR_THR_DEFAULT_FORMED_REF_DIST: float = 3.5  # Å (H-bond formed)
+TYR_THR_DEFAULT_BROKEN_REF_DIST: float = 4.5  # Å (H-bond broken)
 
 
 # --- Ion Analysis: Site Optimization Parameters ---

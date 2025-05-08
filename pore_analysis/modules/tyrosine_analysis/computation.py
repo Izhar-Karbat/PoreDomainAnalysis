@@ -26,7 +26,10 @@ try:
     from pore_analysis.core.config import (
         FRAMES_PER_NS,
         TYR_HMM_STATES, TYR_HMM_STATE_ORDER, TYR_HMM_EMISSION_SIGMA,
-        TYR_HMM_SELF_TRANSITION_P, TYR_HMM_EPSILON, TYR_HMM_FLICKER_NS
+        TYR_HMM_SELF_TRANSITION_P, TYR_HMM_EPSILON, TYR_HMM_FLICKER_NS,
+        # Import H-bond parameters
+        DW_GATE_TOLERANCE_FRAMES, DW_GATE_AUTO_DETECT_REFS,
+        TYR_THR_DEFAULT_FORMED_REF_DIST, TYR_THR_DEFAULT_BROKEN_REF_DIST
     )
     from pore_analysis.core.database import (
         register_module, update_module_status, register_product, store_metric,
@@ -38,6 +41,8 @@ try:
         segment_and_filter,
         identify_continuous_segments
     )
+    # Import signal processing functions from DW gate analysis
+    from pore_analysis.modules.dw_gate_analysis import signal_processing, event_building
 except ImportError as e:
     print(f"Error importing dependency modules in tyrosine_analysis/computation.py: {e}")
     raise
@@ -265,6 +270,306 @@ def _calculate_and_store_tyr_hmm_stats(all_dwell_events, state_names, db_conn, m
     store_metric(db_conn, module_name, 'Config_TyrHMM_FlickerNs', hmm_params['flicker_ns'], 'ns', 'Tyrosine HMM flicker filter duration used')
 # --- <<< END MODIFICATION for dominant state storage >>> ---
 
+# --- Tyr-Thr Hydrogen Bond Functions --- #
+
+def calc_tyr_thr_hbond_distance(
+    u: mda.Universe,
+    filter_residues: Dict[str, List[int]],
+    start_frame: int = 0,
+    end_frame: Optional[int] = None
+) -> Dict[str, np.ndarray]:
+    """
+    Calculate the Tyr-Thr inter-subunit hydrogen bond distance between the hydroxyl
+    group of Tyr445 (in filter position 3) and the hydroxyl group of Thr439 (in filter position 1)
+    of the adjacent subunit.
+    
+    Args:
+        u: MDAnalysis Universe
+        filter_residues: Dictionary mapping chain IDs to filter residue IDs
+        start_frame: Starting frame index
+        end_frame: Ending frame index (exclusive)
+    
+    Returns:
+        Dictionary mapping pair IDs (e.g., 'PROA_PROB') to distance arrays
+    """
+    logger.info("Calculating Tyr-Thr inter-subunit hydrogen bond distances...")
+    
+    # Get chain IDs from filter_residues
+    chain_ids = list(filter_residues.keys())
+    if len(chain_ids) < 2:
+        logger.warning(f"Insufficient chains ({len(chain_ids)}) for Tyr-Thr H-bond analysis")
+        return {}
+    
+    # Calculate frames to analyze
+    if end_frame is None:
+        end_frame = len(u.trajectory)
+    frames_to_analyze = end_frame - start_frame
+    
+    # Create pairs for inter-subunit analysis (adjacent chains, assuming clockwise ordering)
+    chain_pairs = []
+    for i, chain in enumerate(sorted(chain_ids)):
+        next_chain = sorted(chain_ids)[(i + 1) % len(chain_ids)]
+        chain_pairs.append((chain, next_chain))
+    
+    logger.info(f"Analyzing Tyr-Thr H-bonds between chain pairs: {chain_pairs}")
+    
+    # Pre-allocate arrays for each chain pair
+    tyr_thr_distances = {}
+    for src_chain, tgt_chain in chain_pairs:
+        pair_id = f"{src_chain}_{tgt_chain}"
+        tyr_thr_distances[pair_id] = np.full(frames_to_analyze, np.nan)
+    
+    # Create atom selections for each pair
+    selections = {}
+    for src_chain, tgt_chain in chain_pairs:
+        pair_id = f"{src_chain}_{tgt_chain}"
+        try:
+            # Tyrosine is at index 3 in the filter (TVGYG)
+            tyr_resid = filter_residues[src_chain][3]
+            # Threonine is at index 1 in the filter (TVGYG)
+            thr_resid = filter_residues[tgt_chain][1]
+            
+            # Select hydroxyl oxygen of Tyrosine
+            tyr_oh_sel = u.select_atoms(f"segid {src_chain} and resid {tyr_resid} and name OH")
+            # Select hydroxyl oxygen of Threonine
+            thr_og1_sel = u.select_atoms(f"segid {tgt_chain} and resid {thr_resid} and name OG1")
+            
+            if len(tyr_oh_sel) != 1 or len(thr_og1_sel) != 1:
+                logger.warning(f"Could not find all atoms for H-bond pair {pair_id}: "
+                               f"Tyr OH: {len(tyr_oh_sel)}, Thr OG1: {len(thr_og1_sel)}")
+                continue
+            
+            selections[pair_id] = (tyr_oh_sel, thr_og1_sel)
+            logger.debug(f"Selected atoms for {pair_id}: Tyr{tyr_resid} OH - Thr{thr_resid} OG1")
+        except (IndexError, KeyError) as e:
+            logger.warning(f"Could not set up Tyr-Thr selection for {pair_id}: {e}")
+    
+    # Iterate through trajectory and calculate distances
+    for ts in tqdm(u.trajectory[start_frame:end_frame],
+                   desc="Tyr-Thr H-bond Distances",
+                   unit="frame",
+                   disable=not logger.isEnabledFor(logging.INFO)):
+        # Calculate local index for storing in arrays
+        local_idx = ts.frame - start_frame
+        
+        # Calculate distances for each pair
+        for pair_id, (tyr_sel, thr_sel) in selections.items():
+            try:
+                # Calculate distance between hydroxyl oxygens
+                tyr_pos = tyr_sel.positions[0]
+                thr_pos = thr_sel.positions[0]
+                dist = np.linalg.norm(tyr_pos - thr_pos)
+                tyr_thr_distances[pair_id][local_idx] = dist
+            except Exception as e:
+                logger.debug(f"Error calculating distance for pair {pair_id} at frame {ts.frame}: {e}")
+    
+    logger.info(f"Completed H-bond distance calculation for {len(selections)} pairs")
+    return tyr_thr_distances
+
+def determine_tyr_thr_hbond_states(
+    distances: Dict[str, np.ndarray],
+    time_points: np.ndarray,
+    closed_ref_dist: float = TYR_THR_DEFAULT_FORMED_REF_DIST,
+    open_ref_dist: float = TYR_THR_DEFAULT_BROKEN_REF_DIST,
+    tolerance_frames: int = DW_GATE_TOLERANCE_FRAMES
+) -> Dict[str, Dict]:
+    """
+    Determine the states of the Tyr-Thr hydrogen bonds (formed/broken).
+    
+    Args:
+        distances: Dictionary of distance arrays for each chain pair
+        time_points: Array of time points corresponding to frames
+        closed_ref_dist: Reference distance for formed H-bond (Å)
+        open_ref_dist: Reference distance for broken H-bond (Å)
+        tolerance_frames: Frames to tolerate for debouncing
+        
+    Returns:
+        Dictionary of state info (raw states, debounced states, events)
+    """
+    logger.info("Determining Tyr-Thr H-bond states...")
+    state_results = {}
+    
+    for pair_id, dist_array in distances.items():
+        # Classify raw states: 0=formed, 1=broken, -1=uncertain
+        raw_states = np.full_like(dist_array, -1, dtype=int)
+        raw_states[dist_array <= closed_ref_dist] = 0  # H-bond formed (CLOSED distance = formed H-bond)
+        raw_states[dist_array >= open_ref_dist] = 1    # H-bond broken (OPEN distance = broken H-bond)
+        
+        # Apply debouncing to remove flicker
+        debounced_states = signal_processing.debounce_binary_signal(
+            raw_states, tolerance_frames, fill_gaps=True)
+        
+        # Build event segments
+        events = []
+        if len(debounced_states) > 0:
+            events = event_building.extract_state_events(
+                debounced_states, time_points, 
+                open_label="H-bond-broken", closed_label="H-bond-formed")
+        
+        state_results[pair_id] = {
+            "raw_states": raw_states,
+            "debounced_states": debounced_states,
+            "events": events
+        }
+    
+    logger.info(f"Completed state determination for {len(distances)} H-bond pairs")
+    return state_results
+
+def _save_tyr_thr_hbond_data(
+    run_dir: str,
+    output_dir: str,
+    time_points: np.ndarray, 
+    distances: Dict[str, np.ndarray],
+    states: Dict[str, Dict],
+    db_conn: sqlite3.Connection,
+    module_name: str
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Save Tyr-Thr hydrogen bond data to files and register in database.
+    
+    Args:
+        run_dir: Run directory path
+        output_dir: Output directory path
+        time_points: Array of time points
+        distances: Dictionary of distance arrays
+        states: Dictionary of state information
+        db_conn: Database connection
+        module_name: Module name for registration
+        
+    Returns:
+        Tuple of (distances_path, states_path, events_path)
+    """
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 1. Save distances
+    dist_path = None
+    try:
+        dist_df = pd.DataFrame({'Time (ns)': time_points})
+        for pair_id, dist_array in distances.items():
+            dist_df[pair_id] = dist_array
+            
+        dist_file = os.path.join(output_dir, "tyr_thr_hbond_distances.csv")
+        dist_df.to_csv(dist_file, index=False, float_format='%.3f')
+        dist_path = os.path.relpath(dist_file, run_dir)
+        
+        register_product(db_conn, module_name, "csv", "data", dist_path,
+                         subcategory="tyr_thr_hbond_distances",
+                         description="Time series of Tyr445-Thr439 hydrogen bond distances")
+        logger.info(f"Saved Tyr-Thr H-bond distances to {dist_file}")
+    except Exception as e:
+        logger.error(f"Failed to save H-bond distances: {e}")
+    
+    # 2. Save states
+    states_path = None
+    try:
+        states_df = pd.DataFrame({'Time (ns)': time_points})
+        for pair_id, state_data in states.items():
+            states_df[f"{pair_id}_raw"] = state_data["raw_states"]
+            states_df[f"{pair_id}_debounced"] = state_data["debounced_states"]
+            
+        states_file = os.path.join(output_dir, "tyr_thr_hbond_states.csv")
+        states_df.to_csv(states_file, index=False)
+        states_path = os.path.relpath(states_file, run_dir)
+        
+        register_product(db_conn, module_name, "csv", "data", states_path,
+                         subcategory="tyr_thr_hbond_states",
+                         description="Time series of Tyr445-Thr439 hydrogen bond states")
+        logger.info(f"Saved Tyr-Thr H-bond states to {states_file}")
+    except Exception as e:
+        logger.error(f"Failed to save H-bond states: {e}")
+    
+    # 3. Save events
+    events_path = None
+    try:
+        all_events = []
+        for pair_id, state_data in states.items():
+            for event in state_data["events"]:
+                all_events.append({
+                    "Pair": pair_id,
+                    "Start Time (ns)": event["start_time"],
+                    "End Time (ns)": event["end_time"],
+                    "State": event["state"],
+                    "Duration (ns)": event["end_time"] - event["start_time"]
+                })
+                
+        if all_events:
+            events_df = pd.DataFrame(all_events)
+            events_file = os.path.join(output_dir, "tyr_thr_hbond_events.csv")
+            events_df.to_csv(events_file, index=False, float_format='%.4f')
+            events_path = os.path.relpath(events_file, run_dir)
+            
+            register_product(db_conn, module_name, "csv", "data", events_path,
+                             subcategory="tyr_thr_hbond_events",
+                             description="Tyr445-Thr439 hydrogen bond state events")
+            logger.info(f"Saved Tyr-Thr H-bond events to {events_file}")
+    except Exception as e:
+        logger.error(f"Failed to save H-bond events: {e}")
+    
+    return dist_path, states_path, events_path
+
+def _calculate_and_store_tyr_thr_hbond_metrics(
+    states: Dict[str, Dict],
+    db_conn: sqlite3.Connection,
+    module_name: str
+) -> None:
+    """
+    Calculate and store metrics for Tyr-Thr hydrogen bonds.
+    
+    Args:
+        states: Dictionary of state information
+        db_conn: Database connection
+        module_name: Module name for registration
+    """
+    logger.info("Calculating and storing Tyr-Thr H-bond metrics...")
+    
+    for pair_id, state_data in states.items():
+        # Skip if there's no valid debounced state data
+        if "debounced_states" not in state_data or len(state_data["debounced_states"]) == 0:
+            logger.warning(f"No valid state data for {pair_id}, skipping metrics")
+            continue
+        
+        # Count events by state
+        formed_events = [e for e in state_data["events"] if e["state"] == "H-bond-formed"]
+        broken_events = [e for e in state_data["events"] if e["state"] == "H-bond-broken"]
+        
+        # Calculate durations
+        formed_durations = [e["end_time"] - e["start_time"] for e in formed_events]
+        broken_durations = [e["end_time"] - e["start_time"] for e in broken_events]
+        
+        # Calculate fractions
+        total_frames = len(state_data["debounced_states"])
+        if total_frames > 0:
+            formed_count = np.sum(state_data["debounced_states"] == 0)
+            broken_count = np.sum(state_data["debounced_states"] == 1)
+            formed_fraction = formed_count / total_frames * 100
+            broken_fraction = broken_count / total_frames * 100
+            
+            # Store metrics
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Count", 
+                        len(formed_events), "count", "Count of H-bond formed events")
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Count", 
+                        len(broken_events), "count", "Count of H-bond broken events")
+            
+            if formed_durations:
+                store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Mean_ns", 
+                            np.mean(formed_durations), "ns", "Mean duration of H-bond formed state")
+                store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Median_ns", 
+                            np.median(formed_durations), "ns", "Median duration of H-bond formed state")
+            
+            if broken_durations:
+                store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Mean_ns", 
+                            np.mean(broken_durations), "ns", "Mean duration of H-bond broken state")
+                store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Median_ns", 
+                            np.median(broken_durations), "ns", "Median duration of H-bond broken state")
+            
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_Formed_Fraction", 
+                        formed_fraction, "%", "Percentage of time H-bond was formed")
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_Broken_Fraction", 
+                        broken_fraction, "%", "Percentage of time H-bond was broken")
+    
+    logger.info("Completed H-bond metric calculation and storage")
+
 # --- Main Computation Function --- #
 def run_tyrosine_analysis(
     run_dir: str,
@@ -488,6 +793,35 @@ def run_tyrosine_analysis(
 
         # Calculate and Store HMM Stats
         _calculate_and_store_tyr_hmm_stats(all_final_dwells, state_names, db_conn, module_name, hmm_params_used)
+
+        # --- NEW SECTION: Tyr-Thr Hydrogen Bond Analysis ---
+        logger_local.info("Starting Tyr-Thr hydrogen bond analysis...")
+        try:
+            # Calculate H-bond distances
+            tyr_thr_distances = calc_tyr_thr_hbond_distance(
+                u, filter_residues, start_frame, actual_end)
+            
+            if not tyr_thr_distances:
+                logger_local.warning("No valid Tyr-Thr hydrogen bond pairs identified, skipping H-bond analysis")
+            else:
+                # Determine H-bond states using standard cutoffs initially
+                tyr_thr_states = determine_tyr_thr_hbond_states(
+                    tyr_thr_distances, time_points)
+                
+                # Save H-bond data to files
+                dist_path, states_path, events_path = _save_tyr_thr_hbond_data(
+                    run_dir, output_dir, time_points, tyr_thr_distances, tyr_thr_states, 
+                    db_conn, module_name)
+                
+                # Calculate and store H-bond metrics
+                _calculate_and_store_tyr_thr_hbond_metrics(
+                    tyr_thr_states, db_conn, module_name)
+                
+                logger_local.info("Completed Tyr-Thr hydrogen bond analysis")
+        except Exception as e_hbond:
+            logger_local.error(f"Error during Tyr-Thr H-bond analysis: {e_hbond}", exc_info=True)
+            # Don't fail the whole module if just the H-bond analysis fails
+            logger_local.warning("Continuing with other analyses despite H-bond analysis failure")
 
         # Check if essential files were saved
         if not dwell_path or not path_save or not raw_dihedral_path:

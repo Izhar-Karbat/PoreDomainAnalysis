@@ -147,6 +147,27 @@
     "module_name": "tyrosine_analysis_visualization"
   },
   {
+    "template_key": "tyr_thr_hbond_distances",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "tyr_thr_hbond_distances",
+    "module_name": "tyrosine_analysis_visualization"
+  },
+  {
+    "template_key": "tyr_thr_hbond_states",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "tyr_thr_hbond_states",
+    "module_name": "tyrosine_analysis_visualization"
+  },
+  {
+    "template_key": "tyr_thr_hbond_statistics",
+    "product_type": "png",
+    "category": "plot",
+    "subcategory": "tyr_thr_hbond_statistics",
+    "module_name": "tyrosine_analysis_visualization"
+  },
+  {
     "template_key": "dw_distance_distribution",
     "product_type": "png",
     "category": "plot",

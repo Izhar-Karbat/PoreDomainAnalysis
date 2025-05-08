@@ -23,7 +23,11 @@ try:
     )
     from pore_analysis.core.logging import setup_system_logger
     # Import state order if needed for consistent coloring/ordering
-    from pore_analysis.core.config import TYR_HMM_STATE_ORDER
+    from pore_analysis.core.config import (
+        TYR_HMM_STATE_ORDER,
+        TYR_THR_DEFAULT_FORMED_REF_DIST,
+        TYR_THR_DEFAULT_BROKEN_REF_DIST
+    )
 except ImportError as e:
     print(f"Error importing dependency modules in tyrosine_analysis/visualization.py: {e}")
     raise
@@ -335,6 +339,325 @@ def _plot_tyrosine_population(df_hmm_states: pd.DataFrame, output_dir: str, run_
         return None
 
 
+# --- Tyr-Thr Hydrogen Bond Visualization Functions --- #
+
+def _plot_tyr_thr_hbond_distances(
+    df_distances: pd.DataFrame,
+    output_dir: str,
+    run_dir: str,
+    db_conn: sqlite3.Connection,
+    module_name: str
+) -> Optional[str]:
+    """
+    Plot the Tyr-Thr hydrogen bond distances over time.
+    
+    Args:
+        df_distances: DataFrame containing distance time series
+        output_dir: Output directory path
+        run_dir: Run directory path
+        db_conn: Database connection
+        module_name: Module name for product registration
+    
+    Returns:
+        Optional[str]: Path to the saved plot or None if failed
+    """
+    if 'Time (ns)' not in df_distances.columns:
+        logger.error("Missing 'Time (ns)' column in H-bond distances dataframe")
+        return None
+    
+    # Get chain pairs from column names, excluding 'Time (ns)'
+    pairs = [col for col in df_distances.columns if col != 'Time (ns)']
+    if not pairs:
+        logger.warning("No pair data found in H-bond distances dataframe")
+        return None
+    
+    try:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Plot distances for each pair
+        for pair in pairs:
+            ax.plot(
+                df_distances['Time (ns)'], 
+                df_distances[pair], 
+                label=pair,
+                linewidth=STYLE['line_width']*0.8
+            )
+        
+        # Add reference lines for H-bond thresholds
+        ax.axhline(
+            y=TYR_THR_DEFAULT_FORMED_REF_DIST, 
+            color='green', 
+            linestyle='--', 
+            alpha=0.7,
+            label=f'Formed threshold ({TYR_THR_DEFAULT_FORMED_REF_DIST} Å)'
+        )
+        ax.axhline(
+            y=TYR_THR_DEFAULT_BROKEN_REF_DIST, 
+            color='red', 
+            linestyle='--', 
+            alpha=0.7,
+            label=f'Broken threshold ({TYR_THR_DEFAULT_BROKEN_REF_DIST} Å)'
+        )
+        
+        # Add shading between the formed and broken thresholds (uncertain region)
+        ax.axhspan(
+            TYR_THR_DEFAULT_FORMED_REF_DIST,
+            TYR_THR_DEFAULT_BROKEN_REF_DIST,
+            color='gray',
+            alpha=0.1,
+            label='Uncertain region'
+        )
+        
+        # Format plot
+        ax.set_xlabel('Time (ns)', fontsize=STYLE['font_sizes']['axis_label'])
+        ax.set_ylabel('Distance (Å)', fontsize=STYLE['font_sizes']['axis_label'])
+        ax.legend(loc='best', fontsize=STYLE['font_sizes']['legend'])
+        ax.grid(True, alpha=STYLE['grid']['alpha'], linestyle=STYLE['grid']['linestyle'])
+        ax.set_title('Tyr445-Thr439 Hydrogen Bond Distances', fontsize=STYLE['font_sizes']['title'])
+        
+        # Set y-axis limits (0 to max + small margin)
+        ymax = df_distances[pairs].max().max() * 1.1
+        ax.set_ylim(0, max(ymax, TYR_THR_DEFAULT_BROKEN_REF_DIST + 1))
+        
+        # Save figure
+        plt.tight_layout()
+        plot_filename = "tyr_thr_hbond_distances.png"  # Change filename to match subcategory
+        plot_path = os.path.join(output_dir, plot_filename)
+        rel_path = os.path.relpath(plot_path, run_dir)
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        
+        # Register product
+        register_product(
+            db_conn, module_name, "png", "plot", rel_path,
+            subcategory="tyr_thr_hbond_distances",
+            description="Time series of Tyr445-Thr439 hydrogen bond distances"
+        )
+        
+        logger.info(f"Saved Tyr-Thr H-bond distances plot to {plot_path}")
+        return rel_path
+    
+    except Exception as e:
+        logger.error(f"Failed to generate Tyr-Thr H-bond distances plot: {e}")
+        if 'fig' in locals() and plt.fignum_exists(fig.number):
+            plt.close(fig)
+        return None
+
+def _plot_tyr_thr_hbond_states(
+    df_states: pd.DataFrame,
+    output_dir: str,
+    run_dir: str,
+    db_conn: sqlite3.Connection,
+    module_name: str
+) -> Optional[str]:
+    """
+    Plot the Tyr-Thr hydrogen bond states as a heatmap.
+    
+    Args:
+        df_states: DataFrame containing state time series
+        output_dir: Output directory path
+        run_dir: Run directory path
+        db_conn: Database connection
+        module_name: Module name for product registration
+    
+    Returns:
+        Optional[str]: Path to the saved plot or None if failed
+    """
+    if 'Time (ns)' not in df_states.columns:
+        logger.error("Missing 'Time (ns)' column in H-bond states dataframe")
+        return None
+    
+    # Get debounced state columns
+    state_cols = [col for col in df_states.columns if col.endswith('_debounced')]
+    if not state_cols:
+        logger.warning("No debounced state columns found in H-bond states dataframe")
+        return None
+    
+    # Extract pair IDs from column names
+    pairs = [col.split('_debounced')[0] for col in state_cols]
+    
+    try:
+        fig, axes = plt.subplots(len(pairs), 1, figsize=(12, 2*len(pairs)), sharex=True)
+        
+        # Handle the case where there's only one pair (axes is not an array)
+        if len(pairs) == 1:
+            axes = [axes]
+        
+        # Define colors for states
+        state_colors = {
+            0: 'green',   # H-bond formed
+            1: 'red',     # H-bond broken
+            -1: 'gray'    # Uncertain
+        }
+        
+        # Plot states for each pair
+        for ax, pair, state_col in zip(axes, pairs, state_cols):
+            states = df_states[state_col].values
+            time = df_states['Time (ns)'].values
+            
+            # Create colored segments for each state
+            current_state = None
+            start_idx = 0
+            
+            for i, state in enumerate(states):
+                if state != current_state:
+                    # Plot the previous segment if it exists
+                    if current_state is not None and i > start_idx:
+                        color = state_colors.get(current_state, 'gray')
+                        ax.axhspan(0, 1, xmin=time[start_idx], xmax=time[i-1], 
+                                  facecolor=color, alpha=0.4)
+                    
+                    # Start a new segment
+                    current_state = state
+                    start_idx = i
+            
+            # Plot the last segment
+            if current_state is not None and start_idx < len(time):
+                color = state_colors.get(current_state, 'gray')
+                ax.axhspan(0, 1, xmin=time[start_idx], xmax=time[-1], 
+                          facecolor=color, alpha=0.4)
+            
+            # Add state labels
+            ax.set_ylabel(pair, fontsize=STYLE['font_sizes']['axis_label'])
+            ax.set_yticks([])
+            
+            # Add colored legend patches
+            legend_elements = [
+                plt.Rectangle((0, 0), 1, 1, facecolor='green', alpha=0.4, label='H-bond formed'),
+                plt.Rectangle((0, 0), 1, 1, facecolor='red', alpha=0.4, label='H-bond broken'),
+                plt.Rectangle((0, 0), 1, 1, facecolor='gray', alpha=0.4, label='Uncertain')
+            ]
+            ax.legend(handles=legend_elements, loc='upper right', fontsize=STYLE['font_sizes']['legend']*0.8)
+            
+            # Formatting
+            ax.set_ylim(0, 1)
+            ax.spines['left'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+        
+        # Set shared x-axis label
+        axes[-1].set_xlabel('Time (ns)', fontsize=STYLE['font_sizes']['axis_label'])
+        
+        # Add overall title
+        fig.suptitle('Tyr445-Thr439 Hydrogen Bond States', fontsize=STYLE['font_sizes']['title'])
+        
+        # Adjust layout and save
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.92, hspace=0.2)
+        
+        plot_filename = "tyr_thr_hbond_states.png"  # Change filename to match subcategory
+        plot_path = os.path.join(output_dir, plot_filename)
+        rel_path = os.path.relpath(plot_path, run_dir)
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        
+        # Register product
+        register_product(
+            db_conn, module_name, "png", "plot", rel_path,
+            subcategory="tyr_thr_hbond_states",
+            description="Heatmap of Tyr445-Thr439 hydrogen bond states over time"
+        )
+        
+        logger.info(f"Saved Tyr-Thr H-bond states plot to {plot_path}")
+        return rel_path
+    
+    except Exception as e:
+        logger.error(f"Failed to generate Tyr-Thr H-bond states plot: {e}")
+        if 'fig' in locals() and plt.fignum_exists(fig.number):
+            plt.close(fig)
+        return None
+
+def _plot_tyr_thr_hbond_statistics(
+    df_events: pd.DataFrame,
+    output_dir: str,
+    run_dir: str,
+    db_conn: sqlite3.Connection,
+    module_name: str
+) -> Optional[str]:
+    """
+    Plot statistics for Tyr-Thr hydrogen bond events.
+    
+    Args:
+        df_events: DataFrame containing event data
+        output_dir: Output directory path
+        run_dir: Run directory path
+        db_conn: Database connection
+        module_name: Module name for product registration
+    
+    Returns:
+        Optional[str]: Path to the saved plot or None if failed
+    """
+    if df_events.empty:
+        logger.warning("Empty events dataframe for H-bond statistics plot")
+        return None
+    
+    if not all(col in df_events.columns for col in ['Pair', 'State', 'Duration (ns)']):
+        logger.error("Missing required columns in H-bond events dataframe")
+        return None
+    
+    try:
+        # Create a figure with subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # Plot 1: Event durations by pair and state
+        sns.boxplot(
+            x='Pair', 
+            y='Duration (ns)', 
+            hue='State', 
+            data=df_events,
+            palette={'H-bond-formed': 'green', 'H-bond-broken': 'red'},
+            ax=ax1
+        )
+        
+        ax1.set_title('H-bond Event Durations by Pair', fontsize=STYLE['font_sizes']['title'])
+        ax1.set_xlabel('Chain Pair', fontsize=STYLE['font_sizes']['axis_label'])
+        ax1.set_ylabel('Duration (ns)', fontsize=STYLE['font_sizes']['axis_label'])
+        ax1.legend(title='State', fontsize=STYLE['font_sizes']['legend']*0.8)
+        
+        # Plot 2: Event count by pair and state
+        event_counts = df_events.groupby(['Pair', 'State']).size().reset_index(name='Count')
+        
+        sns.barplot(
+            x='Pair', 
+            y='Count', 
+            hue='State', 
+            data=event_counts,
+            palette={'H-bond-formed': 'green', 'H-bond-broken': 'red'},
+            ax=ax2
+        )
+        
+        ax2.set_title('H-bond Event Counts by Pair', fontsize=STYLE['font_sizes']['title'])
+        ax2.set_xlabel('Chain Pair', fontsize=STYLE['font_sizes']['axis_label'])
+        ax2.set_ylabel('Number of Events', fontsize=STYLE['font_sizes']['axis_label'])
+        ax2.legend(title='State', fontsize=STYLE['font_sizes']['legend']*0.8)
+        
+        # Adjust layout and save
+        plt.suptitle('Tyr445-Thr439 Hydrogen Bond Statistics', fontsize=STYLE['font_sizes']['title']*1.1)
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.85)
+        
+        plot_filename = "tyr_thr_hbond_statistics.png"  # Filename already matched subcategory
+        plot_path = os.path.join(output_dir, plot_filename)
+        rel_path = os.path.relpath(plot_path, run_dir)
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        
+        # Register product
+        register_product(
+            db_conn, module_name, "png", "plot", rel_path,
+            subcategory="tyr_thr_hbond_statistics",
+            description="Statistics of Tyr445-Thr439 hydrogen bond events"
+        )
+        
+        logger.info(f"Saved Tyr-Thr H-bond statistics plot to {plot_path}")
+        return rel_path
+    
+    except Exception as e:
+        logger.error(f"Failed to generate Tyr-Thr H-bond statistics plot: {e}")
+        if 'fig' in locals() and plt.fignum_exists(fig.number):
+            plt.close(fig)
+        return None
+
 # --- Main Visualization Function (Modified) --- #
 def generate_tyrosine_plots(
     run_dir: str,
@@ -365,7 +688,12 @@ def generate_tyrosine_plots(
     raw_dihedral_rel_path = get_product_path(db_conn, 'csv', 'data', 'raw_dihedrals', 'tyrosine_analysis')
     hmm_state_rel_path = get_product_path(db_conn, 'csv', 'data', 'hmm_state_path', 'tyrosine_analysis')
 
-    # Check if essential files were found
+    # Retrieve paths for Tyr-Thr H-bond data files (optional)
+    hbond_distances_rel_path = get_product_path(db_conn, 'csv', 'data', 'tyr_thr_hbond_distances', 'tyrosine_analysis')
+    hbond_states_rel_path = get_product_path(db_conn, 'csv', 'data', 'tyr_thr_hbond_states', 'tyrosine_analysis')
+    hbond_events_rel_path = get_product_path(db_conn, 'csv', 'data', 'tyr_thr_hbond_events', 'tyrosine_analysis')
+
+    # Check if essential files were found for HMM analysis
     if not raw_dihedral_rel_path:
         results['error'] = "Raw dihedral data path ('raw_dihedrals') not found in database."
         logger_local.error(results['error'])
@@ -377,9 +705,16 @@ def generate_tyrosine_plots(
         update_module_status(db_conn, module_name, 'failed', error_message=results['error'])
         return results
 
+    # Build absolute paths for HMM analysis files
     raw_dihedral_abs_path = os.path.join(run_dir, raw_dihedral_rel_path)
     hmm_state_abs_path = os.path.join(run_dir, hmm_state_rel_path)
 
+    # Build absolute paths for H-bond files if they exist
+    hbond_distances_abs_path = os.path.join(run_dir, hbond_distances_rel_path) if hbond_distances_rel_path else None
+    hbond_states_abs_path = os.path.join(run_dir, hbond_states_rel_path) if hbond_states_rel_path else None
+    hbond_events_abs_path = os.path.join(run_dir, hbond_events_rel_path) if hbond_events_rel_path else None
+
+    # Check if essential HMM files exist
     if not os.path.exists(raw_dihedral_abs_path):
         results['error'] = f"Raw dihedral file not found at: {raw_dihedral_abs_path}"
         logger_local.error(results['error'])
@@ -391,7 +726,7 @@ def generate_tyrosine_plots(
         update_module_status(db_conn, module_name, 'failed', error_message=results['error'])
         return results
 
-    # Load data
+    # Load HMM analysis data
     try:
         df_raw_dihedrals = pd.read_csv(raw_dihedral_abs_path)
         df_hmm_states = pd.read_csv(hmm_state_abs_path)
@@ -403,10 +738,39 @@ def generate_tyrosine_plots(
         logger_local.error(results['error'], exc_info=True)
         update_module_status(db_conn, module_name, 'failed', error_message=results['error'])
         return results
+        
+    # Load H-bond data if available (optional, will not fail visualization if not found)
+    df_hbond_distances = None
+    df_hbond_states = None
+    df_hbond_events = None
+    
+    if hbond_distances_abs_path and os.path.exists(hbond_distances_abs_path):
+        try:
+            df_hbond_distances = pd.read_csv(hbond_distances_abs_path)
+            logger_local.info("Successfully loaded Tyr-Thr H-bond distances data")
+        except Exception as e:
+            logger_local.warning(f"Failed to load Tyr-Thr H-bond distances data: {e}")
+    else:
+        logger_local.info("Tyr-Thr H-bond distances data not found, skipping related plots")
+        
+    if hbond_states_abs_path and os.path.exists(hbond_states_abs_path):
+        try:
+            df_hbond_states = pd.read_csv(hbond_states_abs_path)
+            logger_local.info("Successfully loaded Tyr-Thr H-bond states data")
+        except Exception as e:
+            logger_local.warning(f"Failed to load Tyr-Thr H-bond states data: {e}")
+            
+    if hbond_events_abs_path and os.path.exists(hbond_events_abs_path):
+        try:
+            df_hbond_events = pd.read_csv(hbond_events_abs_path)
+            logger_local.info("Successfully loaded Tyr-Thr H-bond events data")
+        except Exception as e:
+            logger_local.warning(f"Failed to load Tyr-Thr H-bond events data: {e}")
 
     # Generate Plots
     plots_generated = 0
     plots_failed = 0
+    expected_plots = 4  # Base expected plots from HMM analysis
 
     # 1. Chi1 Stacked Dihedrals Plot (using HMM states)
     chi1_path = _plot_chi1_dihedrals_stacked(df_raw_dihedrals, df_hmm_states, output_dir, run_dir, db_conn, module_name)
@@ -428,9 +792,49 @@ def generate_tyrosine_plots(
     if pop_path: plots_generated += 1; results['plots']['rotamer_population'] = pop_path # Use existing key
     else: plots_failed += 1
 
+    # --- Tyr-Thr Hydrogen Bond Plots (if data available) ---
+    # These are optional and won't cause the module to fail if they can't be generated
+    
+    # 5. H-bond Distances Plot
+    if df_hbond_distances is not None:
+        logger_local.info("Generating Tyr-Thr H-bond distances plot")
+        hbond_dist_path = _plot_tyr_thr_hbond_distances(
+            df_hbond_distances, output_dir, run_dir, db_conn, module_name)
+        if hbond_dist_path:
+            plots_generated += 1
+            results['plots']['tyr_thr_hbond_distances'] = hbond_dist_path
+            logger_local.info("Successfully generated H-bond distances plot")
+        else:
+            logger_local.warning("Failed to generate H-bond distances plot")
+            # Don't increment plots_failed since these are optional
+    
+    # 6. H-bond States Plot
+    if df_hbond_states is not None:
+        logger_local.info("Generating Tyr-Thr H-bond states plot")
+        hbond_states_path = _plot_tyr_thr_hbond_states(
+            df_hbond_states, output_dir, run_dir, db_conn, module_name)
+        if hbond_states_path:
+            plots_generated += 1
+            results['plots']['tyr_thr_hbond_states'] = hbond_states_path
+            logger_local.info("Successfully generated H-bond states plot")
+        else:
+            logger_local.warning("Failed to generate H-bond states plot")
+    
+    # 7. H-bond Statistics Plot
+    if df_hbond_events is not None:
+        logger_local.info("Generating Tyr-Thr H-bond statistics plot")
+        hbond_stats_path = _plot_tyr_thr_hbond_statistics(
+            df_hbond_events, output_dir, run_dir, db_conn, module_name)
+        if hbond_stats_path:
+            plots_generated += 1
+            results['plots']['tyr_thr_hbond_statistics'] = hbond_stats_path
+            logger_local.info("Successfully generated H-bond statistics plot")
+        else:
+            logger_local.warning("Failed to generate H-bond statistics plot")
+
     # Finalize
     exec_time = time.time() - start_time
-    min_plots_needed = 4 # Expect all 4 plots now
+    min_plots_needed = expected_plots  # Only require the core plots to succeed
     final_status = 'success' if plots_failed == 0 and plots_generated >= min_plots_needed else ('failed' if plots_failed > 0 else 'skipped')
     error_msg = f"{plots_failed} plot(s) failed to generate." if plots_failed > 0 else None
     if final_status == 'skipped': error_msg = "No valid data or plots generated."
