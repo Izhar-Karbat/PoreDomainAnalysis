@@ -46,6 +46,8 @@ DW_GATE_DEFAULT_OPEN_REF_DIST: float = 4.70 # Default reference distance (Å) fo
 # For Tyr-Thr H-bond: 
 TYR_THR_DEFAULT_FORMED_REF_DIST: float = 3.5  # Å (H-bond formed)
 TYR_THR_DEFAULT_BROKEN_REF_DIST: float = 4.5  # Å (H-bond broken)
+# Residue offset from Tyrosine to its Threonine hydrogen bonding partner (Tyr445→Thr439 in Shaker)
+TYR_THR_RESIDUE_OFFSET: int = -6  # Negative because Thr439 comes before Tyr445
 
 
 # --- Ion Analysis: Site Optimization Parameters ---

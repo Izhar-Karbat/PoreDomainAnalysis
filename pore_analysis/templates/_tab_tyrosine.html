@@ -105,11 +105,13 @@
             
             <!-- Tyr-Thr H-bond Metrics Table -->
             <div class="info-box">
-                <p>The Tyr445-Thr439 hydrogen bond is formed when the distance between 
-                   the hydroxyl oxygen of Tyr445 and the hydroxyl oxygen of Thr439 is 
-                   below {{ metrics.get('TYR_THR_DEFAULT_FORMED_REF_DIST', {'value': '3.5'}).value }} Å. 
-                   The bond is considered broken when the distance exceeds 
-                   {{ metrics.get('TYR_THR_DEFAULT_BROKEN_REF_DIST', {'value': '4.5'}).value }} Å.</p>
+                <p>The Tyr445-Thr439 hydrogen bond is formed when the distance between
+                   the hydroxyl oxygen of Tyr445 and the hydroxyl oxygen of Thr439 is
+                   below <strong>{{ metrics.get('TyrThr_RefDist_Formed_Used', {'value': metrics.get('TYR_THR_DEFAULT_FORMED_REF_DIST', {'value': '3.5'}).value }).value }} Å</strong>.
+                   The bond is considered broken when the distance exceeds
+                   <strong>{{ metrics.get('TyrThr_RefDist_Broken_Used', {'value': metrics.get('TYR_THR_DEFAULT_BROKEN_REF_DIST', {'value': '4.5'}).value }).value }} Å</strong>.
+                   (Auto-detection status: {{ metrics.get('Config_DW_GATE_AUTO_DETECT_REFS', {'value': 'Unknown'}).value }})
+                </p>
             </div>
             
             <!-- Metrics table for each H-bond pair -->
