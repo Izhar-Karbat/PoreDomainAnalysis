@@ -148,9 +148,14 @@ class ComparativeAnalysis:
             control_values = control_df['value'].values
             
             # Check that values are valid for statistical analysis
-            if np.isnan(toxin_values).any() or np.isnan(control_values).any():
-                logger.warning(f"NaN values found for metric: {metric_name}")
-                return {'status': 'error', 'message': 'NaN values found'}
+            try:
+                if np.isnan(toxin_values).any() or np.isnan(control_values).any():
+                    logger.warning(f"NaN values found for metric: {metric_name}")
+                    return {'status': 'error', 'message': 'NaN values found'}
+            except TypeError:
+                # Handle case where isnan is not supported for the data type
+                logger.warning(f"Non-numeric data type found for metric: {metric_name}")
+                return {'status': 'error', 'message': 'Non-numeric data type'}
                 
             # Ensure values are numeric
             try:
@@ -233,7 +238,7 @@ class ComparativeAnalysis:
             return int(obj)
         elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
             return float(obj)
-        elif isinstance(obj, (np.bool_, np.bool)):
+        elif isinstance(obj, np.bool_) or (isinstance(obj, bool) and not isinstance(obj, int)):
             return bool(obj)
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
@@ -324,20 +329,20 @@ class ComparativeAnalysis:
         
         # Plot based on type
         if plot_type == 'boxplot':
-            ax = sns.boxplot(x='system_type', y='value', data=df, palette='Set2')
+            ax = sns.boxplot(x='system_type', y='value', hue='system_type', data=df, palette='Set2', legend=False)
             sns.stripplot(x='system_type', y='value', data=df, color='black', alpha=0.5, jitter=True)
         elif plot_type == 'violin':
-            ax = sns.violinplot(x='system_type', y='value', data=df, palette='Set2', inner='point')
+            ax = sns.violinplot(x='system_type', y='value', hue='system_type', data=df, palette='Set2', inner='point', legend=False)
             sns.stripplot(x='system_type', y='value', data=df, color='black', alpha=0.5, jitter=True)
         elif plot_type == 'bar':
-            ax = sns.barplot(x='system_type', y='value', data=df, palette='Set2', 
-                           errorbar=('ci', 95))
+            ax = sns.barplot(x='system_type', y='value', hue='system_type', data=df, palette='Set2', 
+                           errorbar=('ci', 95), legend=False)
         elif plot_type == 'pointplot':
-            ax = sns.pointplot(x='system_type', y='value', data=df, palette='Set2', 
-                             errorbar=('ci', 95), dodge=True)
+            ax = sns.pointplot(x='system_type', y='value', hue='system_type', data=df, palette='Set2', 
+                             errorbar=('ci', 95), dodge=True, legend=False)
         else:
             logger.warning(f"Unknown plot type: {plot_type}, defaulting to boxplot")
-            ax = sns.boxplot(x='system_type', y='value', data=df, palette='Set2')
+            ax = sns.boxplot(x='system_type', y='value', hue='system_type', data=df, palette='Set2', legend=False)
         
         # Add annotations
         plt.xlabel('System Type')
@@ -586,15 +591,34 @@ class ComparativeAnalysis:
         # Create figure
         plt.figure(figsize=(12, len(df) * 0.5 + 2))
         
+        # Prepare data for the table - handle rounding only for numeric columns
+        table_data = df.copy()
+        
+        # Convert 'Significant' to string to avoid rounding issues
+        if 'Significant' in table_data.columns:
+            table_data['Significant'] = table_data['Significant'].map({True: 'Yes', False: 'No'})
+            
+        # Round numeric columns only
+        for col in table_data.select_dtypes(include=['float64', 'float32', 'int64', 'int32']).columns:
+            table_data[col] = table_data[col].round(4)
+            
+        # Get cell colors based on significance
+        if 'Significant' in df.columns:
+            cell_colors = np.where(
+                df['Significant'].map({True: True, False: False, 'Yes': True, 'No': False}).values[:, np.newaxis], 
+                np.full((len(df), df.shape[1]), 'lightyellow'), 
+                np.full((len(df), df.shape[1]), 'white')
+            )
+        else:
+            cell_colors = np.full((len(df), df.shape[1]), 'white')
+            
         # Plot as table
         table = plt.table(
-            cellText=df.values.round(4),
+            cellText=table_data.values,
             colLabels=df.columns,
             cellLoc='center',
             loc='center',
-            cellColours=np.where(df['Significant'].values[:, np.newaxis], 
-                               np.full((len(df), df.shape[1]), 'lightyellow'), 
-                               np.full((len(df), df.shape[1]), 'white'))
+            cellColours=cell_colors
         )
         
         # Adjust table appearance
