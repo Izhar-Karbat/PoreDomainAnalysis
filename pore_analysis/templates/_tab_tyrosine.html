@@ -117,26 +117,37 @@
             <!-- Metrics table for each H-bond pair -->
             <table class="stats-table">
                 <tr>
-                    <th>Chain Pair</th>
+                    <th>Chain Pair (Tyr-Partner)</th>
+                    <th>Partner Residue (at Y-6)</th>
                     <th>H-bond Formed (%)</th>
                     <th>H-bond Broken (%)</th>
                     <th>Mean Formed Duration (ns)</th>
                     <th>Mean Broken Duration (ns)</th>
                 </tr>
-                
+
                 {% set chain_pairs = ['PROB_PROA', 'PROC_PROB', 'PROD_PROC', 'PROA_PROD'] %}
                 {% for pair in chain_pairs %}
+                    {% set tyr_c, thr_c = pair.split('_') %}
+                    {% set partner_identity_metric = 'TyrThr_' ~ pair ~ '_PartnerIdentity' %}
                     {% set formed_fraction_metric = 'TyrThr_' ~ pair ~ '_Formed_Fraction' %}
                     {% set broken_fraction_metric = 'TyrThr_' ~ pair ~ '_Broken_Fraction' %}
                     {% set formed_mean_metric = 'TyrThr_' ~ pair ~ '_formed_Mean_ns' %}
                     {% set broken_mean_metric = 'TyrThr_' ~ pair ~ '_broken_Mean_ns' %}
-                    
+
                     <tr>
-                        <td>{{ pair }}</td>
-                        <td>{{ "%.1f"|format(metrics.get(formed_fraction_metric, {'value': 'N/A'}).value) if metrics.get(formed_fraction_metric, {}).get('value') is not none else 'N/A' }}</td>
-                        <td>{{ "%.1f"|format(metrics.get(broken_fraction_metric, {'value': 'N/A'}).value) if metrics.get(broken_fraction_metric, {}).get('value') is not none else 'N/A' }}</td>
-                        <td>{{ "%.2f"|format(metrics.get(formed_mean_metric, {'value': 'N/A'}).value) if metrics.get(formed_mean_metric, {}).get('value') is not none else 'N/A' }}</td>
-                        <td>{{ "%.2f"|format(metrics.get(broken_mean_metric, {'value': 'N/A'}).value) if metrics.get(broken_mean_metric, {}).get('value') is not none else 'N/A' }}</td>
+                        <td>{{ tyr_c }} - {{ thr_c }}</td>
+                        <td>
+                            {% if metadata.get(partner_identity_metric) %}
+                                {{ metadata.get(partner_identity_metric) }}
+                            {% else %}
+                                {{ metrics.get(partner_identity_metric, {'value': 'N/A'}).value }}
+                            {% endif %}
+                            (#{{ metrics.get('Config_TYR_THR_RESIDUE_OFFSET', {'value': '?'}).value }})
+                        </td>
+                        <td>{{ "%.1f"|format(metrics.get(formed_fraction_metric, {'value': 'N/A'}).value) if metrics.get(formed_fraction_metric, {}).get('value') is not none and metrics.get(formed_fraction_metric, {}).get('value') != 'N/A' else 'N/A' }}</td>
+                        <td>{{ "%.1f"|format(metrics.get(broken_fraction_metric, {'value': 'N/A'}).value) if metrics.get(broken_fraction_metric, {}).get('value') is not none and metrics.get(broken_fraction_metric, {}).get('value') != 'N/A' else 'N/A' }}</td>
+                        <td>{{ "%.2f"|format(metrics.get(formed_mean_metric, {'value': 'N/A'}).value) if metrics.get(formed_mean_metric, {}).get('value') is not none and metrics.get(formed_mean_metric, {}).get('value') != 'N/A' else 'N/A' }}</td>
+                        <td>{{ "%.2f"|format(metrics.get(broken_mean_metric, {'value': 'N/A'}).value) if metrics.get(broken_mean_metric, {}).get('value') is not none and metrics.get(broken_mean_metric, {}).get('value') != 'N/A' else 'N/A' }}</td>
                     </tr>
                 {% endfor %}
             </table>

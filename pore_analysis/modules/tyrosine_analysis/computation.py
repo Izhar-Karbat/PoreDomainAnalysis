@@ -258,11 +258,6 @@ def _calculate_and_store_tyr_hmm_stats(all_dwell_events, state_names, db_conn, m
     store_metric(db_conn, module_name, 'Config_TyrHMM_FlickerNs', hmm_params['flicker_ns'], 'ns', 'Tyrosine HMM flicker filter duration used')
 
 
-# --- Tyr-Thr Hydrogen Bond Functions --- #
-# These would typically be in tyr_thr_hbond.py but are included here as per the user's pasted file.
-# I will assume the external `pore_analysis.modules.tyrosine_analysis.tyr_thr_hbond` functions are the correct ones.
-
-
 # --- Main Computation Function (Updated) --- #
 def run_tyrosine_analysis(
     run_dir: str,
@@ -279,7 +274,7 @@ def run_tyrosine_analysis(
     Saves data, calculates/stores metrics.
     """
     module_name = "tyrosine_analysis"
-    start_time_module = time.time() # Renamed to avoid conflict if 'start_time' is used later
+    start_time_module = time.time()
     register_module(db_conn, module_name, status='running')
     logger_local = setup_system_logger(run_dir)
     if logger_local is None: logger_local = logging.getLogger(__name__)
@@ -304,7 +299,7 @@ def run_tyrosine_analysis(
         auto_detect_hbond_refs = get_param('DW_GATE_AUTO_DETECT_REFS', True, bool)
         default_formed_ref = get_param('TYR_THR_DEFAULT_FORMED_REF_DIST', 3.5, float)
         default_broken_ref = get_param('TYR_THR_DEFAULT_BROKEN_REF_DIST', 4.5, float)
-        tolerance_frames_hbond = get_param('DW_GATE_TOLERANCE_FRAMES', 5, int) # Use common tolerance for H-bond too
+        tolerance_frames_hbond = get_param('DW_GATE_TOLERANCE_FRAMES', 5, int)
         
         tyr_hmm_sigma = get_param('TYR_HMM_EMISSION_SIGMA', TYR_HMM_EMISSION_SIGMA, float)
         tyr_hmm_self_p = get_param('TYR_HMM_SELF_TRANSITION_P', TYR_HMM_SELF_TRANSITION_P, float)
@@ -314,13 +309,11 @@ def run_tyrosine_analysis(
 
         hmm_params_used = {'emission_sigma': tyr_hmm_sigma, 'self_transition_p': tyr_hmm_self_p, 'epsilon': tyr_hmm_epsilon, 'flicker_ns': tyr_hmm_flicker}
         
-        # Determine dt_ns for H-bond event building (needed if FRAMES_PER_NS is not from config)
         frames_per_ns_config = get_param('FRAMES_PER_NS', FRAMES_PER_NS, float)
         if frames_per_ns_config <= 0:
             logger_local.error(f"FRAMES_PER_NS from config is invalid ({frames_per_ns_config}). Aborting.")
             raise ValueError("Invalid FRAMES_PER_NS from configuration.")
         dt_ns = 1.0 / frames_per_ns_config
-
 
         # Load Universe & Validate Frames
         if universe is not None: 
@@ -354,101 +347,157 @@ def run_tyrosine_analysis(
 
         # Identify SF Tyrosine Resids
         sf_tyrosine_resids = {}
-        chains_to_analyze = list(filter_residues.keys())
-        for chain_idx_loop, chain_segid_loop in enumerate(chains_to_analyze[:]): # Iterate over a copy
+        chains_to_analyze_rotamer = list(filter_residues.keys()) # Use a different list for rotamer analysis
+        for chain_idx_loop, chain_segid_loop in enumerate(chains_to_analyze_rotamer[:]):
             resids = filter_residues[chain_segid_loop]
             if len(resids) == 5: 
-                sf_tyrosine_resids[chain_segid_loop] = resids[3] # Tyr is index 3
+                sf_tyrosine_resids[chain_segid_loop] = resids[3] 
             else: 
-                logger_local.warning(f"Chain {chain_segid_loop}: Filter length != 5. Skipping Tyr analysis for this chain.")
-                chains_to_analyze.pop(chain_idx_loop) # Remove from list of chains to process
-        if not sf_tyrosine_resids: raise ValueError("Could not identify SF Tyrosine in any chain.")
-
-        # Calculate Dihedrals
-        time_points_list = []
-        chi1_values = {c: np.full(frames_to_analyze, np.nan) for c in chains_to_analyze}
-        chi2_values = {c: np.full(frames_to_analyze, np.nan) for c in chains_to_analyze}
-        logger_local.info("Calculating SF Tyrosine dihedrals...")
-        chi1_selections = {c: u.select_atoms(f"segid {c} and resid {sf_tyrosine_resids[c]} and name N CA CB CG") for c in chains_to_analyze}
-        chi2_selections = {c: u.select_atoms(f"segid {c} and resid {sf_tyrosine_resids[c]} and name CA CB CG CD1") for c in chains_to_analyze}
+                logger_local.warning(f"Chain {chain_segid_loop}: Filter length != 5. Skipping Tyr rotamer analysis for this chain.")
+                chains_to_analyze_rotamer.remove(chain_segid_loop) 
+        if not sf_tyrosine_resids: 
+            logger_local.warning("Could not identify SF Tyrosine in any chain for rotamer analysis. Skipping rotamer part.")
+            # Don't raise error, allow H-bond part to proceed if possible
         
-        for ts_idx, ts in enumerate(tqdm(u.trajectory[start_frame:actual_end], desc="SF Tyr Dihedrals", unit="frame", disable=not logger_local.isEnabledFor(logging.INFO))):
-            local_idx = ts_idx # Use enumerate for local index
-            time_points_list.append(frames_to_time([ts.frame])[0]) # Use global frame for time calc
-            for chain_segid_loop in chains_to_analyze:
-                try:
-                    chi1_sel = chi1_selections[chain_segid_loop]
-                    chi2_sel = chi2_selections[chain_segid_loop]
-                    if len(chi1_sel) == 4 and len(chi2_sel) == 4:
-                        chi1_values[chain_segid_loop][local_idx] = calc_dihedral(*(chi1_sel[i].position for i in range(4)))
-                        chi2_values[chain_segid_loop][local_idx] = calc_dihedral(*(chi2_sel[i].position for i in range(4)))
-                    elif local_idx == 0: 
-                        logger_local.warning(f"Atom count error for dihedrals in chain {chain_segid_loop} at first analyzed frame.")
-                except Exception: 
-                    pass # Keep NaN if error occurs
-        time_points = np.array(time_points_list)
+        # Initialize paths to None
+        dwell_path, path_save, raw_dihedral_path = None, None, None
 
-        # HMM Analysis for Rotamers
-        logger_local.info("Starting HMM analysis for SF Tyrosine rotamers...")
-        state_names_rotamer = TYR_HMM_STATE_ORDER
-        state_centers_rotamer = np.array([TYR_HMM_STATES[name] for name in state_names_rotamer])
-        n_states_rotamer = len(state_names_rotamer)
-        log_pi_rotamer = np.full(n_states_rotamer, -np.log(n_states_rotamer))
-        A_rotamer, logA_rotamer, _ = build_transition_matrix(n_states_rotamer, tyr_hmm_self_p, tyr_hmm_epsilon) # Adjacency not directly used by viterbi_2d
-        
-        all_final_dwells = {}
-        all_hmm_paths = {}
-        for chain_segid_loop in chains_to_analyze:
-            logger_local.info(f"Running rotamer HMM for chain {chain_segid_loop}...")
-            obs_chi1 = chi1_values[chain_segid_loop]
-            obs_chi2 = chi2_values[chain_segid_loop]
-            valid_mask = np.isfinite(obs_chi1) & np.isfinite(obs_chi2)
-            chain_obs_2d = np.column_stack((obs_chi1[valid_mask], obs_chi2[valid_mask]))
+        if chains_to_analyze_rotamer: # Only proceed if there are chains for rotamer analysis
+            time_points_list = []
+            chi1_values = {c: np.full(frames_to_analyze, np.nan) for c in chains_to_analyze_rotamer}
+            chi2_values = {c: np.full(frames_to_analyze, np.nan) for c in chains_to_analyze_rotamer}
+            logger_local.info("Calculating SF Tyrosine dihedrals...")
+            chi1_selections = {c: u.select_atoms(f"segid {c} and resid {sf_tyrosine_resids[c]} and name N CA CB CG") for c in chains_to_analyze_rotamer}
+            chi2_selections = {c: u.select_atoms(f"segid {c} and resid {sf_tyrosine_resids[c]} and name CA CB CG CD1") for c in chains_to_analyze_rotamer}
             
-            if len(chain_obs_2d) > 0:
-                path_indices, _ = viterbi_2d_angles(chain_obs_2d, state_centers_rotamer, log_pi_rotamer, logA_rotamer, tyr_hmm_sigma)
-                full_chain_path = np.full(frames_to_analyze, -1, dtype=int) # -1 for frames with no valid data
-                valid_indices_original = np.where(valid_mask)[0] # Indices in the original obs_chi1/2 arrays
-                
-                if len(path_indices) == len(valid_indices_original):
-                    full_chain_path[valid_indices_original] = path_indices
-                else: 
-                    logger_local.error(f"Rotamer HMM path length mismatch for chain {chain_segid_loop}. Filling with error code.")
-                    full_chain_path.fill(-2) # -2 for error
-                
-                all_hmm_paths[chain_segid_loop] = full_chain_path
-                chain_dwells_dict = segment_and_filter(full_chain_path, state_names_rotamer, time_points, tyr_hmm_flicker, f"Tyr_{chain_segid_loop}")
-                chain_dwells = []
-                for seg_dict in chain_dwells_dict:
-                    start_f_local, end_f_local = seg_dict['start'], seg_dict['end']
-                    if 0 <= start_f_local < frames_to_analyze and 0 <= end_f_local < frames_to_analyze:
-                        # Convert local frame indices back to global for storage if needed, or just use local for consistency
-                        orig_start_f = start_f_local + start_frame
-                        orig_end_f = end_f_local + start_frame
-                        chain_dwells.append({
-                            'start_frame': orig_start_f, 
-                            'end_frame': orig_end_f, 
-                            'start_time': time_points[start_f_local], 
-                            'end_time': time_points[end_f_local], 
-                            'site_label': seg_dict['label']
-                        })
-                all_final_dwells[chain_segid_loop] = chain_dwells
-            else: 
-                logger_local.warning(f"No valid dihedral data for rotamer HMM chain {chain_segid_loop}.")
-                all_hmm_paths[chain_segid_loop] = np.full(frames_to_analyze, -1, dtype=int)
-                all_final_dwells[chain_segid_loop] = []
+            for ts_idx, ts in enumerate(tqdm(u.trajectory[start_frame:actual_end], desc="SF Tyr Dihedrals", unit="frame", disable=not logger_local.isEnabledFor(logging.INFO))):
+                local_idx = ts_idx
+                time_points_list.append(frames_to_time([ts.frame])[0])
+                for chain_segid_loop in chains_to_analyze_rotamer:
+                    try:
+                        chi1_sel = chi1_selections[chain_segid_loop]
+                        chi2_sel = chi2_selections[chain_segid_loop]
+                        if len(chi1_sel) == 4 and len(chi2_sel) == 4:
+                            chi1_values[chain_segid_loop][local_idx] = calc_dihedral(*(chi1_sel[i].position for i in range(4)))
+                            chi2_values[chain_segid_loop][local_idx] = calc_dihedral(*(chi2_sel[i].position for i in range(4)))
+                        elif local_idx == 0: 
+                            logger_local.warning(f"Atom count error for dihedrals in chain {chain_segid_loop} at first analyzed frame.")
+                    except Exception: 
+                        pass 
+            time_points = np.array(time_points_list)
 
-        dwell_path = _save_tyr_hmm_dwells(output_dir, run_dir, all_final_dwells, db_conn, module_name)
-        path_save = _save_tyr_hmm_paths(output_dir, run_dir, time_points, all_hmm_paths, state_names_rotamer, db_conn, module_name)
-        raw_dihedral_path = _save_raw_dihedral_data(output_dir, time_points, chi1_values, chi2_values, run_dir, db_conn, module_name)
-        _calculate_and_store_tyr_hmm_stats(all_final_dwells, state_names_rotamer, db_conn, module_name, hmm_params_used)
+            logger_local.info("Starting HMM analysis for SF Tyrosine rotamers...")
+            state_names_rotamer = TYR_HMM_STATE_ORDER
+            state_centers_rotamer = np.array([TYR_HMM_STATES[name] for name in state_names_rotamer])
+            n_states_rotamer = len(state_names_rotamer)
+            log_pi_rotamer = np.full(n_states_rotamer, -np.log(n_states_rotamer))
+            A_rotamer, logA_rotamer, _ = build_transition_matrix(n_states_rotamer, tyr_hmm_self_p, tyr_hmm_epsilon)
+            
+            all_final_dwells = {}
+            all_hmm_paths = {}
+            for chain_segid_loop in chains_to_analyze_rotamer:
+                logger_local.info(f"Running rotamer HMM for chain {chain_segid_loop}...")
+                obs_chi1 = chi1_values[chain_segid_loop]
+                obs_chi2 = chi2_values[chain_segid_loop]
+                valid_mask = np.isfinite(obs_chi1) & np.isfinite(obs_chi2)
+                chain_obs_2d = np.column_stack((obs_chi1[valid_mask], obs_chi2[valid_mask]))
+                
+                if len(chain_obs_2d) > 0:
+                    path_indices, _ = viterbi_2d_angles(chain_obs_2d, state_centers_rotamer, log_pi_rotamer, logA_rotamer, tyr_hmm_sigma)
+                    full_chain_path = np.full(frames_to_analyze, -1, dtype=int)
+                    valid_indices_original = np.where(valid_mask)[0]
+                    
+                    if len(path_indices) == len(valid_indices_original):
+                        full_chain_path[valid_indices_original] = path_indices
+                    else: 
+                        logger_local.error(f"Rotamer HMM path length mismatch for chain {chain_segid_loop}. Filling with error code.")
+                        full_chain_path.fill(-2)
+                    
+                    all_hmm_paths[chain_segid_loop] = full_chain_path
+                    chain_dwells_dict = segment_and_filter(full_chain_path, state_names_rotamer, time_points, tyr_hmm_flicker, f"Tyr_{chain_segid_loop}")
+                    chain_dwells = []
+                    for seg_dict in chain_dwells_dict:
+                        start_f_local, end_f_local = seg_dict['start'], seg_dict['end']
+                        if 0 <= start_f_local < frames_to_analyze and 0 <= end_f_local < frames_to_analyze:
+                            orig_start_f = start_f_local + start_frame
+                            orig_end_f = end_f_local + start_frame
+                            chain_dwells.append({
+                                'start_frame': orig_start_f, 'end_frame': orig_end_f, 
+                                'start_time': time_points[start_f_local], 'end_time': time_points[end_f_local], 
+                                'site_label': seg_dict['label']
+                            })
+                    all_final_dwells[chain_segid_loop] = chain_dwells
+                else: 
+                    logger_local.warning(f"No valid dihedral data for rotamer HMM chain {chain_segid_loop}.")
+                    all_hmm_paths[chain_segid_loop] = np.full(frames_to_analyze, -1, dtype=int)
+                    all_final_dwells[chain_segid_loop] = []
+
+            dwell_path = _save_tyr_hmm_dwells(output_dir, run_dir, all_final_dwells, db_conn, module_name)
+            path_save = _save_tyr_hmm_paths(output_dir, run_dir, time_points, all_hmm_paths, state_names_rotamer, db_conn, module_name)
+            raw_dihedral_path = _save_raw_dihedral_data(output_dir, time_points, chi1_values, chi2_values, run_dir, db_conn, module_name)
+            _calculate_and_store_tyr_hmm_stats(all_final_dwells, state_names_rotamer, db_conn, module_name, hmm_params_used)
+        else: # No chains to analyze for rotamers
+            # Ensure time_points is initialized if rotamer analysis is skipped but H-bond analysis runs
+            if frames_to_analyze > 0:
+                time_points_list = [frames_to_time([f + start_frame])[0] for f in range(frames_to_analyze)]
+                time_points = np.array(time_points_list)
+            else: # Should not happen due to earlier checks, but as a safeguard
+                time_points = np.array([])
+            logger_local.warning("Skipped SF Tyrosine rotamer HMM analysis as no valid chains were identified.")
+
 
         # --- Tyr-Thr Hydrogen Bond Analysis ---
         logger_local.info("Starting Tyr-Thr hydrogen bond analysis...")
         hbond_success = False
-        final_formed_ref_hbond = default_formed_ref
-        final_broken_ref_hbond = default_broken_ref
+        final_formed_ref_hbond = default_formed_ref # Use a different variable name
+        final_broken_ref_hbond = default_broken_ref # Use a different variable name
         
+        # Identify actual residues at target Thr position before distance calculation
+        logger_local.info("Identifying actual residues at Y-6 H-bond partner position...")
+        s_chain_ids_for_hbond = sorted(list(filter_residues.keys())) 
+        store_metric(db_conn, module_name, "Config_TYR_THR_RESIDUE_OFFSET", tyr_thr_residue_offset, "residues",
+                     "Residue offset from Tyr to find Thr (e.g., -6 means Thr is 6 residues upstream of Tyr)")
+
+        temp_chain_pairs = []
+        if len(s_chain_ids_for_hbond) >= 2:
+            for i_pair, current_chain_for_thr in enumerate(s_chain_ids_for_hbond):
+                next_chain_for_tyr = s_chain_ids_for_hbond[(i_pair + 1) % len(s_chain_ids_for_hbond)]
+                temp_chain_pairs.append((next_chain_for_tyr, current_chain_for_thr))
+
+        for tyr_chain_id, thr_chain_id in temp_chain_pairs:
+            pair_label = f"{tyr_chain_id}_{thr_chain_id}"
+            actual_resname_at_target = "N/A_SelectionError"
+            tyr_pdb_resid_for_pair = "N/A"
+            target_thr_pdb_resid_for_pair = "N/A"
+            try:
+                if tyr_chain_id in filter_residues and len(filter_residues[tyr_chain_id]) > 3: # Index 3 must be valid
+                    tyr_pdb_resid_for_pair = filter_residues[tyr_chain_id][3] 
+                    target_thr_pdb_resid_for_pair = tyr_pdb_resid_for_pair + tyr_thr_residue_offset
+                    target_residue_group = u.select_atoms(f"segid {thr_chain_id} and resid {target_thr_pdb_resid_for_pair}")
+                    if len(target_residue_group.residues) == 1:
+                        actual_resname_at_target = target_residue_group.residues[0].resname
+                    elif len(target_residue_group.residues) == 0:
+                        actual_resname_at_target = "NonExistentResidue"
+                        logger_local.warning(f"For pair {pair_label}, target Thr partner resid {target_thr_pdb_resid_for_pair} (chain {thr_chain_id}) does not exist.")
+                    else: 
+                        actual_resname_at_target = target_residue_group.residues[0].resname + "_MultiMatch"
+                        logger_local.warning(f"For pair {pair_label}, multiple residues found for target Thr partner resid {target_thr_pdb_resid_for_pair} (chain {thr_chain_id}). Using first.")
+                else:
+                    logger_local.warning(f"Filter residues definition incomplete or too short for Tyr chain {tyr_chain_id} for H-bond partner ID.")
+                    actual_resname_at_target = "N/A_FilterError"
+            except Exception as e_res_id:
+                logger_local.error(f"Error identifying Y-6 partner for pair {pair_label}: {e_res_id}")
+                actual_resname_at_target = "N/A_Exception"
+            
+            metric_name_identity = f"TyrThr_{pair_label}_PartnerIdentity" # Renamed variable
+            store_metric(db_conn, module_name, metric_name_identity, actual_resname_at_target, "ResName",
+                         f"Residue name at Y-6 position for Tyr on {tyr_chain_id} (resid {tyr_pdb_resid_for_pair}) and partner on {thr_chain_id} (target resid {target_thr_pdb_resid_for_pair})")
+
+            # Also store as metadata because the metrics table 'value' column is REAL and can't store text values directly
+            # This will ensure the value is available for the template
+            set_simulation_metadata(db_conn, metric_name_identity, actual_resname_at_target)
+            logger_local.info(f"Identified Y-6 partner for Tyr on {tyr_chain_id} (resid {tyr_pdb_resid_for_pair}) with {thr_chain_id} (target resid {target_thr_pdb_resid_for_pair}): {actual_resname_at_target}")
+
         try:
             logger_local.info("STEP 1: Calculating Tyr-Thr distances...")
             tyr_thr_distances = calc_tyr_thr_hbond_distance(
@@ -473,7 +522,7 @@ def run_tyrosine_analysis(
                 logger_local.info(f"STEP 3: Using H-bond Thresholds: Formed<={final_formed_ref_hbond:.2f}, Broken>={final_broken_ref_hbond:.2f}")
                 store_metric(db_conn, module_name, "TyrThr_RefDist_Formed_Used", final_formed_ref_hbond, "Å")
                 store_metric(db_conn, module_name, "TyrThr_RefDist_Broken_Used", final_broken_ref_hbond, "Å")
-                store_metric(db_conn, module_name, "Config_TYR_THR_RESIDUE_OFFSET", tyr_thr_residue_offset, "residues")
+                # Config_TYR_THR_RESIDUE_OFFSET already stored above
 
                 logger_local.info("STEP 4: Determining H-bond states...")
                 tyr_thr_states_data = determine_tyr_thr_hbond_states(
@@ -493,7 +542,7 @@ def run_tyrosine_analysis(
                         try:
                             df_all_states = pd.read_csv(states_abs_path)
                             for col in df_all_states.columns:
-                                if col.endswith('_debounced'): # As saved by save_tyr_thr_hbond_data
+                                if col.endswith('_debounced'): 
                                     pair_id = col.replace('_debounced', '')
                                     if 'Time (ns)' in df_all_states.columns and col in df_all_states.columns:
                                         debounced_states_df_per_pair[pair_id] = df_all_states[['Time (ns)', col]].rename(columns={col: 'State'})
@@ -504,10 +553,9 @@ def run_tyrosine_analysis(
                             logger_local.error(f"Failed to load states CSV {states_abs_path}: {e_load_s}")
                 
                 logger_local.info("STEP 7: Building H-bond events...")
-                # Prepare df_hbond_long_debounced for build_events_from_states
                 all_long_hbond_states_list = []
-                if debounced_states_df_per_pair: # Check if we have any data
-                    global_frame_indices_hbond = np.arange(start_frame, actual_end) # Global frames for this analysis slice
+                if debounced_states_df_per_pair: 
+                    global_frame_indices_hbond = np.arange(start_frame, actual_end) 
                     df_time_frame_map_hbond = pd.DataFrame({'Time (ns)': time_points, 'Frame': global_frame_indices_hbond})
 
                     for pair_id, df_pair_state in debounced_states_df_per_pair.items():
@@ -515,7 +563,6 @@ def run_tyrosine_analysis(
                         temp_df['chain'] = pair_id
                         temp_df['state'] = temp_df['State'].apply(lambda x: 'H-bond-formed' if x == 1 else ('H-bond-broken' if x == 0 else 'H-bond-uncertain'))
                         
-                        # Merge with df_time_frame_map_hbond to add 'Frame' column
                         merged_df = pd.merge_asof(
                             temp_df.sort_values('Time (ns)'), 
                             df_time_frame_map_hbond.sort_values('Time (ns)'), 
@@ -523,10 +570,10 @@ def run_tyrosine_analysis(
                         )
                         if 'Frame_y' in merged_df.columns: merged_df.rename(columns={'Frame_y': 'Frame'}, inplace=True)
                         elif 'Frame_x' in merged_df.columns and 'Frame' not in merged_df.columns: merged_df.rename(columns={'Frame_x': 'Frame'}, inplace=True)
-                        if 'Frame' not in merged_df.columns: merged_df['Frame'] = merged_df.index + start_frame # Fallback
+                        if 'Frame' not in merged_df.columns: merged_df['Frame'] = merged_df.index + start_frame 
 
                         cols_for_builder = ['Frame', 'Time (ns)', 'chain', 'state']
-                        if all(c in merged_df for c in cols_for_builder):
+                        if all(c_col in merged_df for c_col in cols_for_builder): # Renamed loop variable
                             all_long_hbond_states_list.append(merged_df[cols_for_builder])
                         else:
                             logger_local.warning(f"Missing columns for event building for pair {pair_id}")
@@ -550,20 +597,19 @@ def run_tyrosine_analysis(
                 else:
                     logger_local.info("No data to build long H-bond states DataFrame for event building.")
 
-
                 logger_local.info("STEP 8: Calculating and storing H-bond statistics...")
                 total_analysis_duration_ns = time_points[-1] - time_points[0] if len(time_points) > 0 else 0.0
                 if total_analysis_duration_ns <= 0:
                     logger_local.error("Invalid total analysis duration for H-bond stats. Skipping.")
                 else:
                     calculate_and_store_tyr_thr_hbond_stats_from_events(
-                        hbond_events_df if hbond_events_df is not None else pd.DataFrame(), # Pass empty DF if None
+                        hbond_events_df if hbond_events_df is not None else pd.DataFrame(), 
                         debounced_states_df_per_pair,
                         total_analysis_duration_ns,
                         db_conn,
                         module_name
                     )
-                hbond_success = True # Mark H-bond part as successful if it reached here without critical errors
+                hbond_success = True 
 
         except Exception as e_hbond:
             logger_local.error(f"Error during Tyr-Thr H-bond analysis: {e_hbond}", exc_info=True)
@@ -573,9 +619,9 @@ def run_tyrosine_analysis(
         if not dwell_path or not path_save or not raw_dihedral_path:
             results['error'] = "Failed to save essential SF Tyr HMM data."
             results['status'] = 'failed'
-        elif not hbond_success: # HMM part succeeded but H-bond part had issues
+        elif not hbond_success: 
             results['error'] = results.get('error', "") + " Tyr-Thr H-bond analysis encountered issues."
-            results['status'] = 'success' # Module success, but H-bond part might be incomplete
+            results['status'] = 'success' 
             logger_local.warning("Tyrosine HMM analysis succeeded, but Tyr-Thr H-bond part had issues.")
         else:
             results['status'] = 'success'
@@ -587,7 +633,7 @@ def run_tyrosine_analysis(
         results['status'] = 'failed'
 
     # Finalize
-    exec_time_module = time.time() - start_time_module # Use correct start time variable
+    exec_time_module = time.time() - start_time_module 
     update_module_status(db_conn, module_name, results['status'], execution_time=exec_time_module, error_message=results['error'])
     logger_local.info(f"--- Tyrosine Analysis computation finished in {exec_time_module:.2f} seconds (Status: {results['status']}) ---")
 
