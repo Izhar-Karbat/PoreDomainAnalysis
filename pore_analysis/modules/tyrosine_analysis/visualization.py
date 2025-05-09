@@ -296,55 +296,80 @@ def _plot_tyr_thr_hbond_distances(
         broken_ref_used = TYR_THR_DEFAULT_BROKEN_REF_DIST
 
     if 'Time (ns)' not in df_distances.columns:
-        logger.error("Missing 'Time (ns)' in H-bond distances")
+        logger.error("Missing 'Time (ns)' in H-bond distances DataFrame.")
         return None
         
     pairs = [col for col in df_distances.columns if col != 'Time (ns)']
     if not pairs:
-        logger.warning("No pair data in H-bond distances")
+        logger.warning("No pair data columns found in H-bond distances DataFrame.")
         return None
         
+    n_pairs = len(pairs)
+    
     try:
         # Create figure with stacked subplots (one per chain pair)
-        fig, axes = plt.subplots(len(pairs), 1, figsize=(12, 2.5 * len(pairs)), sharex=True, squeeze=False)
-        axes = axes.flatten()  # Ensure axes is a 1D array
+        fig, axes = plt.subplots(n_pairs, 1, figsize=(12, 2.5 * n_pairs), sharex=True, squeeze=False)
+        axes = axes.flatten()  # Ensure axes is a 1D array even if n_pairs is 1
         
         # Get the maximum distance value for consistent y-axis scaling
-        ymax = df_distances[pairs].max().max() * 1.1
-        ymax = max(ymax, broken_ref_used + 1)
+        # Initialize with reference values to ensure they are visible
+        all_dist_values = df_distances[pairs].values.flatten()
+        all_dist_values = all_dist_values[~np.isnan(all_dist_values)] # Remove NaNs
+
+        if len(all_dist_values) > 0:
+            min_data_val = np.min(all_dist_values)
+            max_data_val = np.max(all_dist_values)
+            ymin = min(min_data_val * 0.95, formed_ref_used * 0.9, broken_ref_used * 0.9)
+            ymax = max(max_data_val * 1.05, formed_ref_used * 1.1, broken_ref_used * 1.1)
+        else: # Fallback if no valid distance data
+            ymin = min(formed_ref_used, broken_ref_used) * 0.8
+            ymax = max(formed_ref_used, broken_ref_used) * 1.2
         
-        # Determine colors for each pair
-        pair_colors = {pair: STYLE['bright_colors'].get(pair.split('-')[0][-1], 'grey') for pair in pairs}
-        
+        # Determine colors for each pair (assuming pairs are like 'PROA_PROB')
+        # Use the first chain ID (PROA from PROA_PROB) for color mapping from STYLE
+        pair_colors = {}
+        for i, pair_label in enumerate(pairs):
+            first_chain_char = pair_label.split('_')[0][-1] # e.g., A from PROA
+            pair_colors[pair_label] = STYLE['bright_colors'].get(first_chain_char, f'C{i}')
+
         # Plot each pair in its own subplot
         for i, (pair, ax) in enumerate(zip(pairs, axes)):
-            # Plot the distance time series
-            ax.plot(df_distances['Time (ns)'], df_distances[pair], 
-                   color=pair_colors[pair], linewidth=STYLE['line_width']*0.9, zorder=2)
+            time_points = df_distances['Time (ns)'].values
+            pair_distances = df_distances[pair].values
             
+            valid_mask = ~np.isnan(pair_distances)
+            
+            # Plot the distance time series
+            if np.any(valid_mask):
+                ax.plot(time_points[valid_mask], pair_distances[valid_mask], 
+                       color=pair_colors[pair], linewidth=STYLE['line_width']*0.9, zorder=2)
+            else:
+                ax.text(0.5, 0.5, "No data available", transform=ax.transAxes, ha="center", va="center")
+
             # Add reference lines for formed/broken thresholds
             ax.axhline(y=formed_ref_used, color='green', linestyle='--', alpha=0.7, 
-                      label=f'Formed ({formed_ref_used:.2f} Å)', zorder=1)
+                      label=f'Formed ({formed_ref_used:.2f} Å)' if i == 0 else "_nolegend_", zorder=1)
             ax.axhline(y=broken_ref_used, color='red', linestyle='--', alpha=0.7, 
-                      label=f'Broken ({broken_ref_used:.2f} Å)', zorder=1)
+                      label=f'Broken ({broken_ref_used:.2f} Å)' if i == 0 else "_nolegend_", zorder=1)
             
             # Add shaded region for uncertain state
             ax.axhspan(formed_ref_used, broken_ref_used, color='gray', alpha=0.1, 
-                      label='Uncertain region', zorder=0)
+                      label='Uncertain region' if i == 0 else "_nolegend_", zorder=0)
             
             # Set y-axis label and configure grid
-            ax.set_ylabel(f"{pair}\nDistance (Å)", fontsize=STYLE['font_sizes']['axis_label']*0.9)
-            ax.set_ylim(0, ymax)
-            ax.grid(True, alpha=0.5, linestyle=':')
+            ax.set_ylabel(f"{pair.replace('_', ' - ')}\nDistance (Å)", fontsize=STYLE['font_sizes']['axis_label']*0.9)
+            ax.set_ylim(ymin, ymax) # Apply consistent y-limits
+            ax.grid(True, alpha=STYLE['grid']['alpha'], color=STYLE['grid']['color'], linestyle=STYLE['grid']['linestyle'], zorder=0)
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
+            ax.tick_params(axis='y', labelsize=STYLE['font_sizes']['tick_label'])
             
             # Add legend only to the first subplot
             if i == 0:
                 ax.legend(loc='upper right', fontsize=STYLE['font_sizes']['annotation']*0.8)
             
             # Hide x-labels for all but the last subplot
-            if i < len(pairs) - 1:
+            if i < n_pairs - 1:
                 plt.setp(ax.get_xticklabels(), visible=False)
                 ax.tick_params(axis='x', bottom=False)
         
@@ -353,33 +378,34 @@ def _plot_tyr_thr_hbond_distances(
         axes[-1].tick_params(axis='x', labelsize=STYLE['font_sizes']['tick_label'])
         
         # Align y-labels and adjust layout
-        fig.align_ylabels(axes)
+        fig.align_ylabels(axes) # Align y-axis labels for better appearance
         plt.tight_layout()
-        plt.subplots_adjust(hspace=0.15)
+        plt.subplots_adjust(hspace=0.15) # Adjust vertical spacing if needed
         
         # Save the plot
-        plot_filename = "tyr_thr_hbond_distances.png"
+        plot_filename = "tyr_thr_hbond_distances_stacked.png" # New filename to reflect change
         plot_path = os.path.join(output_dir, plot_filename)
         rel_path = os.path.relpath(plot_path, run_dir)
         fig.savefig(plot_path, dpi=150)
         plt.close(fig)
         
-        # Register the plot in the database
+        # Register the new plot in the database
+        # Important: The subcategory should match what's in plots_dict.json for HTML report
         register_product(
             db_conn, 
             module_name, 
             "png", 
             "plot", 
             rel_path, 
-            subcategory="tyr_thr_hbond_distances", 
-            description="Stacked time series of Tyr445-Thr hydrogen bond distances per chain"
+            subcategory="tyr_thr_hbond_distances", # Keep same subcategory to replace old plot
+            description="Stacked time series of Tyr445-Thr hydrogen bond distances per chain pair."
         )
         
         logger.info(f"Saved stacked Tyr-Thr H-bond distances plot to {plot_path}")
         return rel_path
         
     except Exception as e:
-        logger.error(f"Failed to generate Tyr-Thr distances plot: {e}", exc_info=True)
+        logger.error(f"Failed to generate stacked Tyr-Thr H-bond distances plot: {e}", exc_info=True)
         if 'fig' in locals() and plt.fignum_exists(fig.number):
             plt.close(fig)
         return None
