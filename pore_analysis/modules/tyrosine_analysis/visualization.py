@@ -285,7 +285,7 @@ def _plot_tyr_thr_hbond_distances(
     db_conn: sqlite3.Connection,
     module_name: str
 ) -> Optional[str]:
-    """Plot the Tyr-Thr hydrogen bond distances over time."""
+    """Plot the Tyr-Thr hydrogen bond distances over time using multiple stacked subplots."""
     formed_ref_used = get_metric_value(db_conn, 'TyrThr_RefDist_Formed_Used')
     if formed_ref_used is None:
         logger.warning("Could not retrieve TyrThr_RefDist_Formed_Used metric, using default from config for plot.")
@@ -295,21 +295,94 @@ def _plot_tyr_thr_hbond_distances(
         logger.warning("Could not retrieve TyrThr_RefDist_Broken_Used metric, using default from config for plot.")
         broken_ref_used = TYR_THR_DEFAULT_BROKEN_REF_DIST
 
-    if 'Time (ns)' not in df_distances.columns: logger.error("Missing 'Time (ns)' in H-bond distances"); return None
-    pairs = [col for col in df_distances.columns if col != 'Time (ns)'];
-    if not pairs: logger.warning("No pair data in H-bond distances"); return None
+    if 'Time (ns)' not in df_distances.columns:
+        logger.error("Missing 'Time (ns)' in H-bond distances")
+        return None
+        
+    pairs = [col for col in df_distances.columns if col != 'Time (ns)']
+    if not pairs:
+        logger.warning("No pair data in H-bond distances")
+        return None
+        
     try:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        for pair in pairs: ax.plot(df_distances['Time (ns)'], df_distances[pair], label=pair, linewidth=STYLE['line_width']*0.8)
-        ax.axhline(y=formed_ref_used, color='green', linestyle='--', alpha=0.7, label=f'Formed Thr ({formed_ref_used:.2f} Å)')
-        ax.axhline(y=broken_ref_used, color='red', linestyle='--', alpha=0.7, label=f'Broken Thr ({broken_ref_used:.2f} Å)')
-        ax.axhspan(formed_ref_used, broken_ref_used, color='gray', alpha=0.1, label='Uncertain region')
-        ax.set_xlabel('Time (ns)'); ax.set_ylabel('Distance (Å)'); ax.legend(loc='best'); ax.grid(True, alpha=0.5, linestyle=':')
-        ymax = df_distances[pairs].max().max() * 1.1; ax.set_ylim(0, max(ymax, broken_ref_used + 1))
-        plt.tight_layout(); plot_filename = "tyr_thr_hbond_distances.png"; plot_path = os.path.join(output_dir, plot_filename); rel_path = os.path.relpath(plot_path, run_dir)
-        fig.savefig(plot_path, dpi=150); plt.close(fig); register_product(db_conn, module_name, "png", "plot", rel_path, subcategory="tyr_thr_hbond_distances", description="Time series of Tyr445-Thr hydrogen bond distances");
-        logger.info(f"Saved Tyr-Thr H-bond distances plot to {plot_path}"); return rel_path
-    except Exception as e: logger.error(f"Failed to generate Tyr-Thr distances plot: {e}"); return None
+        # Create figure with stacked subplots (one per chain pair)
+        fig, axes = plt.subplots(len(pairs), 1, figsize=(12, 2.5 * len(pairs)), sharex=True, squeeze=False)
+        axes = axes.flatten()  # Ensure axes is a 1D array
+        
+        # Get the maximum distance value for consistent y-axis scaling
+        ymax = df_distances[pairs].max().max() * 1.1
+        ymax = max(ymax, broken_ref_used + 1)
+        
+        # Determine colors for each pair
+        pair_colors = {pair: STYLE['bright_colors'].get(pair.split('-')[0][-1], 'grey') for pair in pairs}
+        
+        # Plot each pair in its own subplot
+        for i, (pair, ax) in enumerate(zip(pairs, axes)):
+            # Plot the distance time series
+            ax.plot(df_distances['Time (ns)'], df_distances[pair], 
+                   color=pair_colors[pair], linewidth=STYLE['line_width']*0.9, zorder=2)
+            
+            # Add reference lines for formed/broken thresholds
+            ax.axhline(y=formed_ref_used, color='green', linestyle='--', alpha=0.7, 
+                      label=f'Formed ({formed_ref_used:.2f} Å)', zorder=1)
+            ax.axhline(y=broken_ref_used, color='red', linestyle='--', alpha=0.7, 
+                      label=f'Broken ({broken_ref_used:.2f} Å)', zorder=1)
+            
+            # Add shaded region for uncertain state
+            ax.axhspan(formed_ref_used, broken_ref_used, color='gray', alpha=0.1, 
+                      label='Uncertain region', zorder=0)
+            
+            # Set y-axis label and configure grid
+            ax.set_ylabel(f"{pair}\nDistance (Å)", fontsize=STYLE['font_sizes']['axis_label']*0.9)
+            ax.set_ylim(0, ymax)
+            ax.grid(True, alpha=0.5, linestyle=':')
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            
+            # Add legend only to the first subplot
+            if i == 0:
+                ax.legend(loc='upper right', fontsize=STYLE['font_sizes']['annotation']*0.8)
+            
+            # Hide x-labels for all but the last subplot
+            if i < len(pairs) - 1:
+                plt.setp(ax.get_xticklabels(), visible=False)
+                ax.tick_params(axis='x', bottom=False)
+        
+        # Set x-axis label on the bottom subplot
+        axes[-1].set_xlabel('Time (ns)', fontsize=STYLE['font_sizes']['axis_label'])
+        axes[-1].tick_params(axis='x', labelsize=STYLE['font_sizes']['tick_label'])
+        
+        # Align y-labels and adjust layout
+        fig.align_ylabels(axes)
+        plt.tight_layout()
+        plt.subplots_adjust(hspace=0.15)
+        
+        # Save the plot
+        plot_filename = "tyr_thr_hbond_distances.png"
+        plot_path = os.path.join(output_dir, plot_filename)
+        rel_path = os.path.relpath(plot_path, run_dir)
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        
+        # Register the plot in the database
+        register_product(
+            db_conn, 
+            module_name, 
+            "png", 
+            "plot", 
+            rel_path, 
+            subcategory="tyr_thr_hbond_distances", 
+            description="Stacked time series of Tyr445-Thr hydrogen bond distances per chain"
+        )
+        
+        logger.info(f"Saved stacked Tyr-Thr H-bond distances plot to {plot_path}")
+        return rel_path
+        
+    except Exception as e:
+        logger.error(f"Failed to generate Tyr-Thr distances plot: {e}", exc_info=True)
+        if 'fig' in locals() and plt.fignum_exists(fig.number):
+            plt.close(fig)
+        return None
 
 def _plot_tyr_thr_hbond_states(
     df_states: pd.DataFrame,
@@ -360,7 +433,8 @@ def _plot_tyr_thr_hbond_states(
                 plt.Rectangle((0, 0), 1, 1, facecolor='red', alpha=0.4, label='H-bond broken'),
                 plt.Rectangle((0, 0), 1, 1, facecolor='gray', alpha=0.4, label='Uncertain')
             ]
-            ax.legend(handles=legend_elements, loc='upper right', fontsize=STYLE['font_sizes']['legend'] * 0.8)
+            # Fix: use 'annotation' instead of 'legend' which doesn't exist in STYLE['font_sizes']
+            ax.legend(handles=legend_elements, loc='upper right', fontsize=STYLE['font_sizes']['annotation'] * 0.8)
             ax.set_ylim(0, 1)
             ax.spines['left'].set_visible(False); ax.spines['right'].set_visible(False); ax.spines['top'].set_visible(False)
         axes[-1].set_xlabel('Time (ns)', fontsize=STYLE['font_sizes']['axis_label'])

@@ -256,88 +256,139 @@ def _calculate_and_store_tyr_hmm_stats(all_dwell_events, state_names, db_conn, m
 def calc_tyr_thr_hbond_distance(
     u: mda.Universe,
     filter_residues: Dict[str, List[int]],
-    residue_offset: int, # <<< ADDED: Offset parameter
+    residue_offset: int, # Offset from Tyr resid to find Thr resid
     start_frame: int = 0,
-    end_frame: Optional[int] = None
+    end_frame: Optional[int] = None,
+    step: int = 1 # Added step for trajectory iteration
 ) -> Dict[str, np.ndarray]:
     """
     Calculate the Tyr-Thr inter-subunit hydrogen bond distance.
-    Selects Tyrosine based on filter index 3.
-    Selects Threonine based on Tyrosine residue ID + residue_offset.
+    Selects Tyrosine from the 'next' chain in a cyclic manner and Threonine from the 'current' chain.
+    Tyrosine is selected based on filter_residues (index 3).
+    Threonine is selected based on the Tyrosine's residue ID + residue_offset on its respective chain.
     Uses flexible atom name selection for Threonine ('OG1 OG').
 
     Args:
-        u: MDAnalysis Universe
-        filter_residues: Dictionary mapping chain IDs to filter residue IDs
-        residue_offset: Offset from Tyr resid to find Thr resid (e.g., -6)
-        start_frame: Starting frame index
-        end_frame: Ending frame index (exclusive)
+        u: MDAnalysis Universe.
+        filter_residues: Dictionary mapping chain IDs to filter residue IDs.
+                         The Tyrosine resid is taken from filter_residues[tyr_chain_id][3].
+        residue_offset: Offset from Tyr resid to find Thr resid (e.g., -6).
+                        Thr resid = Tyr resid + residue_offset.
+        start_frame: Starting frame index for analysis.
+        end_frame: Ending frame index (exclusive) for analysis.
+        step: Step for trajectory iteration.
 
     Returns:
-        Dictionary mapping pair IDs (e.g., 'PROA_PROB') to distance arrays
+        Dictionary mapping pair IDs (e.g., 'TYR_CHAIN_THR_CHAIN') to distance arrays.
+        Example: if Tyr from PROB interacts with Thr from PROA, key is 'PROB_PROA'.
     """
-    logger.info(f"Calculating Tyr-Thr H-bonds using Tyr[idx=3] and Thr[offset={residue_offset}]...")
+    logger.info(f"Calculating Tyr-Thr H-bonds using Tyr[idx=3 from filter] and Thr[Tyr_resid + offset={residue_offset}]...")
 
     chain_ids = list(filter_residues.keys())
     if len(chain_ids) < 2:
-        logger.warning(f"Insufficient chains ({len(chain_ids)}) for Tyr-Thr H-bond analysis")
+        logger.warning(f"Insufficient chains ({len(chain_ids)}) for Tyr-Thr H-bond analysis. Need at least 2.")
         return {}
 
-    if end_frame is None: end_frame = len(u.trajectory)
-    frames_to_analyze = end_frame - start_frame
+    if end_frame is None:
+        end_frame = len(u.trajectory)
+    
+    # Ensure start_frame, end_frame, and step are valid
+    if not (0 <= start_frame < end_frame <= len(u.trajectory)):
+        logger.error(f"Invalid frame range: start={start_frame}, end={end_frame}, total_frames={len(u.trajectory)}")
+        return {}
+    if step <= 0:
+        logger.error(f"Invalid step value: {step}. Must be > 0.")
+        return {}
+
+    frames_to_analyze = len(range(start_frame, end_frame, step))
+    if frames_to_analyze == 0:
+        logger.warning("No frames to analyze with the given start, end, and step parameters.")
+        return {}
 
     chain_pairs = []
-    for i, chain in enumerate(sorted(chain_ids)):
-        next_chain = sorted(chain_ids)[(i + 1) % len(chain_ids)]
-        chain_pairs.append((chain, next_chain))
-    logger.info(f"Analyzing Tyr-Thr H-bonds between chain pairs: {chain_pairs}")
+    s_chain_ids = sorted(list(chain_ids)) # Ensure consistent order
 
-    tyr_thr_distances = {f"{s}_{t}": np.full(frames_to_analyze, np.nan) for s, t in chain_pairs}
-    selections = {}
+    # Corrected pairing: Tyr from 'next_chain_for_tyr', Thr from 'current_chain_for_thr'
+    # The interaction is Tyr(chain B) - Thr(chain A), Tyr(chain C) - Thr(chain B), etc.
+    for i, current_chain_for_thr in enumerate(s_chain_ids):
+        # The 'next' chain in cyclic order will provide the Tyrosine
+        next_chain_for_tyr = s_chain_ids[(i + 1) % len(s_chain_ids)]
+        
+        # Store as (tyrosine_chain_id, threonine_chain_id)
+        chain_pairs.append((next_chain_for_tyr, current_chain_for_thr)) 
+        
+    logger.info(f"Analyzing Tyr-Thr H-bonds between (Tyr_chain, Thr_chain) pairs: {chain_pairs}")
 
-    for src_chain, tgt_chain in chain_pairs:
-        pair_id = f"{src_chain}_{tgt_chain}"
+    # Initialize distances dictionary. Keys will be like 'TYRCHAIN_THRCHAIN'
+    tyr_thr_distances = {f"{tyr_c}_{thr_c}": np.full(frames_to_analyze, np.nan) for tyr_c, thr_c in chain_pairs}
+    selections = {} # To store (tyr_atomgroup, thr_atomgroup)
+
+    # Setup selections for each pair
+    # tyr_chain_id is the chain providing Tyrosine
+    # thr_chain_id is the chain providing Threonine
+    for tyr_chain_id, thr_chain_id in chain_pairs:
+        pair_id = f"{tyr_chain_id}_{thr_chain_id}" # e.g., PROB_PROA if Tyr is on PROB, Thr on PROA
         try:
-            # Get Tyr resid from filter list (index 3)
-            if len(filter_residues[src_chain]) != 5: raise ValueError(f"Src chain {src_chain} filter length != 5")
-            tyr_resid = filter_residues[src_chain][3]
+            # Get Tyr resid from filter list (index 3) on the TYROSINE chain
+            if tyr_chain_id not in filter_residues or len(filter_residues[tyr_chain_id]) <= 3:
+                logger.warning(f"Filter residues for Tyrosine chain {tyr_chain_id} not found or too short.")
+                continue
+            tyr_resid = filter_residues[tyr_chain_id][3]
 
-            # Calculate target Thr resid using offset
+            # Calculate target Thr resid using offset from the Tyr resid
             target_thr_resid = tyr_resid + residue_offset
-            logger.debug(f"Pair {pair_id}: Using Tyr={tyr_resid} (from filter[3]) and Target Thr={target_thr_resid} (offset={residue_offset}) on chain {tgt_chain}")
+            logger.debug(f"Pair {pair_id}: Using Tyr={tyr_resid} (from filter[3] on chain {tyr_chain_id}) "
+                         f"and Target Thr={target_thr_resid} (offset={residue_offset} from Tyr_{tyr_resid}) on chain {thr_chain_id}")
 
-            # Select Tyr OH atom (always 'OH')
-            tyr_oh_sel = u.select_atoms(f"segid {src_chain} and resid {tyr_resid} and name OH")
-            # Select Thr OG/OG1 atom using the *calculated* target resid on the adjacent chain
-            thr_og_sel = u.select_atoms(f"segid {tgt_chain} and resid {target_thr_resid} and name OG1 OG")
+            # Select Tyr OH atom from the TYROSINE chain
+            tyr_oh_sel = u.select_atoms(f"segid {tyr_chain_id} and resid {tyr_resid} and name OH")
+            
+            # Select Thr OG/OG1 atom using the *calculated* target_thr_resid on the THREONINE chain
+            thr_og_sel = u.select_atoms(f"segid {thr_chain_id} and resid {target_thr_resid} and name OG1 OG")
 
             # Check selection counts
-            if len(tyr_oh_sel) != 1: logger.warning(f"Could not find exactly one Tyr OH atom for {pair_id}"); continue
-            if len(thr_og_sel) != 1: logger.warning(f"Could not find exactly one Thr OG/OG1 atom for {pair_id} (Target Thr resid {target_thr_resid} on {tgt_chain}). Check offset/PSF name."); continue
+            if len(tyr_oh_sel) != 1:
+                logger.warning(f"Could not find exactly one Tyr OH atom for {pair_id} (Tyr {tyr_resid} on chain {tyr_chain_id}).")
+                continue
+            if len(thr_og_sel) != 1:
+                logger.warning(f"Could not find exactly one Thr OG/OG1 atom for {pair_id} "
+                               f"(Target Thr resid {target_thr_resid} on chain {thr_chain_id}). Check offset/PSF naming.")
+                continue
 
             selections[pair_id] = (tyr_oh_sel, thr_og_sel)
-            logger.debug(f"Selected atoms for {pair_id}: Tyr{tyr_resid} OH - Thr{target_thr_resid} {thr_og_sel.names[0]}")
+            logger.debug(f"Selected atoms for {pair_id}: Tyr{tyr_resid} (chain {tyr_chain_id}) OH - Thr{target_thr_resid} (chain {thr_chain_id}) {thr_og_sel.names[0]}")
+        
         except (IndexError, KeyError, ValueError) as e:
             logger.warning(f"Could not set up Tyr-Thr selection for {pair_id}: {e}")
         except Exception as e_sel:
             logger.error(f"Unexpected error setting up selection for {pair_id}: {e_sel}", exc_info=True)
 
     if not selections:
-        logger.error("No valid Tyr-Thr H-bond atom selections found. Cannot continue.")
+        logger.error("No valid Tyr-Thr H-bond atom selections found after setup. Cannot continue distance calculation.")
         return {}
 
-    for ts in tqdm(u.trajectory[start_frame:end_frame], desc="Tyr-Thr H-bond Distances", unit="frame", disable=not logger.isEnabledFor(logging.INFO)):
-        local_idx = ts.frame - start_frame
+    # Iterate through trajectory and calculate distances
+    # Use trajectory slicing with step
+    for frame_idx, ts in enumerate(tqdm(u.trajectory[start_frame:end_frame:step], 
+                                     desc="Tyr-Thr H-bond Distances", 
+                                     unit="frame", 
+                                     disable=not logger.isEnabledFor(logging.INFO),
+                                     total=frames_to_analyze)):
+        # frame_idx is the local index for storing in the np.ndarray
         for pair_id, (tyr_sel, thr_sel) in selections.items():
             try:
-                tyr_pos = tyr_sel.positions[0]; thr_pos = thr_sel.positions[0]
+                # Positions are updated for each frame by MDAnalysis
+                tyr_pos = tyr_sel.positions[0] 
+                thr_pos = thr_sel.positions[0]
                 dist = np.linalg.norm(tyr_pos - thr_pos)
-                tyr_thr_distances[pair_id][local_idx] = dist
-            except Exception as e: logger.debug(f"Error calculating distance for {pair_id} frame {ts.frame}: {e}")
+                tyr_thr_distances[pair_id][frame_idx] = dist
+            except Exception as e:
+                # Log specific error for this frame and pair, but continue
+                logger.debug(f"Error calculating distance for {pair_id} at trajectory frame {ts.frame} (local_idx {frame_idx}): {e}")
+                # tyr_thr_distances[pair_id][frame_idx] will remain np.nan
 
-    logger.info(f"Completed H-bond distance calculation for {len(selections)} pairs")
+    logger.info(f"Completed H-bond distance calculation for {len(selections)} pairs over {frames_to_analyze} frames.")
     return tyr_thr_distances
-
 
 # <<< NEW FUNCTION: Determine Tyr-Thr Thresholds (Adapted from DW Gate) >>>
 def _determine_tyr_thr_ref_distances(
@@ -437,31 +488,121 @@ def _determine_tyr_thr_ref_distances(
 
     return final_formed_ref, final_broken_ref, kde_plot_data
 
-
-# --- determine_tyr_thr_hbond_states, _save_tyr_thr_hbond_data, _calculate_and_store_tyr_thr_hbond_metrics remain unchanged ---
-# They already accept the thresholds as arguments.
-
 def determine_tyr_thr_hbond_states(
-    distances: Dict[str, np.ndarray],
+    hbond_distances: Dict[str, np.ndarray],
     time_points: np.ndarray,
-    closed_ref_dist: float, # Now takes the determined/default value
-    open_ref_dist: float,   # Now takes the determined/default value
-    tolerance_frames: int = DW_GATE_TOLERANCE_FRAMES
-) -> Dict[str, Dict]:
-    """Determine the states of the Tyr-Thr hydrogen bonds (formed/broken)."""
-    logger.info(f"Determining Tyr-Thr H-bond states using thresholds: Formed<={closed_ref_dist:.2f}, Broken>={open_ref_dist:.2f}")
-    state_results = {}
-    for pair_id, dist_array in distances.items():
-        raw_states = np.full_like(dist_array, -1, dtype=int)
-        raw_states[dist_array <= closed_ref_dist] = 0
-        raw_states[dist_array >= open_ref_dist] = 1
-        debounced_states = signal_processing.debounce_binary_signal(raw_states, tolerance_frames, fill_gaps=True)
+    formed_threshold: float,
+    broken_threshold: float,
+    tolerance_frames: int = 3
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Determines H-bond states (formed/broken) based on distance thresholds and applies debouncing.
+
+    Args:
+        hbond_distances: Dictionary mapping pair IDs to distance arrays.
+        time_points: Array of time points corresponding to the distances.
+        formed_threshold: Distance (Å) at or below which a bond is considered formed.
+        broken_threshold: Distance (Å) at or above which a bond is considered broken.
+        tolerance_frames: Minimum number of consecutive frames a state must persist.
+
+    Returns:
+        Dictionary mapping pair IDs to their state information (raw signal, debounced signal, events).
+    """
+    logger.info(f"Determining Tyr-Thr H-bond states using thresholds: Formed<={formed_threshold:.2f}, Broken>={broken_threshold:.2f}")
+    all_pair_states_data = {}
+
+    if not hbond_distances:
+        logger.warning("H-bond distances dictionary is empty. Cannot determine states.")
+        return {}
+
+    for pair_id, distances in hbond_distances.items():
+        if distances is None or len(distances) == 0:
+            logger.warning(f"No distance data for pair {pair_id}. Skipping state determination.")
+            continue
+        
+        # Initialize binary signal: 1 for formed, 0 for broken
+        binary_signal = np.zeros_like(distances, dtype=int)
+
+        # Apply thresholds
+        binary_signal[distances <= formed_threshold] = 1  # Formed
+        binary_signal[distances >= broken_threshold] = 0  # Broken
+
+        # Handle ambiguous region (between formed_threshold and broken_threshold)
+        # Maintain previous state if in ambiguous region. Default to 0 (broken) if no previous state.
+        for i in range(len(distances)):
+            if formed_threshold < distances[i] < broken_threshold:
+                binary_signal[i] = binary_signal[i-1] if i > 0 else 0
+        
+        raw_signal_df = pd.DataFrame({'Time': time_points[:len(binary_signal)], 'State': binary_signal})
+
+        # Apply debouncing to remove short-lived states
+        # The import for debounce_binary_signal is now at the top of the file from core.filtering
+        if tolerance_frames > 0 and len(binary_signal) > tolerance_frames:
+            logger.debug(f"Applying debouncing for pair {pair_id} with tolerance {tolerance_frames} frames.")
+            try:
+                # Use _rle_debounce_single_series from signal_processing instead of debounce_binary_signal
+                from pore_analysis.modules.dw_gate_analysis.signal_processing import _rle_debounce_single_series
+                logger.debug(f"Using _rle_debounce_single_series instead of debounce_binary_signal")
+                debounced_signal_values = _rle_debounce_single_series(binary_signal.tolist(), tolerance_frames)
+                debounced_signal_values = np.array(debounced_signal_values) # Convert back to numpy array
+            except Exception as e_debounce:
+                logger.error(f"Error during debouncing for pair {pair_id}: {e_debounce}", exc_info=True)
+                debounced_signal_values = binary_signal # Fallback to raw signal
+        else:
+            logger.debug(f"Not applying debouncing for pair {pair_id} (tolerance_frames={tolerance_frames}, signal_len={len(binary_signal)}).")
+            debounced_signal_values = binary_signal
+            
+        debounced_signal_df = pd.DataFrame({'Time': time_points[:len(debounced_signal_values)], 'State': debounced_signal_values})
+
+        # Detect events (transitions between states) from the debounced signal
         events = []
-        if len(debounced_states) > 0:
-            events = event_building.extract_state_events(debounced_states, time_points, open_label="H-bond-broken", closed_label="H-bond-formed")
-        state_results[pair_id] = {"raw_states": raw_states, "debounced_states": debounced_states, "events": events}
-    logger.info(f"Completed state determination for {len(distances)} H-bond pairs")
-    return state_results
+        if len(debounced_signal_values) > 1:
+            transitions = np.diff(debounced_signal_values)
+            event_indices = np.where(transitions != 0)[0]
+
+            for idx in event_indices:
+                event_time = time_points[idx + 1] # Time of state change
+                from_state = debounced_signal_values[idx]
+                to_state = debounced_signal_values[idx + 1]
+                event_type = "Formed" if to_state == 1 else "Broken"
+                
+                # Determine duration of the previous state
+                start_of_prev_state_idx = idx
+                while start_of_prev_state_idx > 0 and debounced_signal_values[start_of_prev_state_idx - 1] == from_state:
+                    start_of_prev_state_idx -= 1
+                
+                prev_state_start_time = time_points[start_of_prev_state_idx]
+                duration = event_time - prev_state_start_time # Duration of the state ENDING at event_time
+                                
+                events.append({
+                    'EventTime': event_time,
+                    'FromState': int(from_state),
+                    'ToState': int(to_state),
+                    'EventType': event_type,
+                    'PreviousStateStartTime': prev_state_start_time,
+                    'PreviousStateDuration': duration
+                })
+        events_df = pd.DataFrame(events)
+
+        all_pair_states_data[pair_id] = {
+            'raw_signal': raw_signal_df,
+            'debounced_signal': debounced_signal_df,
+            'events': events_df
+        }
+        logger.debug(f"Processed states for pair {pair_id}. Found {len(events_df)} events.")
+
+    # Add more detailed logging about what was found
+    event_counts = {}
+    for pair_id, pair_data in all_pair_states_data.items():
+        if 'events' in pair_data and isinstance(pair_data['events'], pd.DataFrame):
+            event_counts[pair_id] = len(pair_data['events'])
+        else:
+            event_counts[pair_id] = 0
+    
+    logger.info(f"Completed H-bond state determination for {len(all_pair_states_data)} pairs.")
+    logger.info(f"Events found per pair: {event_counts}")
+    
+    return all_pair_states_data
 
 def _save_tyr_thr_hbond_data(
     run_dir: str, output_dir: str, time_points: np.ndarray,
@@ -469,48 +610,277 @@ def _save_tyr_thr_hbond_data(
     db_conn: sqlite3.Connection, module_name: str
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Save Tyr-Thr hydrogen bond data to files and register."""
-    if not distances or not states: logger.warning("No Tyr-Thr H-bond data to save."); return None, None, None
-    os.makedirs(output_dir, exist_ok=True); saved_paths = {'distances': None, 'states': None, 'events': None}
-    try: # Distances
-        dist_df = pd.DataFrame({'Time (ns)': time_points}); [dist_df.update({pair_id: dist_array}) for pair_id, dist_array in distances.items()]
-        dist_file = os.path.join(output_dir, "tyr_thr_hbond_distances.csv"); dist_df.to_csv(dist_file, index=False, float_format='%.3f')
-        dist_path = os.path.relpath(dist_file, run_dir); register_product(db_conn, module_name, "csv", "data", dist_path, subcategory="tyr_thr_hbond_distances", description="Time series of Tyr445-Thr439 hydrogen bond distances"); logger.info(f"Saved Tyr-Thr H-bond distances to {dist_file}"); saved_paths['distances'] = dist_path
-    except Exception as e: logger.error(f"Failed to save H-bond distances: {e}")
-    try: # States
-        states_df = pd.DataFrame({'Time (ns)': time_points}); [states_df.update({f"{pair_id}_raw": state_data["raw_states"], f"{pair_id}_debounced": state_data["debounced_states"]}) for pair_id, state_data in states.items()]
-        states_file = os.path.join(output_dir, "tyr_thr_hbond_states.csv"); states_df.to_csv(states_file, index=False)
-        states_path = os.path.relpath(states_file, run_dir); register_product(db_conn, module_name, "csv", "data", states_path, subcategory="tyr_thr_hbond_states", description="Time series of Tyr445-Thr439 hydrogen bond states"); logger.info(f"Saved Tyr-Thr H-bond states to {states_file}"); saved_paths['states'] = states_path
-    except Exception as e: logger.error(f"Failed to save H-bond states: {e}")
-    try: # Events
-        all_events = [{"Pair": pair_id, "Start Time (ns)": event["start_time"], "End Time (ns)": event["end_time"], "State": event["state"], "Duration (ns)": event["end_time"] - event["start_time"]} for pair_id, state_data in states.items() for event in state_data["events"]]
+    if not distances or not states:
+        logger.warning("No Tyr-Thr H-bond data to save.")
+        return None, None, None
+    
+    os.makedirs(output_dir, exist_ok=True)
+    saved_paths = {'distances': None, 'states': None, 'events': None}
+    
+    # Save distances
+    try:
+        logger.info("Saving Tyr-Thr H-bond distances data...")
+        dist_df = pd.DataFrame({'Time (ns)': time_points})
+        
+        # Add each pair's distance array to the dataframe
+        for pair_id, dist_array in distances.items():
+            logger.debug(f"Adding distance data for pair {pair_id} (length={len(dist_array)})")
+            # Check distance array vs time_points length
+            if len(dist_array) != len(time_points):
+                logger.warning(f"Length mismatch for {pair_id}: distance array ({len(dist_array)}) vs time_points ({len(time_points)})")
+                # Truncate or pad as needed
+                effective_len = min(len(dist_array), len(time_points))
+                if len(dist_array) > len(time_points):
+                    dist_array = dist_array[:len(time_points)]
+                    logger.warning(f"Truncated distance array to {len(time_points)} points")
+                else:
+                    # Pad with NaN
+                    pad_array = np.full(len(time_points) - len(dist_array), np.nan)
+                    dist_array = np.concatenate([dist_array, pad_array])
+                    logger.warning(f"Padded distance array with NaNs to {len(time_points)} points")
+            
+            dist_df[pair_id] = dist_array
+        
+        dist_file = os.path.join(output_dir, "tyr_thr_hbond_distances.csv")
+        dist_df.to_csv(dist_file, index=False, float_format='%.3f')
+        dist_path = os.path.relpath(dist_file, run_dir)
+        
+        register_product(
+            db_conn, module_name, "csv", "data", dist_path, 
+            subcategory="tyr_thr_hbond_distances", 
+            description="Time series of Tyr445-Thr439 hydrogen bond distances"
+        )
+        
+        logger.info(f"Saved Tyr-Thr H-bond distances to {dist_file}")
+        saved_paths['distances'] = dist_path
+    except Exception as e:
+        logger.error(f"Failed to save H-bond distances: {e}", exc_info=True)
+    
+    # Save states
+    try:
+        logger.info("Saving Tyr-Thr H-bond states data...")
+        states_df = pd.DataFrame({'Time (ns)': time_points})
+        
+        # Add each pair's state data to the dataframe
+        for pair_id, state_data in states.items():
+            logger.debug(f"Processing state data for pair {pair_id}")
+            
+            # We need to extract state arrays from the DataFrames in state_data
+            # Fix: Check if raw_signal and debounced_signal exist and contain 'State' column
+            if 'raw_signal' in state_data and 'State' in state_data['raw_signal']:
+                raw_states = state_data['raw_signal']['State'].to_numpy()
+                logger.debug(f"Found raw states for {pair_id}, length={len(raw_states)}")
+            else:
+                logger.warning(f"Missing raw state data for {pair_id}")
+                raw_states = np.zeros(len(time_points))
+            
+            if 'debounced_signal' in state_data and 'State' in state_data['debounced_signal']:
+                debounced_states = state_data['debounced_signal']['State'].to_numpy()
+                logger.debug(f"Found debounced states for {pair_id}, length={len(debounced_states)}")
+            else:
+                logger.warning(f"Missing debounced state data for {pair_id}")
+                debounced_states = np.zeros(len(time_points))
+            
+            # Check lengths
+            if len(raw_states) != len(time_points):
+                logger.warning(f"Length mismatch for {pair_id} raw states: {len(raw_states)} vs {len(time_points)}")
+                # Truncate or pad
+                if len(raw_states) > len(time_points):
+                    raw_states = raw_states[:len(time_points)]
+                else:
+                    # Pad with zeros
+                    pad_array = np.zeros(len(time_points) - len(raw_states))
+                    raw_states = np.concatenate([raw_states, pad_array])
+            
+            if len(debounced_states) != len(time_points):
+                logger.warning(f"Length mismatch for {pair_id} debounced states: {len(debounced_states)} vs {len(time_points)}")
+                # Truncate or pad
+                if len(debounced_states) > len(time_points):
+                    debounced_states = debounced_states[:len(time_points)]
+                else:
+                    # Pad with zeros
+                    pad_array = np.zeros(len(time_points) - len(debounced_states))
+                    debounced_states = np.concatenate([debounced_states, pad_array])
+            
+            # Add to dataframe
+            states_df[f"{pair_id}_raw"] = raw_states
+            states_df[f"{pair_id}_debounced"] = debounced_states
+        
+        states_file = os.path.join(output_dir, "tyr_thr_hbond_states.csv")
+        states_df.to_csv(states_file, index=False)
+        states_path = os.path.relpath(states_file, run_dir)
+        
+        register_product(
+            db_conn, module_name, "csv", "data", states_path,
+            subcategory="tyr_thr_hbond_states",
+            description="Time series of Tyr445-Thr439 hydrogen bond states"
+        )
+        
+        logger.info(f"Saved Tyr-Thr H-bond states to {states_file}")
+        saved_paths['states'] = states_path
+    except Exception as e:
+        logger.error(f"Failed to save H-bond states: {e}", exc_info=True)
+    
+    # Save events
+    try:
+        logger.info("Saving Tyr-Thr H-bond events data...")
+        all_events = []
+        
+        # Extract events from each pair
+        for pair_id, state_data in states.items():
+            if 'events' not in state_data:
+                logger.warning(f"No events data for pair {pair_id}")
+                continue
+                
+            # Check if events exists and is a DataFrame
+            if not isinstance(state_data['events'], pd.DataFrame):
+                logger.warning(f"Events for {pair_id} is not a DataFrame")
+                continue
+                
+            # Extract events from the DataFrame
+            for _, event in state_data['events'].iterrows():
+                try:
+                    # Map event info (adapting to actual column names in the events DataFrame)
+                    event_dict = {
+                        "Pair": pair_id,
+                        "Event Time (ns)": event.get('EventTime', np.nan),
+                        "From State": event.get('FromState', -1),
+                        "To State": event.get('ToState', -1),
+                        "Event Type": event.get('EventType', 'Unknown'),
+                        "Previous State Start (ns)": event.get('PreviousStateStartTime', np.nan),
+                        "Duration (ns)": event.get('PreviousStateDuration', np.nan)
+                    }
+                    all_events.append(event_dict)
+                except Exception as e_event:
+                    logger.warning(f"Error processing event for {pair_id}: {e_event}")
+        
         if all_events:
-            events_df = pd.DataFrame(all_events); events_file = os.path.join(output_dir, "tyr_thr_hbond_events.csv"); events_df.to_csv(events_file, index=False, float_format='%.4f')
-            events_path = os.path.relpath(events_file, run_dir); register_product(db_conn, module_name, "csv", "data", events_path, subcategory="tyr_thr_hbond_events", description="Tyr445-Thr439 hydrogen bond state events"); logger.info(f"Saved Tyr-Thr H-bond events to {events_file}"); saved_paths['events'] = events_path
-    except Exception as e: logger.error(f"Failed to save H-bond events: {e}")
+            logger.info(f"Found {len(all_events)} events to save")
+            events_df = pd.DataFrame(all_events)
+            events_file = os.path.join(output_dir, "tyr_thr_hbond_events.csv")
+            events_df.to_csv(events_file, index=False, float_format='%.4f')
+            events_path = os.path.relpath(events_file, run_dir)
+            
+            register_product(
+                db_conn, module_name, "csv", "data", events_path,
+                subcategory="tyr_thr_hbond_events",
+                description="Tyr445-Thr439 hydrogen bond state events"
+            )
+            
+            logger.info(f"Saved Tyr-Thr H-bond events to {events_file}")
+            saved_paths['events'] = events_path
+        else:
+            logger.warning("No events to save")
+    except Exception as e:
+        logger.error(f"Failed to save H-bond events: {e}", exc_info=True)
+    
     return saved_paths['distances'], saved_paths['states'], saved_paths['events']
 
 def _calculate_and_store_tyr_thr_hbond_metrics(
     states: Dict[str, Dict], db_conn: sqlite3.Connection, module_name: str
 ) -> None:
     """Calculate and store metrics for Tyr-Thr hydrogen bonds."""
-    if not states: logger.warning("No Tyr-Thr H-bond state data for metrics."); return
+    if not states:
+        logger.warning("No Tyr-Thr H-bond state data for metrics.")
+        return
+    
     logger.info("Calculating and storing Tyr-Thr H-bond metrics...")
+    
     for pair_id, state_data in states.items():
-        if "debounced_states" not in state_data or len(state_data["debounced_states"]) == 0: logger.warning(f"No valid state data for {pair_id}, skipping metrics"); continue
-        formed_events = [e for e in state_data["events"] if e["state"] == "H-bond-formed"]; broken_events = [e for e in state_data["events"] if e["state"] == "H-bond-broken"]
-        formed_durations = [e["end_time"] - e["start_time"] for e in formed_events]; broken_durations = [e["end_time"] - e["start_time"] for e in broken_events]
-        total_frames = len(state_data["debounced_states"]); formed_count = np.sum(state_data["debounced_states"] == 0); broken_count = np.sum(state_data["debounced_states"] == 1)
-        formed_fraction = (formed_count / total_frames * 100) if total_frames > 0 else np.nan; broken_fraction = (broken_count / total_frames * 100) if total_frames > 0 else np.nan
-        mean_formed = np.mean(formed_durations) if formed_durations else np.nan; median_formed = np.median(formed_durations) if formed_durations else np.nan
-        mean_broken = np.mean(broken_durations) if broken_durations else np.nan; median_broken = np.median(broken_durations) if broken_durations else np.nan
-        if pd.notna(len(formed_events)): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Count", len(formed_events), "count", "Count of H-bond formed events")
-        if pd.notna(len(broken_events)): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Count", len(broken_events), "count", "Count of H-bond broken events")
-        if pd.notna(mean_formed): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Mean_ns", mean_formed, "ns", "Mean duration of H-bond formed state")
-        if pd.notna(median_formed): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Median_ns", median_formed, "ns", "Median duration of H-bond formed state")
-        if pd.notna(mean_broken): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Mean_ns", mean_broken, "ns", "Mean duration of H-bond broken state")
-        if pd.notna(median_broken): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Median_ns", median_broken, "ns", "Median duration of H-bond broken state")
-        if pd.notna(formed_fraction): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_Formed_Fraction", formed_fraction, "%", "Percentage of time H-bond was formed")
-        if pd.notna(broken_fraction): store_metric(db_conn, module_name, f"TyrThr_{pair_id}_Broken_Fraction", broken_fraction, "%", "Percentage of time H-bond was broken")
+        logger.info(f"Processing metrics for pair {pair_id}...")
+        
+        # Check if we have debounced state data - expected key has changed
+        if 'debounced_signal' not in state_data or not isinstance(state_data['debounced_signal'], pd.DataFrame):
+            logger.warning(f"No valid debounced_signal DataFrame for {pair_id}, skipping metrics")
+            continue
+            
+        # Check if we have the 'State' column
+        if 'State' not in state_data['debounced_signal'].columns:
+            logger.warning(f"Missing 'State' column in debounced_signal for {pair_id}, skipping metrics")
+            continue
+            
+        # Extract debounced states as a numpy array
+        debounced_states = state_data['debounced_signal']['State'].to_numpy()
+        
+        if len(debounced_states) == 0:
+            logger.warning(f"Empty debounced states for {pair_id}, skipping metrics")
+            continue
+            
+        logger.debug(f"Debounced states for {pair_id}: shape={debounced_states.shape}, unique_values={np.unique(debounced_states)}")
+        
+        # Check if we have events data
+        if 'events' not in state_data or not isinstance(state_data['events'], pd.DataFrame):
+            logger.warning(f"No valid events DataFrame for {pair_id}, skipping event-based metrics")
+            formed_events = []
+            broken_events = []
+        else:
+            # Extract events based on event type
+            # The original assumed e["state"] but the actual structure uses 'EventType'
+            if 'EventType' in state_data['events'].columns:
+                formed_events = state_data['events'][state_data['events']['EventType'] == 'Formed']
+                broken_events = state_data['events'][state_data['events']['EventType'] == 'Broken']
+                logger.debug(f"Found {len(formed_events)} formed events and {len(broken_events)} broken events")
+            else:
+                logger.warning(f"Missing 'EventType' column in events for {pair_id}, events may be malformed")
+                formed_events = pd.DataFrame()
+                broken_events = pd.DataFrame()
+        
+        # Calculate durations if we have the right data
+        if 'PreviousStateDuration' in formed_events.columns:
+            formed_durations = formed_events['PreviousStateDuration'].to_numpy()
+        else:
+            logger.warning(f"Missing 'PreviousStateDuration' column in formed events")
+            formed_durations = []
+            
+        if 'PreviousStateDuration' in broken_events.columns:
+            broken_durations = broken_events['PreviousStateDuration'].to_numpy()
+        else:
+            logger.warning(f"Missing 'PreviousStateDuration' column in broken events")
+            broken_durations = []
+        
+        # Calculate state statistics
+        total_frames = len(debounced_states)
+        formed_count = np.sum(debounced_states == 1)  # 1 means formed
+        broken_count = np.sum(debounced_states == 0)  # 0 means broken
+        
+        formed_fraction = (formed_count / total_frames * 100) if total_frames > 0 else np.nan
+        broken_fraction = (broken_count / total_frames * 100) if total_frames > 0 else np.nan
+        
+        logger.debug(f"Statistics for {pair_id}: formed_count={formed_count}, broken_count={broken_count}, total={total_frames}")
+        logger.debug(f"Fractions for {pair_id}: formed={formed_fraction:.2f}%, broken={broken_fraction:.2f}%")
+        
+        # Calculate duration statistics
+        mean_formed = np.mean(formed_durations) if formed_durations.size > 0 else np.nan
+        median_formed = np.median(formed_durations) if formed_durations.size > 0 else np.nan
+        mean_broken = np.mean(broken_durations) if broken_durations.size > 0 else np.nan
+        median_broken = np.median(broken_durations) if broken_durations.size > 0 else np.nan
+        
+        # Store metrics in database
+        # Count metrics
+        logger.info(f"Storing event count metrics for {pair_id}...")
+        store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Count", len(formed_events), "count", "Count of H-bond formed events")
+        store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Count", len(broken_events), "count", "Count of H-bond broken events")
+        
+        # Duration metrics (only if we have valid data)
+        logger.info(f"Storing duration metrics for {pair_id}...")
+        if not np.isnan(mean_formed):
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Mean_ns", mean_formed, "ns", "Mean duration of H-bond formed state")
+        if not np.isnan(median_formed):
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Median_ns", median_formed, "ns", "Median duration of H-bond formed state")
+        if not np.isnan(mean_broken):
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Mean_ns", mean_broken, "ns", "Mean duration of H-bond broken state")
+        if not np.isnan(median_broken):
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Median_ns", median_broken, "ns", "Median duration of H-bond broken state")
+        
+        # Fraction metrics
+        logger.info(f"Storing fraction metrics for {pair_id}...")
+        if not np.isnan(formed_fraction):
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_Formed_Fraction", formed_fraction, "%", "Percentage of time H-bond was formed")
+        if not np.isnan(broken_fraction):
+            store_metric(db_conn, module_name, f"TyrThr_{pair_id}_Broken_Fraction", broken_fraction, "%", "Percentage of time H-bond was broken")
+        
+        logger.info(f"Completed metrics for pair {pair_id}")
+    
     logger.info("Completed H-bond metric calculation and storage")
 
 
@@ -651,21 +1021,25 @@ def run_tyrosine_analysis(
 
         try:
             # --- Calculate Distances using Offset ---
+            logger_local.info("STEP 1: Starting calculation of Tyr-Thr distances...")
             tyr_thr_distances = calc_tyr_thr_hbond_distance(
                 u, filter_residues, tyr_thr_residue_offset, # Use offset
                 start_frame, actual_end
             )
+            logger_local.info(f"STEP 1: COMPLETED distance calculation. Got {len(tyr_thr_distances)} valid pairs.")
 
             if not tyr_thr_distances:
                 logger_local.warning("No valid Tyr-Thr pairs or distance calculation failed.")
             else:
                 # --- Determine Thresholds (Auto or Default) ---
                 if auto_detect_hbond_refs:
-                    logger_local.info("Attempting auto-detection of Tyr-Thr H-bond thresholds...")
+                    logger_local.info("STEP 2: Starting auto-detection of Tyr-Thr H-bond thresholds...")
                     detected_formed, detected_broken, kde_plot_data_dict = _determine_tyr_thr_ref_distances(
                         tyr_thr_distances, default_formed_ref, default_broken_ref,
                         run_dir, db_conn, module_name
                     )
+                    logger_local.info(f"STEP 2: COMPLETED threshold detection. Result: formed={detected_formed}, broken={detected_broken}")
+                    
                     # Use detected only if successful, otherwise keep defaults
                     if detected_formed is not None and detected_broken is not None:
                          final_formed_ref = detected_formed
@@ -677,27 +1051,35 @@ def run_tyrosine_analysis(
                     # final_formed_ref, final_broken_ref already set to defaults
 
                 logger_local.info(f"Using Tyr-Thr Thresholds: Formed <= {final_formed_ref:.2f} Å, Broken >= {final_broken_ref:.2f} Å")
+                
                 # Store the thresholds actually used as metrics
+                logger_local.info("STEP 3: Storing threshold metrics in database...")
                 store_metric(db_conn, module_name, "TyrThr_RefDist_Formed_Used", final_formed_ref, "Å", "Final Formed Reference Distance Used")
                 store_metric(db_conn, module_name, "TyrThr_RefDist_Broken_Used", final_broken_ref, "Å", "Final Broken Reference Distance Used")
                 store_metric(db_conn, module_name, "Config_TYR_THR_RESIDUE_OFFSET", tyr_thr_residue_offset, "residues", "Tyr->Thr offset used")
-
+                logger_local.info("STEP 3: COMPLETED storing threshold metrics.")
 
                 # --- Determine States using final thresholds ---
+                logger_local.info("STEP 4: Starting determination of H-bond states...")
                 tyr_thr_states = determine_tyr_thr_hbond_states(
                     tyr_thr_distances, time_points,
                     final_formed_ref, final_broken_ref, # Pass final thresholds
                     tolerance_frames # Reuse tolerance
                 )
+                logger_local.info(f"STEP 4: COMPLETED H-bond state determination. Got states for {len(tyr_thr_states)} pairs.")
 
                 # Save H-bond data to files
+                logger_local.info("STEP 5: Starting to save H-bond data to files...")
                 dist_path, states_path, events_path = _save_tyr_thr_hbond_data(
                     run_dir, output_dir, time_points, tyr_thr_distances, tyr_thr_states,
                     db_conn, module_name)
+                logger_local.info(f"STEP 5: COMPLETED saving H-bond data. Results: dist_path={dist_path}, states_path={states_path}, events_path={events_path}")
 
                 # Calculate and store H-bond metrics
+                logger_local.info("STEP 6: Starting calculation and storage of H-bond metrics...")
                 _calculate_and_store_tyr_thr_hbond_metrics(
                     tyr_thr_states, db_conn, module_name)
+                logger_local.info("STEP 6: COMPLETED metrics calculation and storage.")
 
                 hbond_success = True # Mark H-bond part as successful
                 logger_local.info("Completed Tyr-Thr hydrogen bond analysis")

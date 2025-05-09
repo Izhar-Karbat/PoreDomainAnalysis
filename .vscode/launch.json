@@ -8,8 +8,9 @@
             "module": "pore_analysis.main",
             "args": [
                 "--folder",  // Argument flag
-                "/home/labs/bmeitan/karbati/rCs1/toxin/toxin/R6", // Argument value
-                "--dwgates"
+                "/home/labs/bmeitan/karbati/MD_Analysis/PoreDomainAnalysis/tests/data/", // Argument value
+                "--tyrosine",
+                "--force-rerun"
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
