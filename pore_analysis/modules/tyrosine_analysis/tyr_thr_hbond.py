@@ -674,69 +674,167 @@ def calculate_and_store_tyr_thr_hbond_metrics(
 
 def calculate_and_store_tyr_thr_hbond_stats_from_events(
     processed_events_df: pd.DataFrame,
+    debounced_states_df_per_pair: Dict[str, pd.DataFrame],
     total_simulation_time_ns: float, 
     db_conn: sqlite3.Connection,
     module_name: str
 ):
     """
     Calculates and stores statistics from processed Tyr-Thr H-bond events.
-    Uses robust event-based approach adapted from DW-gate analysis.
+    If no events are found (e.g., for stable H-bonds with no transitions),
+    calculates statistics from debounced states directly.
     
     Args:
         processed_events_df: DataFrame with columns 'Chain' (pair_id), 'State', 'Duration (ns)'.
+        debounced_states_df_per_pair: Dict mapping pair_id to DataFrame with columns 'Time (ns)' and 'State'.
+                                      Used when no events are found for a pair to calculate metrics directly.
         total_simulation_time_ns: Total duration of the analyzed trajectory segment.
         db_conn: Database connection.
         module_name: Name of the module for storing metrics.
     """
-    if processed_events_df is None or processed_events_df.empty:
-        logger.warning("No processed Tyr-Thr H-bond events to calculate stats from.")
+    logger.info("Calculating statistics from Tyr-Thr H-bond data...")
+
+    # Debug state of inputs
+    logger.info(f"DEBUG: calculate_and_store_tyr_thr_hbond_stats_from_events called")
+    logger.info(f"DEBUG: processed_events_df type: {type(processed_events_df)}")
+    if processed_events_df is not None:
+        logger.info(f"DEBUG: processed_events_df empty? {processed_events_df.empty if hasattr(processed_events_df, 'empty') else 'N/A'}")
+        if hasattr(processed_events_df, 'columns'):
+            logger.info(f"DEBUG: processed_events_df columns: {processed_events_df.columns.tolist()}")
+            
+    logger.info(f"DEBUG: debounced_states_df_per_pair type: {type(debounced_states_df_per_pair)}")
+    logger.info(f"DEBUG: debounced_states_df_per_pair keys: {list(debounced_states_df_per_pair.keys()) if debounced_states_df_per_pair else 'None'}")
+    logger.info(f"DEBUG: total_simulation_time_ns: {total_simulation_time_ns}")
+    
+    # Get all unique pair_ids from either events or debounced_states
+    all_pair_ids = set()
+    if processed_events_df is not None and not processed_events_df.empty:
+        if 'Chain' in processed_events_df.columns:
+            chain_values = processed_events_df['Chain'].unique()
+            all_pair_ids.update(chain_values)
+            logger.info(f"DEBUG: Found pairs from events: {list(chain_values)}")
+    
+    if debounced_states_df_per_pair:
+        all_pair_ids.update(debounced_states_df_per_pair.keys())
+        logger.info(f"DEBUG: Found pairs from debounced states: {list(debounced_states_df_per_pair.keys())}")
+
+    logger.info(f"DEBUG: All unique pair_ids: {list(all_pair_ids)}")
+    
+    if not all_pair_ids:
+        logger.warning("No H-bond pairs found in events or debounced states. Cannot calculate stats.")
         return
 
-    logger.info("Calculating statistics from processed Tyr-Thr H-bond events...")
+    for pair_id in sorted(list(all_pair_ids)):
+        logger.info(f"Calculating statistics for H-bond pair {pair_id}...")
 
-    # Check required columns
-    required_columns = ['Chain', 'State', 'Duration (ns)']
-    if not all(col in processed_events_df.columns for col in required_columns):
-        logger.error(f"Missing required columns in processed events DataFrame. Found: {processed_events_df.columns.tolist()}")
-        logger.error("Cannot calculate reliable metrics without required columns. Aborting.")
-        return
+        # Initialize metrics
+        formed_fraction = 0.0
+        broken_fraction = 0.0
+        mean_formed_ns = 0.0
+        median_formed_ns = 0.0
+        count_formed = 0
+        mean_broken_ns = 0.0
+        median_broken_ns = 0.0
+        count_broken = 0
+        
+        # Flag to track if we've calculated metrics from events
+        metrics_from_events = False
 
-    for pair_id, group in processed_events_df.groupby('Chain'):
-        logger.info(f"Calculating robust statistics for H-bond pair {pair_id}...")
+        # Try to get stats from events first
+        if (processed_events_df is not None and not processed_events_df.empty and 
+            'Chain' in processed_events_df.columns and pair_id in processed_events_df['Chain'].values):
+            
+            # Required columns check
+            required_columns = ['Chain', 'State', 'Duration (ns)']
+            if all(col in processed_events_df.columns for col in required_columns):
+                group = processed_events_df[processed_events_df['Chain'] == pair_id]
+                
+                # Filter events by state
+                formed_events = group[group['State'] == 'H-bond-formed']
+                broken_events = group[group['State'] == 'H-bond-broken']
+                
+                # Calculate total durations for each state
+                formed_total_duration_ns = formed_events['Duration (ns)'].sum()
+                broken_total_duration_ns = broken_events['Duration (ns)'].sum()
+                
+                # Only continue with events if we have some durations
+                if formed_total_duration_ns > 0 or broken_total_duration_ns > 0:
+                    # Calculate fractions
+                    if total_simulation_time_ns > 1e-9:
+                        formed_fraction = (formed_total_duration_ns / total_simulation_time_ns) * 100.0
+                        broken_fraction = (broken_total_duration_ns / total_simulation_time_ns) * 100.0
+                    elif formed_total_duration_ns > 0:
+                        formed_fraction = 100.0
+                        broken_fraction = 0.0
+                    elif broken_total_duration_ns > 0:
+                        formed_fraction = 0.0
+                        broken_fraction = 100.0
+                    
+                    # Calculate mean/median durations and event counts
+                    mean_formed_ns = formed_events['Duration (ns)'].mean() if not formed_events.empty else 0.0
+                    median_formed_ns = formed_events['Duration (ns)'].median() if not formed_events.empty else 0.0
+                    count_formed = len(formed_events)
+                    
+                    mean_broken_ns = broken_events['Duration (ns)'].mean() if not broken_events.empty else 0.0
+                    median_broken_ns = broken_events['Duration (ns)'].median() if not broken_events.empty else 0.0
+                    count_broken = len(broken_events)
+                    
+                    # Set flag that we successfully calculated metrics from events
+                    metrics_from_events = True
+                    
+                    logger.info(f"Calculated stats from events for pair {pair_id}")
+                    logger.debug(f"Events stats for {pair_id}: Formed={formed_fraction:.1f}%, Broken={broken_fraction:.1f}%, "
+                               f"Formed periods={count_formed}, Broken periods={count_broken}")
+            else:
+                logger.warning(f"Processed events DataFrame missing required columns. Found: {processed_events_df.columns.tolist()}")
 
-        # Filter events by state
-        formed_events = group[group['State'] == 'H-bond-formed']
-        broken_events = group[group['State'] == 'H-bond-broken']
+        # If we couldn't calculate metrics from events, try using debounced states directly
+        if not metrics_from_events:
+            logger.info(f"No events/transitions found for pair {pair_id}, calculating metrics from debounced states.")
+            
+            if pair_id in debounced_states_df_per_pair:
+                df_states = debounced_states_df_per_pair[pair_id]
+                
+                if 'State' in df_states.columns and not df_states.empty:
+                    # Count frames in each state
+                    total_frames = len(df_states)
+                    frames_formed = sum(df_states['State'] == 1)
+                    frames_broken = sum(df_states['State'] == 0)
+                    
+                    # Calculate fractions
+                    if total_frames > 0:
+                        formed_fraction = (frames_formed / total_frames) * 100.0
+                        broken_fraction = (frames_broken / total_frames) * 100.0
+                        
+                        # For continuous states, set appropriate durations
+                        if formed_fraction >= 99.9:  # Allow for tiny rounding errors
+                            # All formed - one continuous formed state for the entire simulation
+                            formed_fraction = 100.0
+                            broken_fraction = 0.0
+                            mean_formed_ns = total_simulation_time_ns
+                            median_formed_ns = total_simulation_time_ns
+                            count_formed = 1
+                            
+                        elif broken_fraction >= 99.9:  # All broken
+                            formed_fraction = 0.0
+                            broken_fraction = 100.0
+                            mean_broken_ns = total_simulation_time_ns
+                            median_broken_ns = total_simulation_time_ns
+                            count_broken = 1
+                        
+                        logger.info(f"Calculated stats from debounced states for pair {pair_id}")
+                        logger.debug(f"Debounced state stats for {pair_id}: Formed={formed_fraction:.1f}%, Broken={broken_fraction:.1f}%")
+                else:
+                    logger.warning(f"Debounced states DataFrame for {pair_id} is empty or missing 'State' column")
+            else:
+                logger.warning(f"No debounced states data found for pair {pair_id}")
 
-        # Calculate total durations for each state
-        formed_total_duration_ns = formed_events['Duration (ns)'].sum()
-        broken_total_duration_ns = broken_events['Duration (ns)'].sum()
+        # Store metrics regardless of how they were calculated
+        # Cap percentages at 100.0
+        formed_fraction = min(formed_fraction, 100.0)
+        broken_fraction = min(broken_fraction, 100.0)
 
-        # Calculate fractions (percentage of time in each state)
-        # Ensure total_simulation_time_ns is greater than zero to avoid division by zero
-        if total_simulation_time_ns > 1e-9: # Use a small epsilon
-            formed_fraction = (formed_total_duration_ns / total_simulation_time_ns) * 100.0
-            broken_fraction = (broken_total_duration_ns / total_simulation_time_ns) * 100.0
-        elif formed_total_duration_ns > 0: # If total sim time is ~0, but we have formed duration
-            formed_fraction = 100.0
-            broken_fraction = 0.0
-        elif broken_total_duration_ns > 0:
-            formed_fraction = 0.0
-            broken_fraction = 100.0
-        else: # All durations and total sim time are zero or negligible
-            formed_fraction = 0.0
-            broken_fraction = 0.0
-
-        # Calculate mean/median durations and event counts
-        mean_formed_ns = formed_events['Duration (ns)'].mean() if not formed_events.empty else 0.0
-        median_formed_ns = formed_events['Duration (ns)'].median() if not formed_events.empty else 0.0
-        count_formed = len(formed_events)
-
-        mean_broken_ns = broken_events['Duration (ns)'].mean() if not broken_events.empty else 0.0
-        median_broken_ns = broken_events['Duration (ns)'].median() if not broken_events.empty else 0.0
-        count_broken = len(broken_events)
-
-        logger.debug(f"Stats for H-bond Pair {pair_id}: Formed%={formed_fraction:.1f}, Broken%={broken_fraction:.1f}, "
+        logger.info(f"Final stats for H-bond Pair {pair_id}: Formed%={formed_fraction:.1f}, Broken%={broken_fraction:.1f}, "
                      f"MeanFormedDur={mean_formed_ns:.3f}ns (N={count_formed}), MeanBrokenDur={mean_broken_ns:.3f}ns (N={count_broken})")
 
         # Store metrics using consistent naming conventions for HTML report compatibility
@@ -749,4 +847,4 @@ def calculate_and_store_tyr_thr_hbond_stats_from_events(
         store_metric(db_conn, module_name, f"TyrThr_{pair_id}_formed_Count", count_formed, "count", f"Number of 'H-bond-formed' periods for {pair_id}")
         store_metric(db_conn, module_name, f"TyrThr_{pair_id}_broken_Count", count_broken, "count", f"Number of 'H-bond-broken' periods for {pair_id}")
     
-    logger.info("Completed robust H-bond metric calculation from processed events.")
+    logger.info("Completed H-bond metric calculation from events and/or states.")

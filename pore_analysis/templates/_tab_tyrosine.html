@@ -124,7 +124,7 @@
                     <th>Mean Broken Duration (ns)</th>
                 </tr>
                 
-                {% set chain_pairs = ['PROA_PROB', 'PROB_PROC', 'PROC_PROD', 'PROD_PROA'] %}
+                {% set chain_pairs = ['PROB_PROA', 'PROC_PROB', 'PROD_PROC', 'PROA_PROD'] %}
                 {% for pair in chain_pairs %}
                     {% set formed_fraction_metric = 'TyrThr_' ~ pair ~ '_Formed_Fraction' %}
                     {% set broken_fraction_metric = 'TyrThr_' ~ pair ~ '_Broken_Fraction' %}
