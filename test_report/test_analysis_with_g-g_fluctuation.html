@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Test Analysis</title>
+    <title>Test Analysis with G-G Fluctuation</title>
     <link rel="stylesheet" href="assets/style.css">
     <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
@@ -100,8 +100,8 @@
 </head>
 <body>
     <header>
-        <h1>Test Analysis</h1>
-        <p class="timestamp">Report Generated: 2025-05-11 09:25:29</p>
+        <h1>Test Analysis with G-G Fluctuation</h1>
+        <p class="timestamp">Report Generated: 2025-05-11 09:10:13</p>
         
             <div class="metadata-summary">
                 <p>
@@ -125,6 +125,9 @@
         </li>
         <li class="tab-item">
             <a class="tab-link" data-tab="pore-geometry">Pore Geometry</a>
+        </li>
+        <li class="tab-item">
+            <a class="tab-link" data-tab="pore-fluctuation">Pore Fluctuation</a>
         </li>
     </ul>
 
@@ -408,7 +411,7 @@ The simulation data has been analyzed across multiple metrics to identify signif
 
     <footer class="footer">
         <p>Enhanced Report Generation System</p>
-        <p>Timestamp: 2025-05-11 09:25:29</p>
+        <p>Timestamp: 2025-05-11 09:10:13</p>
     </footer>
 
     <script>
@@ -450,11 +453,6 @@ The simulation data has been analyzed across multiple metrics to identify signif
 
             // Use data passed from Python, ensuring original structure for styling
             const componentMockData = actualMockData; // Used for values and stdDevs
-
-            // Fluctuation data - available as global constants
-            const fluctuationSummary = actualFluctuationSummary;
-            const fluctuationIndividual = actualFluctuationIndividual;
-            const fluctuationStats = actualFluctuationStats;
             const componentStatisticalData = JSON.parse(JSON.stringify(actualStatisticalData)); // Deep copy to modify for significance symbols
             const componentSimulationPoints = actualSimulationPoints; // Used for scatter points
 
@@ -530,248 +528,13 @@ The simulation data has been analyzed across multiple metrics to identify signif
             };
 
             // Helper functions to get data, using componentMockData and componentSimulationPoints
-            const getValue = (data, tab) => {
-                if (tab === 'fluctuation') {
-                    // Return fluctuation value from the fluctuation data
-                    return fluctuationSummary?.[data.dataType]?.[data.subunit]?.value || 0;
-                }
-                return data[tab].value;
-            };
-
-            const getStdDev = (data, tab) => {
-                if (tab === 'fluctuation') {
-                    // Return fluctuation stdDev from the fluctuation data
-                    return fluctuationSummary?.[data.dataType]?.[data.subunit]?.stdDev || 0;
-                }
-                return data[tab].stdDev;
-            };
-
+            const getValue = (data, tab) => data[tab].value;
+            const getStdDev = (data, tab) => data[tab].stdDev;
             const getSimPoints = (condition, subunit, tab) => {
-                if (tab === 'fluctuation') {
-                    // Return fluctuation individual points
-                    return fluctuationIndividual?.[condition]?.[subunit] || [];
-                }
                 return componentSimulationPoints?.[condition]?.[subunit]?.[tab] || [];
             }
 
-            const renderFluctuationChart = () => {
-                // Define fluctuation-specific y-scale
-                const getFluctuationYScale = () => {
-                    // Collect all values to find min/max
-                    let values = [];
-
-                    // Include summary values and their error bars
-                    for (const condition of ['toxin', 'control']) {
-                        for (const subunit of ['AC', 'BD']) {
-                            if (fluctuationSummary[condition]?.[subunit]) {
-                                const value = fluctuationSummary[condition][subunit].value;
-                                const stdDev = fluctuationSummary[condition][subunit].stdDev;
-                                if (!isNaN(value)) {
-                                    values.push(value);
-                                    // Include error bar range
-                                    if (!isNaN(stdDev)) {
-                                        values.push(value + stdDev);
-                                        values.push(value - stdDev);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Add individual simulation points
-                    for (const condition of ['toxin', 'control']) {
-                        for (const subunit of ['AC', 'BD']) {
-                            if (fluctuationIndividual[condition]?.[subunit]) {
-                                values = values.concat(fluctuationIndividual[condition][subunit]);
-                            }
-                        }
-                    }
-
-                    // Filter out null/undefined/NaN values
-                    values = values.filter(v => v !== null && v !== undefined && !isNaN(v));
-
-                    // Handle no data case
-                    if (values.length === 0) {
-                        values = [0, 0.5];
-                    }
-
-                    // Calculate min and max with padding
-                    const min = Math.max(0, Math.min(...values) * 0.9);
-                    const max = Math.max(...values) * 1.1;
-
-                    // Generate y-scale function
-                    return (val) => {
-                        const availableHeight = chartHeight - margin.top - margin.bottom;
-                        return chartHeight - margin.bottom - ((val - min) * (availableHeight / (max - min)));
-                    };
-                };
-
-                // Generate tick values for y-axis
-                const getFluctuationTickValues = (min, max) => {
-                    const numTicks = 5;
-                    const step = (max - min) / (numTicks - 1);
-                    return Array.from({length: numTicks}, (_, i) => min + i * step);
-                };
-
-                // Calculate significance symbols from p-values
-                const getSignificanceSymbol = (pValue) => {
-                    if (pValue === null || pValue === undefined) return "ns";
-                    if (pValue < 0.0001) return "****";
-                    if (pValue < 0.001) return "***";
-                    if (pValue < 0.01) return "**";
-                    if (pValue < 0.05) return "*";
-                    return "ns";
-                };
-
-                // Determine y-scale range
-                const yScaleFunc = getFluctuationYScale();
-
-                // Find min and max for ticks
-                let allValues = [];
-                for (const condition of ['toxin', 'control']) {
-                    for (const subunit of ['AC', 'BD']) {
-                        const value = fluctuationSummary[condition]?.[subunit]?.value;
-                        if (value !== undefined && !isNaN(value)) {
-                            allValues.push(value);
-                        }
-                    }
-                }
-
-                // Calculate min and max with some buffer
-                const minVal = Math.max(0, Math.min(...allValues) * 0.9);
-                const maxVal = Math.max(...allValues) * 1.1;
-                const tickValues = getFluctuationTickValues(minVal, maxVal);
-
-                // Main render function
-                return (
-                    <svg width={chartWidth} height={chartHeight}>
-                        {/* Title */}
-                        <text x={chartWidth/2} y={30} textAnchor="middle" fontSize="16" fontWeight="bold">
-                            G-G Distance Fluctuation (Standard Deviation)
-                        </text>
-
-                        {/* Y-axis */}
-                        <line x1={margin.left} y1={margin.top} x2={margin.left} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
-                        {tickValues.map((tick, i) => (
-                            <g key={`y-tick-${i}`}>
-                                <line x1={margin.left - 5} y1={yScaleFunc(tick)} x2={margin.left} y2={yScaleFunc(tick)} stroke="black" strokeWidth="1"/>
-                                <text x={margin.left - 10} y={yScaleFunc(tick)} textAnchor="end" dominantBaseline="middle" fontSize="12">
-                                    {tick.toFixed(2)} Å
-                                </text>
-                            </g>
-                        ))}
-                        <text transform={`rotate(-90, ${margin.left/3}, ${chartHeight/2})`} x={margin.left/3} y={chartHeight/2} textAnchor="middle" fontSize="14" fontWeight="bold">
-                            Standard Deviation (Å)
-                        </text>
-
-                        {/* X-axis */}
-                        <line x1={margin.left} y1={chartHeight - margin.bottom} x2={chartWidth - margin.right + 100} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
-
-                        {/* Bars and data points - follow the original design */}
-                        {Object.entries(xPositions).map(([key, xPos]) => {
-                            const [condition, subunit] = key.split('-');
-                            const value = fluctuationSummary[condition]?.[subunit]?.value || 0;
-                            const stdDev = fluctuationSummary[condition]?.[subunit]?.stdDev || 0;
-                            const simPoints = fluctuationIndividual[condition]?.[subunit] || [];
-                            const colorSet = colors[condition]?.[subunit];
-
-                            if (!colorSet) return null;
-
-                            return (
-                                <g key={key}>
-                                    {/* Bar */}
-                                    <rect
-                                        x={xPos - barWidth/2}
-                                        y={yScaleFunc(value)}
-                                        width={barWidth}
-                                        height={Math.max(0, (chartHeight - margin.bottom) - yScaleFunc(value))}
-                                        fill={colorSet.fill}
-                                        stroke={colorSet.border}
-                                        strokeWidth="2"
-                                    />
-                                    <text x={xPos} y={yScaleFunc(value) - 10} textAnchor="middle" fontSize="12" fontWeight="bold">
-                                        {value.toFixed(3)}
-                                    </text>
-
-                                    {/* Error bars */}
-                                    <line x1={xPos} y1={yScaleFunc(value - stdDev)} x2={xPos} y2={yScaleFunc(value + stdDev)} stroke="black" strokeWidth="1.5" />
-                                    <line x1={xPos - 5} y1={yScaleFunc(value - stdDev)} x2={xPos + 5} y2={yScaleFunc(value - stdDev)} stroke="black" strokeWidth="1.5" />
-                                    <line x1={xPos - 5} y1={yScaleFunc(value + stdDev)} x2={xPos + 5} y2={yScaleFunc(value + stdDev)} stroke="black" strokeWidth="1.5" />
-
-                                    {/* Significance brackets */}
-                                    {key.startsWith('toxin') && fluctuationStats.p_values[subunit] < 0.05 && (() => {
-                                        const controlKey = `control-${subunit}`;
-                                        const controlX = xPositions[controlKey];
-                                        if (!controlX) return null;
-
-                                        const significance = getSignificanceSymbol(fluctuationStats.p_values[subunit]);
-                                        const bracketY = Math.min(
-                                            yScaleFunc(value),
-                                            yScaleFunc(fluctuationSummary.control[subunit].value)
-                                        ) - 30;
-
-                                        return (
-                                            <g>
-                                                <line x1={xPos} y1={bracketY + 5} x2={xPos} y2={bracketY} stroke="black" strokeWidth="1.5" />
-                                                <line x1={controlX} y1={bracketY + 5} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
-                                                <line x1={xPos} y1={bracketY} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
-                                                <text x={(xPos + controlX) / 2} y={bracketY - 5} textAnchor="middle" fontSize="14" fontWeight="bold">
-                                                    {significance}
-                                                </text>
-                                            </g>
-                                        );
-                                    })()}
-
-                                    {/* Individual simulation data points */}
-                                    {simPoints.map((point, idx) => (
-                                        <circle
-                                            key={`${key}-sim-${idx}`}
-                                            cx={xPos + (idx - (simPoints.length - 1)/2) * (barWidth/(simPoints.length+1))}
-                                            cy={yScaleFunc(point)}
-                                            r={3.5}
-                                            fill={colorSet.point}
-                                            opacity={0.8}
-                                        />
-                                    ))}
-                                </g>
-                            );
-                        })}
-
-                        {/* X-axis labels */}
-                        <text x={(xPositions['toxin-AC'] + xPositions['control-AC']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">A:C Subunit Pair</text>
-                        <text x={(xPositions['toxin-BD'] + xPositions['control-BD']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">B:D Subunit Pair</text>
-
-                        <text x={xPositions['toxin-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
-                        <text x={xPositions['control-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
-                        <text x={xPositions['toxin-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
-                        <text x={xPositions['control-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
-
-                        {/* Legend */}
-                        {['toxin', 'control'].flatMap(condition =>
-                            ['AC', 'BD'].map(subunit => {
-                                const colorSet = colors[condition]?.[subunit];
-                                if (!colorSet) return null;
-                                const yOffset = (condition === 'toxin' ? 0 : 50) + (subunit === 'AC' ? 0 : 25);
-                                return (
-                                    <g key={`legend-${condition}-${subunit}`}>
-                                        <rect x={chartWidth - margin.right + 20} y={margin.top + yOffset} width={15} height={15} fill={colorSet.fill} stroke={colorSet.border} />
-                                        <text x={chartWidth - margin.right + 45} y={margin.top + yOffset + 8} dominantBaseline="middle" fontSize="12">
-                                            {`${condition.charAt(0).toUpperCase() + condition.slice(1)} ${subunit}`}
-                                        </text>
-                                    </g>
-                                );
-                            })
-                        )}
-                    </svg>
-                );
-            };
-
             const renderBarChart = () => {
-                // If we're on the fluctuation tab, use special handling
-                if (activeTab === 'fluctuation') {
-                    return renderFluctuationChart();
-                }
-
                 const yScale = getYScale(activeTab);
                 const tickValues = getTickValues(activeTab);
 
@@ -901,8 +664,7 @@ The simulation data has been analyzed across multiple metrics to identify signif
                 mean: "The mean values show that toxin binding significantly alters G-G distances (A:C: p=0.0005, Cohen's d=2.19; B:D: p=0.0030, d=1.75). Individual data points represent different simulation runs, and error bars indicate standard deviation across simulations.",
                 min: "Minimum G-G distances are significantly lower only in the B:D subunit pair (p=0.0010, d=2.05), while the A:C difference is not statistically significant (p=0.5758, d=0.27). This suggests asymmetric effects of the toxin on channel constriction.",
                 max: "Maximum G-G distances are significantly higher in toxin-bound channels (A:C: p=0.0001, d=2.56; B:D: p=0.0008, d=2.61), indicating the toxin allows greater expansion of the filter in both subunit pairs.",
-                range: "The range (max-min) shows the most dramatic differences, with very large effect sizes (A:C: p=0.0001, d=2.70; B:D: p<0.0001, d=3.55), providing strong evidence that the toxin causes substantial destabilization of the selectivity filter structure.",
-                fluctuation: "G-G distance fluctuation is measured as the standard deviation of the time series data for each simulation. Higher values indicate greater variability in glycine-glycine distances across the selectivity filter, directly quantifying the conformational flexibility of the filter."
+                range: "The range (max-min) shows the most dramatic differences, with very large effect sizes (A:C: p=0.0001, d=2.70; B:D: p<0.0001, d=3.55), providing strong evidence that the toxin causes substantial destabilization of the selectivity filter structure."
             };
 
             // Create statistics table data - using componentMockData
@@ -925,15 +687,13 @@ The simulation data has been analyzed across multiple metrics to identify signif
                 <div className="flex flex-col items-center mt-4">
                     <h2 className="text-xl font-bold mb-4">G-G Distance Comparison: Toxin vs Control (N={numberOfSimulations} simulations)</h2>
                     <div className="flex space-x-1 mb-4">
-                        {['mean', 'min', 'max', 'range', 'fluctuation'].map((tab) => (
+                        {['mean', 'min', 'max', 'range'].map((tab) => (
                             <button
                                 key={tab}
                                 className={`px-4 py-2 rounded-t-lg font-medium ${activeTab === tab ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                                 onClick={() => setActiveTab(tab)}
                             >
-                                {tab === 'range' ? 'Range (Max-Min)' :
-                                 tab === 'fluctuation' ? 'Fluctuation (StdDev)' :
-                                 tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                {tab === 'range' ? 'Range (Max-Min)' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                             </button>
                         ))}
                     </div>

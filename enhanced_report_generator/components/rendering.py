@@ -197,6 +197,9 @@ class ReportLayoutRenderer:
         # Transform data for the React component
         react_data = self._prepare_data_for_react_component(gg_data_raw, gg_sim_points_raw)
 
+        # Prepare data for the new fluctuation tab
+        gg_fluctuation_data = self._prepare_gg_fluctuation_data(db_path, run_metadata)
+
         # Generate timestamp
         generation_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -222,7 +225,15 @@ class ReportLayoutRenderer:
                 "gg_react_statistical_data_json": react_data["gg_react_statistical_data_json"],
                 "gg_react_simulation_points_json": react_data["gg_react_simulation_points_json"],
                 "gg_significance_notes": react_data["gg_significance_notes"],
-                "gg_num_systems": react_data["gg_num_systems"]
+                "gg_num_systems": react_data["gg_num_systems"],
+
+                # Add data for G-G fluctuation tab
+                "gg_fluctuation_summary": gg_fluctuation_data["summary_fluctuations"],
+                "gg_fluctuation_stats": gg_fluctuation_data["stats"],
+                "gg_react_fluctuation_summary_json": json.dumps(gg_fluctuation_data["summary_fluctuations"]),
+                "gg_react_fluctuation_individual_json": json.dumps(gg_fluctuation_data["individual_fluctuations"]),
+                "gg_react_fluctuation_stats_json": json.dumps(gg_fluctuation_data["stats"]),
+                "gg_fluctuation_significance_notes": gg_fluctuation_data["significance_notes"]
             }
         )
 
@@ -528,6 +539,126 @@ class ReportLayoutRenderer:
         return {
             'toxin': toxin_points,
             'control': control_points
+        }
+
+    def _prepare_gg_fluctuation_data(self, db_path: Path, run_metadata: RunMetadata) -> Dict:
+        """
+        Prepare G-G distance fluctuation data (standard deviation metrics) for the fluctuation tab.
+
+        Args:
+            db_path: Path to the database
+            run_metadata: RunMetadata object with information about the runs
+
+        Returns:
+            Dictionary with G-G distance fluctuation metrics and statistics
+        """
+        logger.info(f"Preparing G-G fluctuation data from {db_path}")
+
+        import sqlite3
+        import numpy as np
+        from .stats_analysis import calculate_p_value, calculate_effect_size
+
+        # Connect to the database
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Define the metrics we're looking for (standard deviation metrics)
+        metric_names = {
+            "AC": "G_G_AC_Std_Filt",  # Standard deviation for AC subunit
+            "BD": "G_G_BD_Std_Filt"   # Standard deviation for BD subunit
+        }
+
+        # Initialize data structures
+        fluctuation_data = {
+            'toxin': {'AC': [], 'BD': []},
+            'control': {'AC': [], 'BD': []}
+        }
+
+        # Get toxin system data
+        for subunit, metric_name in metric_names.items():
+            cursor.execute("""
+                SELECT s.run_name, m.value
+                FROM aggregated_metrics m
+                JOIN systems s ON m.system_id = s.system_id
+                WHERE s.group_type = 'toxin-bound'
+                AND m.metric_name = ?
+                ORDER BY s.run_name
+            """, (metric_name,))
+
+            for row in cursor.fetchall():
+                fluctuation_data['toxin'][subunit].append(row['value'])
+
+        # Get control system data
+        for subunit, metric_name in metric_names.items():
+            cursor.execute("""
+                SELECT s.run_name, m.value
+                FROM aggregated_metrics m
+                JOIN systems s ON m.system_id = s.system_id
+                WHERE s.group_type = 'toxin-free'
+                AND m.metric_name = ?
+                ORDER BY s.run_name
+            """, (metric_name,))
+
+            for row in cursor.fetchall():
+                fluctuation_data['control'][subunit].append(row['value'])
+
+        # Calculate summary statistics for each group and subunit
+        summary_stats = {'toxin': {}, 'control': {}}
+
+        for group in ['toxin', 'control']:
+            for subunit in ['AC', 'BD']:
+                values = fluctuation_data[group][subunit]
+                # Handle case where we might have no data
+                if not values:
+                    summary_stats[group][subunit] = {
+                        'value': np.nan,
+                        'stdDev': np.nan
+                    }
+                else:
+                    summary_stats[group][subunit] = {
+                        'value': np.mean(values),         # Mean of std deviations
+                        'stdDev': np.std(values, ddof=1)  # Std dev of std deviations
+                    }
+
+        # Calculate p-values and effect sizes for toxin vs control
+        p_values = {}
+        effect_sizes = {}
+
+        for subunit in ['AC', 'BD']:
+            toxin_values = fluctuation_data['toxin'][subunit]
+            control_values = fluctuation_data['control'][subunit]
+
+            # Only calculate if we have enough data points
+            if len(toxin_values) > 1 and len(control_values) > 1:
+                p_values[subunit] = calculate_p_value(toxin_values, control_values)
+                effect_sizes[subunit] = calculate_effect_size(toxin_values, control_values)
+            else:
+                p_values[subunit] = None
+                effect_sizes[subunit] = None
+
+        # Generate significance interpretations
+        if p_values['AC'] is not None and p_values['BD'] is not None:
+            from ..components.stats_analysis import interpret_p_value, interpret_effect_size
+            significance_notes = {
+                'AC': f"The difference in G-G distance fluctuations between toxin and control is {interpret_p_value(p_values['AC'])} for the A:C subunit pair with {interpret_effect_size(effect_sizes['AC'])} effect size.",
+                'BD': f"The difference in G-G distance fluctuations between toxin and control is {interpret_p_value(p_values['BD'])} for the B:D subunit pair with {interpret_effect_size(effect_sizes['BD'])} effect size."
+            }
+        else:
+            significance_notes = {
+                'AC': "Not enough data for statistical analysis of A:C fluctuations.",
+                'BD': "Not enough data for statistical analysis of B:D fluctuations."
+            }
+
+        return {
+            "summary_fluctuations": summary_stats,                # For bar chart
+            "individual_fluctuations": fluctuation_data,          # For scatter points
+            "stats": {
+                "p_values": p_values,                             # For significance
+                "effect_sizes": effect_sizes                      # For effect size
+            },
+            "significance_notes": significance_notes,             # For text description
+            "num_systems": min(len(run_metadata.toxin_run_ids), len(run_metadata.control_run_ids))
         }
 
     def _copy_assets(self):

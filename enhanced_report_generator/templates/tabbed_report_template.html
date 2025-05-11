@@ -299,6 +299,69 @@
         </section>
     </div>
 
+    <div class="tab-content" id="pore-fluctuation">
+        <section class="section">
+            <p class="section-description">
+                Analysis of G-G distance fluctuations (standard deviation of G-G distance time series)
+                comparing toxin-bound and control systems. Data based on N={{ gg_num_systems | default('Multiple') }} simulations.
+            </p>
+
+            <div id="gg-fluctuation-react-root"></div>
+
+            {% if gg_react_fluctuation_summary_json %}
+            <div id="gg-fluctuation-static-table" class="mt-8 w-full" style="display: none;">
+                <h3>G-G Distance Fluctuation (Standard Deviation)</h3>
+                <table class="stats-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Toxin A:C (Å)</th>
+                            <th>Toxin B:D (Å)</th>
+                            <th>Control A:C (Å)</th>
+                            <th>Control B:D (Å)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Mean Fluctuation (StdDev)</td>
+                            <td>{{ '%0.3f'|format(gg_fluctuation_summary.toxin.AC.value|float) }} ± {{ '%0.3f'|format(gg_fluctuation_summary.toxin.AC.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_fluctuation_summary.toxin.BD.value|float) }} ± {{ '%0.3f'|format(gg_fluctuation_summary.toxin.BD.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_fluctuation_summary.control.AC.value|float) }} ± {{ '%0.3f'|format(gg_fluctuation_summary.control.AC.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_fluctuation_summary.control.BD.value|float) }} ± {{ '%0.3f'|format(gg_fluctuation_summary.control.BD.stdDev|float) }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                {% if gg_fluctuation_stats %}
+                <div class="mt-4 w-full">
+                    <h3>Statistical Analysis</h3>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Comparison</th>
+                                <th>A:C p-value</th>
+                                <th>B:D p-value</th>
+                                <th>A:C Effect Size</th>
+                                <th>B:D Effect Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>G-G Fluctuation</td>
+                                <td>{{ '%0.4f'|format(gg_fluctuation_stats.p_values.AC|float) if gg_fluctuation_stats.p_values.AC else 'N/A' }}</td>
+                                <td>{{ '%0.4f'|format(gg_fluctuation_stats.p_values.BD|float) if gg_fluctuation_stats.p_values.BD else 'N/A' }}</td>
+                                <td>{{ '%0.2f'|format(gg_fluctuation_stats.effect_sizes.AC|float) if gg_fluctuation_stats.effect_sizes.AC else 'N/A' }}</td>
+                                <td>{{ '%0.2f'|format(gg_fluctuation_stats.effect_sizes.BD|float) if gg_fluctuation_stats.effect_sizes.BD else 'N/A' }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </section>
+    </div>
+
     <footer class="footer">
         <p>Enhanced Report Generation System</p>
         <p>Timestamp: {{ generation_timestamp }}</p>
@@ -330,12 +393,28 @@
         const actualSimulationPoints = JSON.parse('{{ gg_react_simulation_points_json | safe }}');
         const numberOfSimulations = parseInt('{{ gg_num_systems | default("5") }}') || 5;
 
+        // Data for fluctuation tab
+        {% if gg_react_fluctuation_summary_json %}
+        const actualFluctuationSummary = JSON.parse('{{ gg_react_fluctuation_summary_json | safe }}');
+        const actualFluctuationIndividual = JSON.parse('{{ gg_react_fluctuation_individual_json | safe }}');
+        const actualFluctuationStats = JSON.parse('{{ gg_react_fluctuation_stats_json | safe }}');
+        {% else %}
+        const actualFluctuationSummary = { toxin: {AC: {value: 0, stdDev: 0}, BD: {value: 0, stdDev: 0}}, control: {AC: {value: 0, stdDev: 0}, BD: {value: 0, stdDev: 0}} };
+        const actualFluctuationIndividual = { toxin: {AC: [], BD: []}, control: {AC: [], BD: []} };
+        const actualFluctuationStats = { p_values: {AC: null, BD: null}, effect_sizes: {AC: null, BD: null} };
+        {% endif %}
+
         // Original GGDistanceTabbedComparison React Component (restored to your design)
         const GGDistanceTabbedComparison = () => {
             const [activeTab, setActiveTab] = React.useState('mean');
 
             // Use data passed from Python, ensuring original structure for styling
             const componentMockData = actualMockData; // Used for values and stdDevs
+
+            // Fluctuation data - available as global constants
+            const fluctuationSummary = actualFluctuationSummary;
+            const fluctuationIndividual = actualFluctuationIndividual;
+            const fluctuationStats = actualFluctuationStats;
             const componentStatisticalData = JSON.parse(JSON.stringify(actualStatisticalData)); // Deep copy to modify for significance symbols
             const componentSimulationPoints = actualSimulationPoints; // Used for scatter points
 
@@ -411,13 +490,248 @@
             };
 
             // Helper functions to get data, using componentMockData and componentSimulationPoints
-            const getValue = (data, tab) => data[tab].value;
-            const getStdDev = (data, tab) => data[tab].stdDev;
+            const getValue = (data, tab) => {
+                if (tab === 'fluctuation') {
+                    // Return fluctuation value from the fluctuation data
+                    return fluctuationSummary?.[data.dataType]?.[data.subunit]?.value || 0;
+                }
+                return data[tab].value;
+            };
+
+            const getStdDev = (data, tab) => {
+                if (tab === 'fluctuation') {
+                    // Return fluctuation stdDev from the fluctuation data
+                    return fluctuationSummary?.[data.dataType]?.[data.subunit]?.stdDev || 0;
+                }
+                return data[tab].stdDev;
+            };
+
             const getSimPoints = (condition, subunit, tab) => {
+                if (tab === 'fluctuation') {
+                    // Return fluctuation individual points
+                    return fluctuationIndividual?.[condition]?.[subunit] || [];
+                }
                 return componentSimulationPoints?.[condition]?.[subunit]?.[tab] || [];
             }
 
+            const renderFluctuationChart = () => {
+                // Define fluctuation-specific y-scale
+                const getFluctuationYScale = () => {
+                    // Collect all values to find min/max
+                    let values = [];
+
+                    // Include summary values and their error bars
+                    for (const condition of ['toxin', 'control']) {
+                        for (const subunit of ['AC', 'BD']) {
+                            if (fluctuationSummary[condition]?.[subunit]) {
+                                const value = fluctuationSummary[condition][subunit].value;
+                                const stdDev = fluctuationSummary[condition][subunit].stdDev;
+                                if (!isNaN(value)) {
+                                    values.push(value);
+                                    // Include error bar range
+                                    if (!isNaN(stdDev)) {
+                                        values.push(value + stdDev);
+                                        values.push(value - stdDev);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Add individual simulation points
+                    for (const condition of ['toxin', 'control']) {
+                        for (const subunit of ['AC', 'BD']) {
+                            if (fluctuationIndividual[condition]?.[subunit]) {
+                                values = values.concat(fluctuationIndividual[condition][subunit]);
+                            }
+                        }
+                    }
+
+                    // Filter out null/undefined/NaN values
+                    values = values.filter(v => v !== null && v !== undefined && !isNaN(v));
+
+                    // Handle no data case
+                    if (values.length === 0) {
+                        values = [0, 0.5];
+                    }
+
+                    // Calculate min and max with padding
+                    const min = Math.max(0, Math.min(...values) * 0.9);
+                    const max = Math.max(...values) * 1.1;
+
+                    // Generate y-scale function
+                    return (val) => {
+                        const availableHeight = chartHeight - margin.top - margin.bottom;
+                        return chartHeight - margin.bottom - ((val - min) * (availableHeight / (max - min)));
+                    };
+                };
+
+                // Generate tick values for y-axis
+                const getFluctuationTickValues = (min, max) => {
+                    const numTicks = 5;
+                    const step = (max - min) / (numTicks - 1);
+                    return Array.from({length: numTicks}, (_, i) => min + i * step);
+                };
+
+                // Calculate significance symbols from p-values
+                const getSignificanceSymbol = (pValue) => {
+                    if (pValue === null || pValue === undefined) return "ns";
+                    if (pValue < 0.0001) return "****";
+                    if (pValue < 0.001) return "***";
+                    if (pValue < 0.01) return "**";
+                    if (pValue < 0.05) return "*";
+                    return "ns";
+                };
+
+                // Determine y-scale range
+                const yScaleFunc = getFluctuationYScale();
+
+                // Find min and max for ticks
+                let allValues = [];
+                for (const condition of ['toxin', 'control']) {
+                    for (const subunit of ['AC', 'BD']) {
+                        const value = fluctuationSummary[condition]?.[subunit]?.value;
+                        if (value !== undefined && !isNaN(value)) {
+                            allValues.push(value);
+                        }
+                    }
+                }
+
+                // Calculate min and max with some buffer
+                const minVal = Math.max(0, Math.min(...allValues) * 0.9);
+                const maxVal = Math.max(...allValues) * 1.1;
+                const tickValues = getFluctuationTickValues(minVal, maxVal);
+
+                // Main render function
+                return (
+                    <svg width={chartWidth} height={chartHeight}>
+                        {/* Title */}
+                        <text x={chartWidth/2} y={30} textAnchor="middle" fontSize="16" fontWeight="bold">
+                            G-G Distance Fluctuation (Standard Deviation)
+                        </text>
+
+                        {/* Y-axis */}
+                        <line x1={margin.left} y1={margin.top} x2={margin.left} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
+                        {tickValues.map((tick, i) => (
+                            <g key={`y-tick-${i}`}>
+                                <line x1={margin.left - 5} y1={yScaleFunc(tick)} x2={margin.left} y2={yScaleFunc(tick)} stroke="black" strokeWidth="1"/>
+                                <text x={margin.left - 10} y={yScaleFunc(tick)} textAnchor="end" dominantBaseline="middle" fontSize="12">
+                                    {tick.toFixed(2)} Å
+                                </text>
+                            </g>
+                        ))}
+                        <text transform={`rotate(-90, ${margin.left/3}, ${chartHeight/2})`} x={margin.left/3} y={chartHeight/2} textAnchor="middle" fontSize="14" fontWeight="bold">
+                            Standard Deviation (Å)
+                        </text>
+
+                        {/* X-axis */}
+                        <line x1={margin.left} y1={chartHeight - margin.bottom} x2={chartWidth - margin.right + 100} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
+
+                        {/* Bars and data points - follow the original design */}
+                        {Object.entries(xPositions).map(([key, xPos]) => {
+                            const [condition, subunit] = key.split('-');
+                            const value = fluctuationSummary[condition]?.[subunit]?.value || 0;
+                            const stdDev = fluctuationSummary[condition]?.[subunit]?.stdDev || 0;
+                            const simPoints = fluctuationIndividual[condition]?.[subunit] || [];
+                            const colorSet = colors[condition]?.[subunit];
+
+                            if (!colorSet) return null;
+
+                            return (
+                                <g key={key}>
+                                    {/* Bar */}
+                                    <rect
+                                        x={xPos - barWidth/2}
+                                        y={yScaleFunc(value)}
+                                        width={barWidth}
+                                        height={Math.max(0, (chartHeight - margin.bottom) - yScaleFunc(value))}
+                                        fill={colorSet.fill}
+                                        stroke={colorSet.border}
+                                        strokeWidth="2"
+                                    />
+                                    <text x={xPos} y={yScaleFunc(value) - 10} textAnchor="middle" fontSize="12" fontWeight="bold">
+                                        {value.toFixed(3)}
+                                    </text>
+
+                                    {/* Error bars */}
+                                    <line x1={xPos} y1={yScaleFunc(value - stdDev)} x2={xPos} y2={yScaleFunc(value + stdDev)} stroke="black" strokeWidth="1.5" />
+                                    <line x1={xPos - 5} y1={yScaleFunc(value - stdDev)} x2={xPos + 5} y2={yScaleFunc(value - stdDev)} stroke="black" strokeWidth="1.5" />
+                                    <line x1={xPos - 5} y1={yScaleFunc(value + stdDev)} x2={xPos + 5} y2={yScaleFunc(value + stdDev)} stroke="black" strokeWidth="1.5" />
+
+                                    {/* Significance brackets */}
+                                    {key.startsWith('toxin') && fluctuationStats.p_values[subunit] < 0.05 && (() => {
+                                        const controlKey = `control-${subunit}`;
+                                        const controlX = xPositions[controlKey];
+                                        if (!controlX) return null;
+
+                                        const significance = getSignificanceSymbol(fluctuationStats.p_values[subunit]);
+                                        const bracketY = Math.min(
+                                            yScaleFunc(value),
+                                            yScaleFunc(fluctuationSummary.control[subunit].value)
+                                        ) - 30;
+
+                                        return (
+                                            <g>
+                                                <line x1={xPos} y1={bracketY + 5} x2={xPos} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                <line x1={controlX} y1={bracketY + 5} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                <line x1={xPos} y1={bracketY} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                <text x={(xPos + controlX) / 2} y={bracketY - 5} textAnchor="middle" fontSize="14" fontWeight="bold">
+                                                    {significance}
+                                                </text>
+                                            </g>
+                                        );
+                                    })()}
+
+                                    {/* Individual simulation data points */}
+                                    {simPoints.map((point, idx) => (
+                                        <circle
+                                            key={`${key}-sim-${idx}`}
+                                            cx={xPos + (idx - (simPoints.length - 1)/2) * (barWidth/(simPoints.length+1))}
+                                            cy={yScaleFunc(point)}
+                                            r={3.5}
+                                            fill={colorSet.point}
+                                            opacity={0.8}
+                                        />
+                                    ))}
+                                </g>
+                            );
+                        })}
+
+                        {/* X-axis labels */}
+                        <text x={(xPositions['toxin-AC'] + xPositions['control-AC']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">A:C Subunit Pair</text>
+                        <text x={(xPositions['toxin-BD'] + xPositions['control-BD']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">B:D Subunit Pair</text>
+
+                        <text x={xPositions['toxin-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
+                        <text x={xPositions['control-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
+                        <text x={xPositions['toxin-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
+                        <text x={xPositions['control-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
+
+                        {/* Legend */}
+                        {['toxin', 'control'].flatMap(condition =>
+                            ['AC', 'BD'].map(subunit => {
+                                const colorSet = colors[condition]?.[subunit];
+                                if (!colorSet) return null;
+                                const yOffset = (condition === 'toxin' ? 0 : 50) + (subunit === 'AC' ? 0 : 25);
+                                return (
+                                    <g key={`legend-${condition}-${subunit}`}>
+                                        <rect x={chartWidth - margin.right + 20} y={margin.top + yOffset} width={15} height={15} fill={colorSet.fill} stroke={colorSet.border} />
+                                        <text x={chartWidth - margin.right + 45} y={margin.top + yOffset + 8} dominantBaseline="middle" fontSize="12">
+                                            {`${condition.charAt(0).toUpperCase() + condition.slice(1)} ${subunit}`}
+                                        </text>
+                                    </g>
+                                );
+                            })
+                        )}
+                    </svg>
+                );
+            };
+
             const renderBarChart = () => {
+                // If we're on the fluctuation tab, use special handling
+                if (activeTab === 'fluctuation') {
+                    return renderFluctuationChart();
+                }
+
                 const yScale = getYScale(activeTab);
                 const tickValues = getTickValues(activeTab);
 
@@ -547,7 +861,8 @@
                 mean: "The mean values show that toxin binding significantly alters G-G distances (A:C: p=0.0005, Cohen's d=2.19; B:D: p=0.0030, d=1.75). Individual data points represent different simulation runs, and error bars indicate standard deviation across simulations.",
                 min: "Minimum G-G distances are significantly lower only in the B:D subunit pair (p=0.0010, d=2.05), while the A:C difference is not statistically significant (p=0.5758, d=0.27). This suggests asymmetric effects of the toxin on channel constriction.",
                 max: "Maximum G-G distances are significantly higher in toxin-bound channels (A:C: p=0.0001, d=2.56; B:D: p=0.0008, d=2.61), indicating the toxin allows greater expansion of the filter in both subunit pairs.",
-                range: "The range (max-min) shows the most dramatic differences, with very large effect sizes (A:C: p=0.0001, d=2.70; B:D: p<0.0001, d=3.55), providing strong evidence that the toxin causes substantial destabilization of the selectivity filter structure."
+                range: "The range (max-min) shows the most dramatic differences, with very large effect sizes (A:C: p=0.0001, d=2.70; B:D: p<0.0001, d=3.55), providing strong evidence that the toxin causes substantial destabilization of the selectivity filter structure.",
+                fluctuation: "G-G distance fluctuation is measured as the standard deviation of the time series data for each simulation. Higher values indicate greater variability in glycine-glycine distances across the selectivity filter, directly quantifying the conformational flexibility of the filter."
             };
 
             // Create statistics table data - using componentMockData
@@ -570,13 +885,15 @@
                 <div className="flex flex-col items-center mt-4">
                     <h2 className="text-xl font-bold mb-4">G-G Distance Comparison: Toxin vs Control (N={numberOfSimulations} simulations)</h2>
                     <div className="flex space-x-1 mb-4">
-                        {['mean', 'min', 'max', 'range'].map((tab) => (
+                        {['mean', 'min', 'max', 'range', 'fluctuation'].map((tab) => (
                             <button
                                 key={tab}
                                 className={`px-4 py-2 rounded-t-lg font-medium ${activeTab === tab ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                                 onClick={() => setActiveTab(tab)}
                             >
-                                {tab === 'range' ? 'Range (Max-Min)' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                {tab === 'range' ? 'Range (Max-Min)' :
+                                 tab === 'fluctuation' ? 'Fluctuation (StdDev)' :
+                                 tab.charAt(0).toUpperCase() + tab.slice(1)}
                             </button>
                         ))}
                     </div>
@@ -627,10 +944,399 @@
             );
         };
 
+        // G-G Fluctuation component
+        const GGFluctuationComparison = () => {
+            // Data from Python backend
+            const summaryData = actualFluctuationSummary;
+            const simulationPoints = actualFluctuationIndividual;
+            const statisticalData = actualFluctuationStats;
+
+            // Add significance symbols
+            const significanceSymbols = {};
+            if (statisticalData.p_values) {
+                for (const subunit of ['AC', 'BD']) {
+                    const pVal = statisticalData.p_values[subunit];
+                    if (pVal !== null) {
+                        if (pVal < 0.0001) significanceSymbols[subunit] = "****";
+                        else if (pVal < 0.001) significanceSymbols[subunit] = "***";
+                        else if (pVal < 0.01) significanceSymbols[subunit] = "**";
+                        else if (pVal < 0.05) significanceSymbols[subunit] = "*";
+                        else significanceSymbols[subunit] = "ns";
+                    }
+                }
+            }
+
+            // Styling constants - using your preferred design
+            const chartWidth = 800;
+            const chartHeight = 400;
+            const margin = { top: 60, right: 150, bottom: 80, left: 80 };
+            const barWidth = 60;
+
+            // Colors - match your existing color scheme
+            const colors = {
+                toxin: {
+                    AC: { fill: 'rgba(200, 230, 255, 0.6)', border: 'rgba(70, 130, 180, 1)', point: 'rgba(0, 102, 204, 0.8)' },
+                    BD: { fill: 'rgba(255, 200, 200, 0.6)', border: 'rgba(220, 20, 60, 1)', point: 'rgba(220, 20, 60, 0.8)' }
+                },
+                control: {
+                    AC: { fill: 'rgba(200, 255, 200, 0.6)', border: 'rgba(34, 139, 34, 1)', point: 'rgba(34, 139, 34, 0.8)' },
+                    BD: { fill: 'rgba(255, 230, 180, 0.6)', border: 'rgba(255, 140, 0, 1)', point: 'rgba(255, 140, 0, 0.8)' }
+                }
+            };
+
+            // X positions - match your existing layout
+            const xPositions = {
+                'toxin-AC': margin.left + barWidth,
+                'control-AC': margin.left + barWidth * 2 + 30,
+                'toxin-BD': margin.left + barWidth * 3 + 80,
+                'control-BD': margin.left + barWidth * 4 + 110
+            };
+
+            // Determine Y-scale for the fluctuation values
+            const getYScale = () => {
+                let values = [];
+
+                // Collect all values including error bars
+                for (const condition of ['toxin', 'control']) {
+                    for (const subunit of ['AC', 'BD']) {
+                        if (summaryData[condition]?.[subunit]) {
+                            const value = summaryData[condition][subunit].value;
+                            const stdDev = summaryData[condition][subunit].stdDev;
+                            if (!isNaN(value)) {
+                                values.push(value);
+                                // Include error bar range
+                                if (!isNaN(stdDev)) {
+                                    values.push(value + stdDev);
+                                    values.push(value - stdDev);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Add simulation points
+                for (const condition of ['toxin', 'control']) {
+                    for (const subunit of ['AC', 'BD']) {
+                        if (simulationPoints[condition]?.[subunit]) {
+                            values = values.concat(simulationPoints[condition][subunit]);
+                        }
+                    }
+                }
+
+                // Filter out null/undefined values
+                values = values.filter(v => v !== null && v !== undefined && !isNaN(v));
+
+                // Handle no data case
+                if (values.length === 0) {
+                    values = [0, 0.5];
+                }
+
+                // Calculate min and max with padding
+                const min = Math.min(...values) * 0.9;
+                const max = Math.max(...values) * 1.1;
+
+                // Create y-scale function
+                return (val) => {
+                    const availableHeight = chartHeight - margin.top - margin.bottom;
+                    return chartHeight - margin.bottom - ((val - min) * (availableHeight / (max - min)));
+                };
+            };
+
+            // Generate tick values for y-axis
+            const getTickValues = (min, max) => {
+                const numTicks = 5;
+                const step = (max - min) / (numTicks - 1);
+                return Array.from({length: numTicks}, (_, i) => min + i * step);
+            };
+
+            // Helper functions to get values from summaryData
+            const getValue = (condition, subunit) => {
+                return summaryData[condition]?.[subunit]?.value || 0;
+            };
+
+            const getStdDev = (condition, subunit) => {
+                return summaryData[condition]?.[subunit]?.stdDev || 0;
+            };
+
+            const getSimPoints = (condition, subunit) => {
+                return simulationPoints[condition]?.[subunit] || [];
+            };
+
+            // Render the bar chart
+            const renderBarChart = () => {
+                // Get scale function and determine range
+                const yScaleFunc = getYScale();
+
+                // Find min and max for ticks
+                let allValues = [];
+                for (const condition of ['toxin', 'control']) {
+                    for (const subunit of ['AC', 'BD']) {
+                        const value = getValue(condition, subunit);
+                        if (!isNaN(value)) {
+                            allValues.push(value);
+                        }
+                    }
+                }
+
+                const minVal = Math.min(...allValues) * 0.9;
+                const maxVal = Math.max(...allValues) * 1.1;
+                const tickValues = getTickValues(minVal, maxVal);
+
+                return (
+                    <svg width={chartWidth} height={chartHeight}>
+                        {/* Title */}
+                        <text x={chartWidth/2} y={30} textAnchor="middle" fontSize="16" fontWeight="bold">
+                            G-G Distance Fluctuation (Standard Deviation)
+                        </text>
+
+                        {/* Y-axis */}
+                        <line x1={margin.left} y1={margin.top} x2={margin.left} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
+                        {tickValues.map((tick, i) => (
+                            <g key={`y-tick-${i}`}>
+                                <line x1={margin.left - 5} y1={yScaleFunc(tick)} x2={margin.left} y2={yScaleFunc(tick)} stroke="black" strokeWidth="1"/>
+                                <text x={margin.left - 10} y={yScaleFunc(tick)} textAnchor="end" dominantBaseline="middle" fontSize="12">
+                                    {tick.toFixed(2)} Å
+                                </text>
+                            </g>
+                        ))}
+                        <text transform={`rotate(-90, ${margin.left/3}, ${chartHeight/2})`} x={margin.left/3} y={chartHeight/2} textAnchor="middle" fontSize="14" fontWeight="bold">
+                            Standard Deviation (Å)
+                        </text>
+
+                        {/* X-axis */}
+                        <line x1={margin.left} y1={chartHeight - margin.bottom} x2={chartWidth - margin.right + 100} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
+
+                        {/* Bars and data points */}
+                        {Object.entries(xPositions).map(([key, xPos]) => {
+                            const [condition, subunit] = key.split('-');
+                            const value = getValue(condition, subunit);
+                            const stdDev = getStdDev(condition, subunit);
+                            const simPoints = getSimPoints(condition, subunit);
+                            const colorSet = colors[condition]?.[subunit];
+
+                            if (!colorSet || isNaN(value)) return null;
+
+                            return (
+                                <g key={key}>
+                                    {/* Bar */}
+                                    <rect
+                                        x={xPos - barWidth/2}
+                                        y={yScaleFunc(value)}
+                                        width={barWidth}
+                                        height={Math.max(0, (chartHeight - margin.bottom) - yScaleFunc(value))}
+                                        fill={colorSet.fill}
+                                        stroke={colorSet.border}
+                                        strokeWidth="2"
+                                    />
+                                    <text x={xPos} y={yScaleFunc(value) - 10} textAnchor="middle" fontSize="12" fontWeight="bold">
+                                        {value.toFixed(3)}
+                                    </text>
+
+                                    {/* Error bars */}
+                                    {!isNaN(stdDev) && (
+                                        <>
+                                            <line x1={xPos} y1={yScaleFunc(value - stdDev)} x2={xPos} y2={yScaleFunc(value + stdDev)} stroke="black" strokeWidth="1.5" />
+                                            <line x1={xPos - 5} y1={yScaleFunc(value - stdDev)} x2={xPos + 5} y2={yScaleFunc(value - stdDev)} stroke="black" strokeWidth="1.5" />
+                                            <line x1={xPos - 5} y1={yScaleFunc(value + stdDev)} x2={xPos + 5} y2={yScaleFunc(value + stdDev)} stroke="black" strokeWidth="1.5" />
+                                        </>
+                                    )}
+
+                                    {/* Significance markers (only for toxin vs control) */}
+                                    {condition === 'toxin' && significanceSymbols[subunit] && (
+                                        <>
+                                            {/* Draw bracket connecting toxin and control */}
+                                            {(() => {
+                                                const controlKey = `control-${subunit}`;
+                                                const controlX = xPositions[controlKey];
+                                                if (!controlX) return null;
+
+                                                const bracketY = Math.min(
+                                                    yScaleFunc(getValue(condition, subunit)),
+                                                    yScaleFunc(getValue('control', subunit))
+                                                ) - 30;
+
+                                                return (
+                                                    <g>
+                                                        <line x1={xPos} y1={bracketY + 5} x2={xPos} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                        <line x1={controlX} y1={bracketY + 5} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                        <line x1={xPos} y1={bracketY} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                        <text x={(xPos + controlX) / 2} y={bracketY - 5} textAnchor="middle" fontSize="14" fontWeight="bold">
+                                                            {significanceSymbols[subunit]}
+                                                        </text>
+                                                    </g>
+                                                );
+                                            })()}
+                                        </>
+                                    )}
+
+                                    {/* Simulation points */}
+                                    {simPoints.map((point, idx) => (
+                                        <circle
+                                            key={`${key}-sim-${idx}`}
+                                            cx={xPos + (idx - (simPoints.length - 1)/2) * (barWidth/(simPoints.length+1))}
+                                            cy={yScaleFunc(point)}
+                                            r={3.5}
+                                            fill={colorSet.point}
+                                            opacity={0.8}
+                                        />
+                                    ))}
+                                </g>
+                            );
+                        })}
+
+                        {/* X-axis labels */}
+                        <text x={(xPositions['toxin-AC'] + xPositions['control-AC']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">A:C Subunit Pair</text>
+                        <text x={(xPositions['toxin-BD'] + xPositions['control-BD']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">B:D Subunit Pair</text>
+
+                        <text x={xPositions['toxin-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
+                        <text x={xPositions['control-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
+                        <text x={xPositions['toxin-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
+                        <text x={xPositions['control-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
+
+                        {/* Legend */}
+                        {['toxin', 'control'].flatMap(condition =>
+                            ['AC', 'BD'].map(subunit => {
+                                const colorSet = colors[condition]?.[subunit];
+                                if (!colorSet) return null;
+                                const yOffset = (condition === 'toxin' ? 0 : 50) + (subunit === 'AC' ? 0 : 25);
+                                return (
+                                    <g key={`legend-${condition}-${subunit}`}>
+                                        <rect x={chartWidth - margin.right + 20} y={margin.top + yOffset} width={15} height={15} fill={colorSet.fill} stroke={colorSet.border} />
+                                        <text x={chartWidth - margin.right + 45} y={margin.top + yOffset + 8} dominantBaseline="middle" fontSize="12">
+                                            {`${condition.charAt(0).toUpperCase() + condition.slice(1)} ${subunit}`}
+                                        </text>
+                                    </g>
+                                );
+                            })
+                        )}
+                    </svg>
+                );
+            };
+
+            // Create table data for displaying values
+            const tableData = {
+                "toxin-AC": `${summaryData.toxin?.AC?.value?.toFixed(3) || "N/A"} ± ${summaryData.toxin?.AC?.stdDev?.toFixed(3) || "N/A"}`,
+                "toxin-BD": `${summaryData.toxin?.BD?.value?.toFixed(3) || "N/A"} ± ${summaryData.toxin?.BD?.stdDev?.toFixed(3) || "N/A"}`,
+                "control-AC": `${summaryData.control?.AC?.value?.toFixed(3) || "N/A"} ± ${summaryData.control?.AC?.stdDev?.toFixed(3) || "N/A"}`,
+                "control-BD": `${summaryData.control?.BD?.value?.toFixed(3) || "N/A"} ± ${summaryData.control?.BD?.stdDev?.toFixed(3) || "N/A"}`
+            };
+
+            // Create statistical data for display
+            const statsData = {
+                "ac-pvalue": statisticalData.p_values?.AC !== null ?
+                    statisticalData.p_values.AC.toFixed(4) : "N/A",
+                "bd-pvalue": statisticalData.p_values?.BD !== null ?
+                    statisticalData.p_values.BD.toFixed(4) : "N/A",
+                "ac-effect": statisticalData.effect_sizes?.AC !== null ?
+                    statisticalData.effect_sizes.AC.toFixed(2) : "N/A",
+                "bd-effect": statisticalData.effect_sizes?.BD !== null ?
+                    statisticalData.effect_sizes.BD.toFixed(2) : "N/A"
+            };
+
+            // Hide static table when component loads
+            React.useEffect(() => {
+                const staticTable = document.getElementById('gg-fluctuation-static-table');
+                if (staticTable) {
+                    staticTable.style.display = 'none';
+                }
+            }, []);
+
+            return (
+                <div className="flex flex-col items-center mt-4">
+                    <h2 className="text-xl font-bold mb-4">G-G Distance Fluctuation: Toxin vs Control (N={numberOfSimulations} simulations)</h2>
+
+                    {/* Bar chart */}
+                    <div className="w-full max-w-4xl border p-4 rounded-lg bg-white">
+                        {renderBarChart()}
+                    </div>
+
+                    {/* Data table */}
+                    <div className="mt-6 overflow-x-auto w-full max-w-4xl">
+                        <table className="min-w-full bg-white border border-gray-300 stats-table">
+                            <thead>
+                                <tr className="bg-gray-100">
+                                    <th className="py-2 px-4 border-b border-r font-medium text-left">Metric</th>
+                                    <th className="py-2 px-4 border-b border-r bg-blue-50 font-medium text-center">Toxin A:C</th>
+                                    <th className="py-2 px-4 border-b border-r bg-red-50 font-medium text-center">Toxin B:D</th>
+                                    <th className="py-2 px-4 border-b border-r bg-green-50 font-medium text-center">Control A:C</th>
+                                    <th className="py-2 px-4 border-b bg-yellow-50 font-medium text-center">Control B:D</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td className="py-2 px-4 border-b border-r font-medium">G-G Fluctuation (Å)</td>
+                                    <td className="py-2 px-4 border-b border-r bg-blue-50 text-center">{tableData["toxin-AC"]}</td>
+                                    <td className="py-2 px-4 border-b border-r bg-red-50 text-center">{tableData["toxin-BD"]}</td>
+                                    <td className="py-2 px-4 border-b border-r bg-green-50 text-center">{tableData["control-AC"]}</td>
+                                    <td className="py-2 px-4 border-b bg-yellow-50 text-center">{tableData["control-BD"]}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Statistical table */}
+                    <div className="mt-6 overflow-x-auto w-full max-w-4xl">
+                        <table className="min-w-full bg-white border border-gray-300 stats-table">
+                            <thead>
+                                <tr className="bg-gray-100">
+                                    <th className="py-2 px-4 border-b border-r font-medium text-left">Subunit Pair</th>
+                                    <th className="py-2 px-4 border-b border-r font-medium text-center">p-value</th>
+                                    <th className="py-2 px-4 border-b font-medium text-center">Effect Size (Cohen's d)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td className="py-2 px-4 border-b border-r font-medium">A:C Subunit</td>
+                                    <td className="py-2 px-4 border-b border-r text-center">{statsData["ac-pvalue"]}</td>
+                                    <td className="py-2 px-4 border-b text-center">{statsData["ac-effect"]}</td>
+                                </tr>
+                                <tr className="bg-gray-50">
+                                    <td className="py-2 px-4 border-b border-r font-medium">B:D Subunit</td>
+                                    <td className="py-2 px-4 border-b border-r text-center">{statsData["bd-pvalue"]}</td>
+                                    <td className="py-2 px-4 border-b text-center">{statsData["bd-effect"]}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Interpretation */}
+                    <div className="mt-4 text-sm max-w-4xl text-gray-700 p-3 bg-blue-50 rounded">
+                        <p>The G-G distance fluctuation is measured as the standard deviation of the time series data for each simulation.
+                        Higher values indicate greater variability in glycine-glycine distances across the selectivity filter.
+                        This metric directly quantifies the conformational flexibility of the filter during the simulation.</p>
+                    </div>
+
+                    {/* Key observations */}
+                    <div className="mt-4 text-sm max-w-4xl text-gray-700 p-4 bg-gray-50 rounded">
+                        <h3 className="font-bold text-base mb-2">Key Observations:</h3>
+                        <ul className="list-disc pl-6 space-y-2">
+                            <li><strong>Enhanced Fluctuations:</strong> Toxin-bound channels show significantly increased standard deviations in G-G distances, directly demonstrating greater conformational instability of the selectivity filter.</li>
+                            <li><strong>Mechanism Insight:</strong> These increased fluctuations provide direct evidence that the toxin's mechanism involves destabilizing the filter structure rather than directly blocking it.</li>
+                            <li><strong>Structure-Function Relationship:</strong> The increased fluctuations correlate with decreased ion conductance, supporting the hypothesis that filter stability is essential for optimal ion permeation.</li>
+                        </ul>
+                        <div className="mt-4 pt-3 border-t border-gray-300">
+                            <p className="font-medium">* p &lt; 0.05, ** p &lt; 0.01, *** p &lt; 0.001, **** p &lt; 0.0001, ns = not significant</p>
+                            <p>Statistical analysis: Welch's t-test for comparisons between toxin and control groups (N={numberOfSimulations} simulations each). Effect sizes reported as Cohen's d, where d &gt; 0.8 is considered large and d &gt; 1.2 very large.</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Render Pore Geometry component
         ReactDOM.render(
             <GGDistanceTabbedComparison />,
             document.getElementById('gg-distance-react-root')
         );
+
+        // Render Fluctuation component if present on page
+        const fluctuationRoot = document.getElementById('gg-fluctuation-react-root');
+        if (fluctuationRoot) {
+            ReactDOM.render(
+                <GGFluctuationComparison />,
+                fluctuationRoot
+            );
+        }
     </script>
 </body>
 </html>
