@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report_title }}</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <style>
+        .tab {
+            overflow: hidden;
+            border: 1px solid #ccc;
+            background-color: #f1f1f1;
+            border-radius: 5px 5px 0 0;
+        }
+        
+        .tab button {
+            background-color: inherit;
+            float: left;
+            border: none;
+            outline: none;
+            cursor: pointer;
+            padding: 14px 16px;
+            transition: 0.3s;
+            font-size: 16px;
+        }
+        
+        .tab button:hover {
+            background-color: #ddd;
+        }
+        
+        .tab button.active {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        .tabcontent {
+            display: none;
+            padding: 6px 12px;
+            border: 1px solid #ccc;
+            border-top: none;
+            border-radius: 0 0 5px 5px;
+            animation: fadeEffect 1s;
+        }
+        
+        @keyframes fadeEffect {
+            from {opacity: 0;}
+            to {opacity: 1;}
+        }
+        
+        .plot-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .plot-container img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 5px;
+        }
+        
+        #summary {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ report_title }}</h1>
+        <p class="timestamp">Report Generated: {{ generation_timestamp }}</p>
+        
+        {% if run_metadata %}
+            <div class="metadata-summary">
+                <p>
+                    Comparing System Groups:
+                    {% if run_metadata.toxin_run_ids and run_metadata.toxin_run_ids|length > 0 %}
+                        <span class="toxin-group">{{ run_metadata.toxin_run_ids|length }} Toxin-Bound System(s)</span>
+                    {% endif %}
+                    {% if run_metadata.control_run_ids and run_metadata.control_run_ids|length > 0 %}
+                        vs. <span class="control-group">{{ run_metadata.control_run_ids|length }} Toxin-Free (Control) System(s)</span>
+                    {% endif %}
+                </p>
+                <p>Toxin Name (if applicable): <span class="toxin-name">{{ run_metadata.toxin_name | default('N/A') }}</span></p>
+                <p>Channel Name: <span class="channel-name">{{ run_metadata.channel_name | default('N/A') }}</span></p>
+            </div>
+        {% endif %}
+    </header>
+    
+    <!-- Tab Navigation -->
+    <div class="tab">
+        <button class="tablinks active" onclick="openTab(event, 'summary')">Summary</button>
+        {% for section in sections %}
+            <button class="tablinks" onclick="openTab(event, 'section{{ loop.index }}')">{{ section.title }}</button>
+        {% endfor %}
+    </div>
+    
+    <!-- Summary Tab -->
+    <div id="summary" class="tabcontent">
+        <h2>Analysis Summary</h2>
+        
+        {% if global_ai_summary %}
+            <div class="ai-interpretation">
+                {{ global_ai_summary | replace('\n', '<br>') | safe }}
+            </div>
+        {% else %}
+            <p>No global summary available.</p>
+        {% endif %}
+        
+        <h3>Sections Overview</h3>
+        <ul>
+            {% for section in sections %}
+                <li>
+                    <a href="javascript:void(0)" onclick="openTab(null, 'section{{ loop.index }}')">
+                        {{ section.title }}
+                    </a> - 
+                    {{ section.metrics|length }} metrics
+                    {% if section.plots|length > 0 %}
+                        with {{ section.plots|length }} visualization(s)
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+    
+    <!-- Section Tabs -->
+    {% for section in sections %}
+        <div id="section{{ loop.index }}" class="tabcontent">
+            <h2>{{ section.title }}</h2>
+            
+            {% if section.description %}
+                <p class="section-description">{{ section.description }}</p>
+            {% endif %}
+            
+            {% if section.plots and section.plots|length > 0 %}
+                <h3>Visualizations</h3>
+                {% for plot in section.plots %}
+                    <div class="plot-container">
+                        <img src="{{ plot }}" alt="Plot for {{ section.title }}">
+                    </div>
+                {% endfor %}
+            {% endif %}
+            
+            {% if section.metrics and section.metrics|length > 0 %}
+                <h3>Metrics</h3>
+                <table class="metrics-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Toxin-Bound</th>
+                            <th>Control</th>
+                            <th>Difference</th>
+                            <th>Units</th>
+                            <th>P-Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for metric in section.metrics %}
+                            <tr{% if metric.significant %} class="significant"{% endif %}>
+                                <td>{{ metric.name }}</td>
+                                <td class="toxin-value">{{ "%.3f"|format(metric.value_toxin) }}</td>
+                                <td class="control-value">{{ "%.3f"|format(metric.value_control) }}</td>
+                                <td>{{ "%.3f"|format(metric.difference) }}{% if metric.significant %} *{% endif %}</td>
+                                <td>{{ metric.units }}</td>
+                                <td>
+                                    {% if metric.p_value is not none %}
+                                        {{ "%.4f"|format(metric.p_value) }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <p><small>* Statistically significant difference (p < 0.05)</small></p>
+            {% else %}
+                <p>No metrics available for this section.</p>
+            {% endif %}
+            
+            {% if section.ai_interpretation %}
+                <h3>AI-Generated Interpretation</h3>
+                <div class="ai-interpretation">
+                    {{ section.ai_interpretation | replace('\n', '<br>') | safe }}
+                </div>
+            {% endif %}
+        </div>
+    {% endfor %}
+    
+    <footer class="footer">
+        <p>Enhanced Report Generation System</p>
+        <p>Timestamp: {{ generation_timestamp }}</p>
+    </footer>
+    
+    <script>
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            
+            // Hide all tab content
+            tabcontent = document.getElementsByClassName("tabcontent");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            
+            // Remove "active" class from all tab buttons
+            tablinks = document.getElementsByClassName("tablinks");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            
+            // Show the selected tab content and add "active" class to the button
+            document.getElementById(tabName).style.display = "block";
+            if (evt) {
+                evt.currentTarget.className += " active";
+            } else {
+                // Find and activate the corresponding tab button when clicking links in the summary
+                for (i = 0; i < tablinks.length; i++) {
+                    if (tablinks[i].getAttribute("onclick").includes(tabName)) {
+                        tablinks[i].className += " active";
+                    }
+                }
+            }
+        }
+        
+        // Default to showing the summary tab
+        document.getElementById("summary").style.display = "block";
+    </script>
+</body>
+</html>

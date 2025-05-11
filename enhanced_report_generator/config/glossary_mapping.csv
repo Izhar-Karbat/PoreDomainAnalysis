@@ -1,0 +1,6 @@
+prefix,section_title,section_description,metric_description_template
+Overview,System Overview,High-level summary of the analyzed systems.,Parameter {metric_name}: {value_toxin} {units}
+DW_,DW Gate Analysis,Analysis of the DW gate dynamics and conformations.,{metric_name}: {value_toxin} vs {value_control} {units} (p={p_value})
+Ion_,Ion Pathway Analysis,Analysis of ion conduction and occupancy patterns in the channel.,{metric_name}: {value_toxin} vs {value_control} {units} (p={p_value})
+Tyr_,Tyrosine Analysis,Analysis of tyrosine residue conformations and interactions.,{metric_name}: {value_toxin} vs {value_control} {units} (p={p_value})
+COM_,Center of Mass Analysis,Analysis of domain movements and center of mass distances.,{metric_name}: {value_toxin} vs {value_control} {units} (p={p_value})

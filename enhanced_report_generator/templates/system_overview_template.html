@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report_title }} - System Overview</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <header>
+        <h1>{{ report_title }}</h1>
+        <p class="timestamp">Report Generated: {{ generation_timestamp }}</p>
+        {% if run_metadata %}
+            <div class="metadata-summary">
+                <p>
+                    Comparing System Groups:
+                    {% if run_metadata.toxin_run_ids and run_metadata.toxin_run_ids|length > 0 %}
+                        <span class="toxin-group">{{ run_metadata.toxin_run_ids|length }} Toxin-Bound System(s)</span>
+                    {% endif %}
+                    {% if run_metadata.control_run_ids and run_metadata.control_run_ids|length > 0 %}
+                        vs. <span class="control-group">{{ run_metadata.control_run_ids|length }} Toxin-Free (Control) System(s)</span>
+                    {% endif %}
+                </p>
+                <p>Toxin Name (if applicable): <span class="toxin-name">{{ run_metadata.toxin_name | default('N/A') }}</span></p>
+                <p>Channel Name: <span class="channel-name">{{ run_metadata.channel_name | default('N/A') }}</span></p>
+            </div>
+        {% endif %}
+    </header>
+
+    <section class="section">
+        <h2>System Overview</h2>
+        {% if section and section.description %}
+            <p class="section-description">{{ section.description }}</p>
+        {% endif %}
+
+        {% if section and section.metrics %}
+            <h3>High-Level Summary</h3>
+            <table class="metrics-table">
+                <thead>
+                    <tr>
+                        <th>Parameter</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for metric in section.metrics %}
+                    <tr>
+                        <td>{{ metric.name }}</td>
+                        <td>
+                            {% if metric.name.startswith('Number of Toxin-Bound') or metric.name.startswith('Avg. Trajectory Frames (Toxin)') %}
+                                <span class="toxin-value">{{ metric.value_toxin }}</span>
+                            {% elif metric.name.startswith('Number of Toxin-Free') or metric.name.startswith('Avg. Trajectory Frames (Control)') %}
+                                <span class="control-value">{{ metric.value_control }}</span>
+                            {% else %}
+                                {{ metric.value_toxin if metric.value_toxin is not none else metric.value_control }}
+                            {% endif %}
+                            {{ metric.units }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>No summary metrics available for this overview.</p>
+        {% endif %}
+
+        {% if run_metadata and run_metadata.toxin_run_ids and run_metadata.toxin_run_ids|length > 0 %}
+            <h3>Toxin-Bound Systems</h3>
+            <ul class="system-list">
+                {% for run_id in run_metadata.toxin_run_ids %}
+                    <li class="toxin-system">{{ run_id }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        {% if run_metadata and run_metadata.control_run_ids and run_metadata.control_run_ids|length > 0 %}
+            <h3>Control Systems</h3>
+            <ul class="system-list">
+                {% for run_id in run_metadata.control_run_ids %}
+                    <li class="control-system">{{ run_id }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        {% if section and section.ai_interpretation %}
+            <h3>AI-Generated Interpretation</h3>
+            <div class="ai-interpretation">
+                {{ section.ai_interpretation }}
+            </div>
+        {% endif %}
+    </section>
+
+    <footer class="footer">
+        <p>Enhanced Report Generation System - Stage 1 MVP</p>
+        <p>Timestamp: {{ generation_timestamp }}</p>
+    </footer>
+</body>
+</html>

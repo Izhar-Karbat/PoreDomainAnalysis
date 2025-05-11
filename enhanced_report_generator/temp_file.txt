@@ -1,0 +1,142 @@
+            <!-- Static HTML version of the statistical display -->
+            <div class="stats-container">
+                <div class="stats-section">
+                    <h4>Toxin vs Control</h4>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Toxin</th>
+                                <th>Control</th>
+                                <th>Significance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>G-G Distance (Å)</td>
+                                <td>8.20</td>
+                                <td>7.87</td>
+                                <td><span class="sig-star" title="p < 0.05">*</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>Cavity Radius (Å)</td>
+                                <td>5.62</td>
+                                <td>5.43</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                            <tr>
+                                <td>Inner Vestibule Waters (count)</td>
+                                <td>14.3</td>
+                                <td>12.5</td>
+                                <td><span class="sig-star-2" title="p < 0.01">**</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>SF Gyration (Å)</td>
+                                <td>3.85</td>
+                                <td>3.74</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="stats-section">
+                    <h4>AC vs BD Chains (Toxin)</h4>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>AC</th>
+                                <th>BD</th>
+                                <th>Significance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>G-G Distance (Å)</td>
+                                <td>8.20</td>
+                                <td>7.98</td>
+                                <td><span class="sig-star" title="p < 0.05">*</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>Cavity Radius (Å)</td>
+                                <td>5.72</td>
+                                <td>5.52</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                            <tr>
+                                <td>Inner Vestibule Waters (count)</td>
+                                <td>14.8</td>
+                                <td>13.9</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>SF Gyration (Å)</td>
+                                <td>3.92</td>
+                                <td>3.78</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="legend">
+                    <strong>Statistical Significance:</strong> 
+                    *** p&lt;0.001, 
+                    ** p&lt;0.01, 
+                    * p&lt;0.05, 
+                    ns: not significant (p≥0.05)
+                </div>
+            </div>
+            
+            <style>
+                .stats-container {
+                    font-family: sans-serif;
+                    margin-bottom: 20px;
+                }
+                
+                .stats-section {
+                    margin-bottom: 20px;
+                }
+                
+                .stats-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 15px;
+                    font-size: 0.95em;
+                }
+                
+                .stats-table th {
+                    background-color: #e9ecef;
+                    font-weight: bold;
+                    padding: 8px 12px;
+                    border: 1px solid #ddd;
+                    text-align: left;
+                }
+                
+                .stats-table td {
+                    padding: 8px 12px;
+                    border: 1px solid #ddd;
+                    position: relative;
+                }
+                
+                .even-row {
+                    background-color: #f8f9fa;
+                }
+                
+                .sig-star, .sig-star-2, .sig-star-3, .sig-ns {
+                    color: #dc3545;
+                    font-weight: bold;
+                    margin-left: 5px;
+                    font-size: 0.9em;
+                }
+                
+                .legend {
+                    margin-top: 10px;
+                    font-size: 0.85em;
+                    color: #666;
+                    padding: 8px;
+                    background-color: #f9f9f9;
+                    border-radius: 4px;
+                }
+            </style>

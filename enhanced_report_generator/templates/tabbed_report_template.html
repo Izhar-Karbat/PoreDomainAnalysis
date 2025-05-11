@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report_title }}</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Tab styling */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #ccc;
+            margin-bottom: 0;
+            padding-left: 0;
+            list-style: none;
+        }
+
+        .tab-item {
+            margin-bottom: -1px;
+        }
+
+        .tab-link {
+            display: block;
+            padding: 0.5rem 1rem;
+            border: 1px solid transparent;
+            border-top-left-radius: 0.25rem;
+            border-top-right-radius: 0.25rem;
+            text-decoration: none;
+            color: #495057;
+            cursor: pointer;
+        }
+
+        .tab-link:hover {
+            border-color: #e9ecef #e9ecef #dee2e6;
+            background-color: #f8f9fa;
+        }
+
+        .tab-link.active {
+            color: #007bff;
+            background-color: #fff;
+            border-color: #dee2e6 #dee2e6 #fff;
+            font-weight: bold;
+        }
+
+        .tab-content {
+            display: none;
+            padding: 1rem;
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 0.25rem 0.25rem;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Statistical table styling (used by React component's table) */
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 0.95em;
+        }
+
+        .stats-table th {
+            background-color: #e9ecef;
+            font-weight: bold;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+
+        .stats-table td {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            position: relative;
+        }
+        .even-row {
+            background-color: #f8f9fa;
+        }
+        .sig-star, .sig-star-2, .sig-star-3, .sig-ns { /* If needed by static part */
+            color: #dc3545;
+            font-weight: bold;
+            margin-left: 5px;
+            font-size: 0.9em;
+        }
+        .legend { /* If needed by static part */
+            margin-top: 10px;
+            font-size: 0.85em;
+            color: #666;
+            padding: 8px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ report_title }}</h1>
+        <p class="timestamp">Report Generated: {{ generation_timestamp }}</p>
+        {% if run_metadata %}
+            <div class="metadata-summary">
+                <p>
+                    Comparing System Groups:
+                    {% if run_metadata.toxin_run_ids and run_metadata.toxin_run_ids|length > 0 %}
+                        <span class="toxin-group">{{ run_metadata.toxin_run_ids|length }} Toxin-Bound System(s)</span>
+                    {% endif %}
+                    {% if run_metadata.control_run_ids and run_metadata.control_run_ids|length > 0 %}
+                        vs. <span class="control-group">{{ run_metadata.control_run_ids|length }} Toxin-Free (Control) System(s)</span>
+                    {% endif %}
+                </p>
+                <p>Toxin Name (if applicable): <span class="toxin-name">{{ run_metadata.toxin_name | default('N/A') }}</span></p>
+                <p>Channel Name: <span class="channel-name">{{ run_metadata.channel_name | default('N/A') }}</span></p>
+            </div>
+        {% endif %}
+    </header>
+
+    <ul class="tabs" id="reportTabs">
+        <li class="tab-item">
+            <a class="tab-link active" data-tab="overview">System Overview</a>
+        </li>
+        <li class="tab-item">
+            <a class="tab-link" data-tab="pore-geometry">Pore Geometry</a>
+        </li>
+    </ul>
+
+    <div class="tab-content active" id="overview">
+        <section class="section">
+            <h2>System Overview</h2>
+            {% if sections[0].description %}
+                <p class="section-description">{{ sections[0].description }}</p>
+            {% endif %}
+
+            {% if sections[0].metrics %}
+                <h3>High-Level Summary</h3>
+                <table class="metrics-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for metric in sections[0].metrics %}
+                        <tr>
+                            <td>{{ metric.name }}</td>
+                            <td>
+                                {% if metric.name.startswith('Number of Toxin-Bound') or metric.name.startswith('Avg. Trajectory Frames (Toxin)') %}
+                                    <span class="toxin-value">{{ metric.value_toxin }}</span>
+                                {% elif metric.name.startswith('Number of Toxin-Free') or metric.name.startswith('Avg. Trajectory Frames (Control)') %}
+                                    <span class="control-value">{{ metric.value_control }}</span>
+                                {% else %}
+                                    {{ metric.value_toxin if metric.value_toxin is not none else metric.value_control }}
+                                {% endif %}
+                                {{ metric.units }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p>No summary metrics available for this overview.</p>
+            {% endif %}
+
+            {% if run_metadata and run_metadata.toxin_run_ids and run_metadata.toxin_run_ids|length > 0 %}
+                <h3>Toxin-Bound Systems</h3>
+                <ul class="system-list">
+                    {% for run_id in run_metadata.toxin_run_ids %}
+                        <li class="toxin-system">{{ run_id }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% if run_metadata and run_metadata.control_run_ids and run_metadata.control_run_ids|length > 0 %}
+                <h3>Control Systems</h3>
+                <ul class="system-list">
+                    {% for run_id in run_metadata.control_run_ids %}
+                        <li class="control-system">{{ run_id }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% if sections[0].ai_interpretation %}
+                <h3>AI-Generated Interpretation</h3>
+                <div class="ai-interpretation">
+                    {{ sections[0].ai_interpretation }}
+                </div>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="tab-content" id="pore-geometry">
+        <section class="section">
+            <p class="section-description">
+                Interactive visualization of G-G distances across the selectivity filter,
+                comparing toxin-bound and control systems. Data based on N={{ gg_num_systems | default('Multiple') }} simulations.
+            </p>
+
+            <div id="gg-distance-react-root"></div>
+
+            {% if gg_data %}
+            <div id="gg-static-tables" class="mt-8 w-full" style="display: none;"> <h3>G-G Distance Measurements (Summary Table)</h3>
+                <table class="stats-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Toxin A:C</th>
+                            <th>Toxin B:D</th>
+                            <th>Control A:C</th>
+                            <th>Control B:D</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Mean (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.mean.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.mean.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.mean.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.mean.stdDev|float) }}</td>
+                        </tr>
+                        <tr class="even-row">
+                            <td>Min (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.min.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.min.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.min.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.min.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.min.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.min.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.min.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.min.stdDev|float) }}</td>
+                        </tr>
+                        <tr>
+                            <td>Max (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.max.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.max.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.max.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.max.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.max.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.max.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.max.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.max.stdDev|float) }}</td>
+                        </tr>
+                        <tr class="even-row">
+                            <td>Range (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.range.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.range.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.range.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.range.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.range.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.range.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.range.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.range.stdDev|float) }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="mt-4 w-full">
+                    <h3>Statistical Analysis (Summary Table)</h3>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Comparison</th>
+                                <th>A:C p-value</th>
+                                <th>B:D p-value</th>
+                                <th>A:C Effect Size</th>
+                                <th>B:D Effect Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Mean G-G Distance</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.AC.mean|float) }}</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.BD.mean|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.mean|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.mean|float) }}</td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>Min G-G Distance</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.AC.min|float) }}</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.BD.min|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.min|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.min|float) }}</td>
+                            </tr>
+                            <tr>
+                                <td>Max G-G Distance</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.AC.max|float) }}</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.BD.max|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.max|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.max|float) }}</td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>Range (Max-Min)</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.AC.range|float) }}</td>
+                                <td>{{ '%0.4f'|format(gg_data.p_values.BD.range|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.range|float) }}</td>
+                                <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.range|float) }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="legend">
+                        <p>P-values are calculated using Welch's t-test (for unequal variances). Effect size is calculated using Cohen's d.</p>
+                        <p>Interpretation: p &lt; 0.05 = significant, p &lt; 0.01 = highly significant. Cohen's d: 0.2 = small, 0.5 = moderate, 0.8 = large, 1.2+ = very large effect.</p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </section>
+    </div>
+
+    <footer class="footer">
+        <p>Enhanced Report Generation System</p>
+        <p>Timestamp: {{ generation_timestamp }}</p>
+    </footer>
+
+    <script>
+        // Tab switching functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const tabLinks = document.querySelectorAll('.tab-link');
+            const tabContents = document.querySelectorAll('.tab-content');
+
+            tabLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const tabId = this.getAttribute('data-tab');
+                    tabLinks.forEach(tl => tl.classList.remove('active'));
+                    tabContents.forEach(tc => tc.classList.remove('active'));
+                    this.classList.add('active');
+                    document.getElementById(tabId).classList.add('active');
+                });
+            });
+        });
+    </script>
+
+    <script type="text/babel">
+        // Data injected from Python/Jinja2
+        const actualMockData = JSON.parse('{{ gg_react_mock_data_json | safe }}');
+        const actualStatisticalData = JSON.parse('{{ gg_react_statistical_data_json | safe }}');
+        const actualSimulationPoints = JSON.parse('{{ gg_react_simulation_points_json | safe }}');
+        const numberOfSimulations = parseInt('{{ gg_num_systems | default("5") }}') || 5;
+
+        // Original GGDistanceTabbedComparison React Component (restored to your design)
+        const GGDistanceTabbedComparison = () => {
+            const [activeTab, setActiveTab] = React.useState('mean');
+
+            // Use data passed from Python, ensuring original structure for styling
+            const componentMockData = actualMockData; // Used for values and stdDevs
+            const componentStatisticalData = JSON.parse(JSON.stringify(actualStatisticalData)); // Deep copy to modify for significance symbols
+            const componentSimulationPoints = actualSimulationPoints; // Used for scatter points
+
+            // Add significance symbols to statisticalData for the chart
+            Object.keys(componentStatisticalData).forEach(metricKey => { // 'mean', 'min', etc.
+                if (componentStatisticalData[metricKey]) {
+                    Object.keys(componentStatisticalData[metricKey]).forEach(conditionKey => { // 'toxin-AC', 'toxin-BD'
+                        const entry = componentStatisticalData[metricKey][conditionKey];
+                        if (entry && typeof entry.pValue !== 'undefined') {
+                            const pVal = entry.pValue;
+                            let sigSymbol = "ns";
+                            if (pVal < 0.0001) sigSymbol = "****";
+                            else if (pVal < 0.001) sigSymbol = "***";
+                            else if (pVal < 0.01) sigSymbol = "**";
+                            else if (pVal < 0.05) sigSymbol = "*";
+                            entry.significance = sigSymbol;
+                        }
+                    });
+                }
+            });
+
+            // Original Styling constants from your design
+            const chartWidth = 800;
+            const chartHeight = 400;
+            const margin = { top: 60, right: 150, bottom: 80, left: 80 }; // Restored
+            const barWidth = 60; // Restored
+
+            // Original Colors from your design
+            const colors = { // Restored
+                toxin: {
+                    AC: { fill: 'rgba(200, 230, 255, 0.6)', border: 'rgba(70, 130, 180, 1)', point: 'rgba(0, 102, 204, 0.8)' },
+                    BD: { fill: 'rgba(255, 200, 200, 0.6)', border: 'rgba(220, 20, 60, 1)', point: 'rgba(220, 20, 60, 0.8)' }
+                },
+                control: {
+                    AC: { fill: 'rgba(200, 255, 200, 0.6)', border: 'rgba(34, 139, 34, 1)', point: 'rgba(34, 139, 34, 0.8)' },
+                    BD: { fill: 'rgba(255, 230, 180, 0.6)', border: 'rgba(255, 140, 0, 1)', point: 'rgba(255, 140, 0, 0.8)' }
+                }
+            };
+
+            // Original Y-scale function from your design
+            const getYScale = (tab) => { // Restored
+                let yMinUser = 7.4; // Default, will be overridden by switch
+                let yMaxUser = 9.5; // Default, will be overridden by switch
+                switch(tab) {
+                    case 'mean': yMinUser = 7.7; yMaxUser = 8.5; break;
+                    case 'min':  yMinUser = 7.2; yMaxUser = 7.7; break;
+                    case 'max':  yMinUser = 8.0; yMaxUser = 9.5; break;
+                    case 'range':yMinUser = 0.0; yMaxUser = 2.0; break;
+                }
+                return (val) => {
+                    const availableHeight = chartHeight - margin.top - margin.bottom;
+                    return chartHeight - margin.bottom - ((val - yMinUser) * (availableHeight / (yMaxUser - yMinUser)));
+                };
+            };
+
+            // Original X positions from your design
+            const xPositions = { // Restored
+                'toxin-AC': margin.left + barWidth,
+                'control-AC': margin.left + barWidth * 2 + 30,
+                'toxin-BD': margin.left + barWidth * 3 + 80,
+                'control-BD': margin.left + barWidth * 4 + 110
+            };
+
+            // Original Function to get tick values from your design
+            const getTickValues = (tab) => { // Restored
+                switch(tab) {
+                    case 'mean': return [7.7, 7.9, 8.1, 8.3, 8.5];
+                    case 'min':  return [7.2, 7.3, 7.4, 7.5, 7.6, 7.7];
+                    case 'max':  return [8.0, 8.5, 9.0, 9.5];
+                    case 'range':return [0, 0.5, 1.0, 1.5, 2.0];
+                    default: return [7.5, 8.0, 8.5, 9.0, 9.5];
+                }
+            };
+
+            // Helper functions to get data, using componentMockData and componentSimulationPoints
+            const getValue = (data, tab) => data[tab].value;
+            const getStdDev = (data, tab) => data[tab].stdDev;
+            const getSimPoints = (condition, subunit, tab) => {
+                return componentSimulationPoints?.[condition]?.[subunit]?.[tab] || [];
+            }
+
+            const renderBarChart = () => {
+                const yScale = getYScale(activeTab);
+                const tickValues = getTickValues(activeTab);
+
+                return (
+                    <svg width={chartWidth} height={chartHeight}>
+                        {/* Title - Restored from original */}
+                        <text x={chartWidth/2} y={30} textAnchor="middle" fontSize="16" fontWeight="bold">
+                            G-G Distance {activeTab === 'range' ? 'Range' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Values
+                        </text>
+
+                        {/* Y-axis - Restored from original */}
+                        <line x1={margin.left} y1={margin.top} x2={margin.left} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
+                        {tickValues.map((tick, i) => (
+                            <g key={`y-tick-${i}`}>
+                                <line x1={margin.left - 5} y1={yScale(tick)} x2={margin.left} y2={yScale(tick)} stroke="black" strokeWidth="1"/>
+                                <text x={margin.left - 10} y={yScale(tick)} textAnchor="end" dominantBaseline="middle" fontSize="12">
+                                    {tick.toFixed(1)} {activeTab === 'range' ? '' : 'Å'}
+                                </text>
+                            </g>
+                        ))}
+                        <text transform={`rotate(-90, ${margin.left/3}, ${chartHeight/2})`} x={margin.left/3} y={chartHeight/2} textAnchor="middle" fontSize="14" fontWeight="bold">
+                            {activeTab === 'range' ? 'Range (Å)' : 'G-G Distance (Å)'}
+                        </text>
+
+                        {/* X-axis - Restored from original */}
+                        <line x1={margin.left} y1={chartHeight - margin.bottom} x2={chartWidth - margin.right + 100} y2={chartHeight - margin.bottom} stroke="black" strokeWidth="1.5" />
+                        
+                        {/* Bars and Error Bars - Logic restored from original */}
+                        {Object.entries(xPositions).map(([key, xPos]) => {
+                            const [condition, subunit] = key.split('-'); // 'toxin', 'AC'
+                            const dataSeries = componentMockData[condition]?.[subunit];
+                            if (!dataSeries) return null; // Skip if data is missing
+
+                            const value = getValue(dataSeries, activeTab);
+                            const stdDev = getStdDev(dataSeries, activeTab);
+                            const simPoints = getSimPoints(condition, subunit, activeTab);
+                            const colorSet = colors[condition]?.[subunit];
+                            if (!colorSet) return null; // Skip if colors are missing
+
+                            return (
+                                <g key={key}>
+                                    <rect
+                                        x={xPos - barWidth/2}
+                                        y={yScale(value)}
+                                        width={barWidth}
+                                        height={Math.max(0, (chartHeight - margin.bottom) - yScale(value))} // Ensure non-negative height
+                                        fill={colorSet.fill}
+                                        stroke={colorSet.border}
+                                        strokeWidth="2"
+                                    />
+                                    <text x={xPos} y={yScale(value) - 10} textAnchor="middle" fontSize="12" fontWeight="bold">
+                                        {value.toFixed(3)}
+                                    </text>
+
+                                    {/* Significance Brackets - Restored from original */}
+                                    {key.startsWith('toxin') && componentStatisticalData[activeTab]?.[key]?.pValue < 0.05 && (() => {
+                                        const controlKey = `control-${subunit}`;
+                                        const controlX = xPositions[controlKey];
+                                        if (!controlX) return null;
+                                        const significance = componentStatisticalData[activeTab]?.[key]?.significance || '';
+                                        
+                                        const bracketY = Math.min(yScale(value), yScale(getValue(componentMockData.control[subunit], activeTab))) - 30;
+
+                                        return (
+                                            <g>
+                                                <line x1={xPos} y1={bracketY + 5} x2={xPos} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                <line x1={controlX} y1={bracketY + 5} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                <line x1={xPos} y1={bracketY} x2={controlX} y2={bracketY} stroke="black" strokeWidth="1.5" />
+                                                <text x={(xPos + controlX) / 2} y={bracketY - 5} textAnchor="middle" fontSize="14" fontWeight="bold">
+                                                    {significance}
+                                                </text>
+                                            </g>
+                                        );
+                                    })()}
+
+                                    {/* Error bars - Restored from original */}
+                                    <line x1={xPos} y1={yScale(value - stdDev)} x2={xPos} y2={yScale(value + stdDev)} stroke="black" strokeWidth="1.5" />
+                                    <line x1={xPos - 5} y1={yScale(value - stdDev)} x2={xPos + 5} y2={yScale(value - stdDev)} stroke="black" strokeWidth="1.5" />
+                                    <line x1={xPos - 5} y1={yScale(value + stdDev)} x2={xPos + 5} y2={yScale(value + stdDev)} stroke="black" strokeWidth="1.5" />
+                                    
+                                    {/* Individual simulation data points - Restored from original */}
+                                    {simPoints.map((point, idx) => (
+                                        <circle
+                                            key={`${key}-sim-${idx}`}
+                                            cx={xPos + (idx - (simPoints.length -1)/2) * (barWidth/(simPoints.length+1))} // Adjusted spread
+                                            cy={yScale(point)}
+                                            r={3.5}
+                                            fill={colorSet.point}
+                                            opacity={0.8}
+                                        />
+                                    ))}
+                                </g>
+                            );
+                        })}
+
+                        {/* X-axis labels - Restored from original */}
+                        <text x={(xPositions['toxin-AC'] + xPositions['control-AC']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">A:C Subunit Pair</text>
+                        <text x={(xPositions['toxin-BD'] + xPositions['control-BD']) / 2} y={chartHeight - margin.bottom + 35} textAnchor="middle" fontSize="13" fontWeight="bold">B:D Subunit Pair</text>
+                        
+                        <text x={xPositions['toxin-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
+                        <text x={xPositions['control-AC']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
+                        <text x={xPositions['toxin-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Toxin</text>
+                        <text x={xPositions['control-BD']} y={chartHeight - margin.bottom + 20} textAnchor="middle" fontSize="12">Control</text>
+
+                        {/* Legend - Restored from original */}
+                        {['toxin', 'control'].flatMap(condition => 
+                            ['AC', 'BD'].map(subunit => {
+                                const colorSet = colors[condition]?.[subunit];
+                                if (!colorSet) return null;
+                                const yOffset = (condition === 'toxin' ? 0 : 50) + (subunit === 'AC' ? 0 : 25);
+                                return (
+                                    <g key={`legend-${condition}-${subunit}`}>
+                                        <rect x={chartWidth - margin.right + 20} y={margin.top + yOffset} width={15} height={15} fill={colorSet.fill} stroke={colorSet.border} />
+                                        <text x={chartWidth - margin.right + 45} y={margin.top + yOffset + 8} dominantBaseline="middle" fontSize="12">
+                                            {`${condition.charAt(0).toUpperCase() + condition.slice(1)} ${subunit}`}
+                                        </text>
+                                    </g>
+                                );
+                            })
+                        )}
+                    </svg>
+                );
+            };
+
+            // Original Tab content descriptions
+            const tabDescriptions = { // Restored
+                mean: "The mean values show that toxin binding significantly alters G-G distances (A:C: p=0.0005, Cohen's d=2.19; B:D: p=0.0030, d=1.75). Individual data points represent different simulation runs, and error bars indicate standard deviation across simulations.",
+                min: "Minimum G-G distances are significantly lower only in the B:D subunit pair (p=0.0010, d=2.05), while the A:C difference is not statistically significant (p=0.5758, d=0.27). This suggests asymmetric effects of the toxin on channel constriction.",
+                max: "Maximum G-G distances are significantly higher in toxin-bound channels (A:C: p=0.0001, d=2.56; B:D: p=0.0008, d=2.61), indicating the toxin allows greater expansion of the filter in both subunit pairs.",
+                range: "The range (max-min) shows the most dramatic differences, with very large effect sizes (A:C: p=0.0001, d=2.70; B:D: p<0.0001, d=3.55), providing strong evidence that the toxin causes substantial destabilization of the selectivity filter structure."
+            };
+
+            // Create statistics table data - using componentMockData
+            const tableData = [ // Updated to use componentMockData
+                { metric: "Mean (Å)",    "toxin-AC": `${componentMockData.toxin.AC.mean.value.toFixed(3)} ± ${componentMockData.toxin.AC.mean.stdDev.toFixed(3)}`, "toxin-BD": `${componentMockData.toxin.BD.mean.value.toFixed(3)} ± ${componentMockData.toxin.BD.mean.stdDev.toFixed(3)}`, "control-AC": `${componentMockData.control.AC.mean.value.toFixed(3)} ± ${componentMockData.control.AC.mean.stdDev.toFixed(3)}`, "control-BD": `${componentMockData.control.BD.mean.value.toFixed(3)} ± ${componentMockData.control.BD.mean.stdDev.toFixed(3)}` },
+                { metric: "Min (Å)",     "toxin-AC": `${componentMockData.toxin.AC.min.value.toFixed(3)} ± ${componentMockData.toxin.AC.min.stdDev.toFixed(3)}`,   "toxin-BD": `${componentMockData.toxin.BD.min.value.toFixed(3)} ± ${componentMockData.toxin.BD.min.stdDev.toFixed(3)}`,   "control-AC": `${componentMockData.control.AC.min.value.toFixed(3)} ± ${componentMockData.control.AC.min.stdDev.toFixed(3)}`,   "control-BD": `${componentMockData.control.BD.min.value.toFixed(3)} ± ${componentMockData.control.BD.min.stdDev.toFixed(3)}` },
+                { metric: "Max (Å)",     "toxin-AC": `${componentMockData.toxin.AC.max.value.toFixed(3)} ± ${componentMockData.toxin.AC.max.stdDev.toFixed(3)}`,   "toxin-BD": `${componentMockData.toxin.BD.max.value.toFixed(3)} ± ${componentMockData.toxin.BD.max.stdDev.toFixed(3)}`,   "control-AC": `${componentMockData.control.AC.max.value.toFixed(3)} ± ${componentMockData.control.AC.max.stdDev.toFixed(3)}`,   "control-BD": `${componentMockData.control.BD.max.value.toFixed(3)} ± ${componentMockData.control.BD.max.stdDev.toFixed(3)}` },
+                { metric: "Range (Å)",   "toxin-AC": `${componentMockData.toxin.AC.range.value.toFixed(3)} ± ${componentMockData.toxin.AC.range.stdDev.toFixed(3)}`, "toxin-BD": `${componentMockData.toxin.BD.range.value.toFixed(3)} ± ${componentMockData.toxin.BD.range.stdDev.toFixed(3)}`, "control-AC": `${componentMockData.control.AC.range.value.toFixed(3)} ± ${componentMockData.control.AC.range.stdDev.toFixed(3)}`, "control-BD": `${componentMockData.control.BD.range.value.toFixed(3)} ± ${componentMockData.control.BD.range.stdDev.toFixed(3)}` }
+            ];
+
+            React.useEffect(() => {
+                const staticTablesDiv = document.getElementById('gg-static-tables');
+                if (staticTablesDiv) {
+                    staticTablesDiv.style.display = 'none';
+                }
+            }, []);
+
+            // Original JSX structure for the entire component - Restored
+            return (
+                <div className="flex flex-col items-center mt-4">
+                    <h2 className="text-xl font-bold mb-4">G-G Distance Comparison: Toxin vs Control (N={numberOfSimulations} simulations)</h2>
+                    <div className="flex space-x-1 mb-4">
+                        {['mean', 'min', 'max', 'range'].map((tab) => (
+                            <button
+                                key={tab}
+                                className={`px-4 py-2 rounded-t-lg font-medium ${activeTab === tab ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                onClick={() => setActiveTab(tab)}
+                            >
+                                {tab === 'range' ? 'Range (Max-Min)' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="w-full max-w-4xl border p-4 rounded-lg bg-white">
+                        {renderBarChart()}
+                    </div>
+                    <div className="mt-6 overflow-x-auto w-full max-w-4xl">
+                        <table className="min-w-full bg-white border border-gray-300 stats-table"> {/* Added stats-table class */}
+                            <thead>
+                                <tr className="bg-gray-100">
+                                    <th className="py-2 px-4 border-b border-r font-medium text-left">Metric</th>
+                                    <th className="py-2 px-4 border-b border-r bg-blue-50 font-medium text-center">Toxin A:C</th>
+                                    <th className="py-2 px-4 border-b border-r bg-red-50 font-medium text-center">Toxin B:D</th>
+                                    <th className="py-2 px-4 border-b border-r bg-green-50 font-medium text-center">Control A:C</th>
+                                    <th className="py-2 px-4 border-b bg-yellow-50 font-medium text-center">Control B:D</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {tableData.map((row, index) => (
+                                    <tr key={index} className={index % 2 === 0 ? 'bg-gray-50 even-row' : 'bg-white'}> {/* Added even-row class */}
+                                        <td className="py-2 px-4 border-b border-r font-medium">{row.metric}</td>
+                                        <td className="py-2 px-4 border-b border-r bg-blue-50 text-center">{row["toxin-AC"]}</td>
+                                        <td className="py-2 px-4 border-b border-r bg-red-50 text-center">{row["toxin-BD"]}</td>
+                                        <td className="py-2 px-4 border-b border-r bg-green-50 text-center">{row["control-AC"]}</td>
+                                        <td className="py-2 px-4 border-b bg-yellow-50 text-center">{row["control-BD"]}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="mt-4 text-sm max-w-4xl text-gray-700 p-3 bg-blue-50 rounded">
+                        <p>{tabDescriptions[activeTab]}</p>
+                    </div>
+                    <div className="mt-4 text-sm max-w-4xl text-gray-700 p-4 bg-gray-50 rounded">
+                        <h3 className="font-bold text-base mb-2">Key Observations Across Multiple Simulations:</h3>
+                        <ul className="list-disc pl-6 space-y-2">
+                            <li><strong>Increased Fluctuations (Range):</strong> The most striking effect is the significantly increased range of G-G distances in toxin conditions (p&lt;0.001, Cohen's d &gt; 2.7), with a very large effect size (d=3.55 for B:D). This supports the paper's central claim that Cs1 destabilizes the selectivity filter.</li>
+                            <li><strong>Asymmetric Constriction:</strong> Minimum G-G distances are significantly reduced only in the B:D subunit pair (p&lt;0.01), while A:C shows no significant difference. This reveals an asymmetric effect on filter constriction, aligning with the paper's finding of asymmetric pore collapse.</li>
+                            <li><strong>Enhanced Expansion:</strong> Maximum G-G distances are significantly increased in both subunit pairs (p&lt;0.001), consistent with greater filter flexibility when Cs1 disrupts the hydrogen-bond network.</li>
+                            <li><strong>Mechanism Validation:</strong> These data strongly support the paper's proposed mechanism where Cs1 affects water dynamics in peripheral cavities, leading to asymmetric destabilization of the selectivity filter hydrogen-bond network, ultimately causing conduction block without direct pore occlusion.</li>
+                        </ul>
+                        <div className="mt-4 pt-3 border-t border-gray-300">
+                            <p className="font-medium">* p &lt; 0.05, ** p &lt; 0.01, *** p &lt; 0.001, **** p &lt; 0.0001, ns = not significant</p>
+                            <p>Statistical analysis: Welch's t-test for comparisons between toxin and control groups (N={numberOfSimulations} simulations each). Effect sizes reported as Cohen's d, where d &gt; 0.8 is considered large and d &gt; 1.2 very large.</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(
+            <GGDistanceTabbedComparison />,
+            document.getElementById('gg-distance-react-root')
+        );
+    </script>
+</body>
+</html>

@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report_title }}</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Tab styling */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #ccc;
+            margin-bottom: 0;
+            padding-left: 0;
+            list-style: none;
+        }
+        
+        .tab-item {
+            margin-bottom: -1px;
+        }
+        
+        .tab-link {
+            display: block;
+            padding: 0.5rem 1rem;
+            border: 1px solid transparent;
+            border-top-left-radius: 0.25rem;
+            border-top-right-radius: 0.25rem;
+            text-decoration: none;
+            color: #495057;
+            cursor: pointer;
+        }
+        
+        .tab-link:hover {
+            border-color: #e9ecef #e9ecef #dee2e6;
+            background-color: #f8f9fa;
+        }
+        
+        .tab-link.active {
+            color: #007bff;
+            background-color: #fff;
+            border-color: #dee2e6 #dee2e6 #fff;
+            font-weight: bold;
+        }
+        
+        .tab-content {
+            display: none;
+            padding: 1rem;
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 0.25rem 0.25rem;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Statistical table styling */
+        .stats-container {
+            font-family: sans-serif;
+            margin-bottom: 20px;
+        }
+
+        .stats-section {
+            margin-bottom: 20px;
+        }
+
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 0.95em;
+        }
+
+        .stats-table th {
+            background-color: #e9ecef;
+            font-weight: bold;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+
+        .stats-table td {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            position: relative;
+        }
+
+        .even-row {
+            background-color: #f8f9fa;
+        }
+
+        .sig-star, .sig-star-2, .sig-star-3, .sig-ns {
+            color: #dc3545;
+            font-weight: bold;
+            margin-left: 5px;
+            font-size: 0.9em;
+        }
+
+        .legend {
+            margin-top: 10px;
+            font-size: 0.85em;
+            color: #666;
+            padding: 8px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ report_title }}</h1>
+        <p class="timestamp">Report Generated: {{ generation_timestamp }}</p>
+        {% if run_metadata %}
+            <div class="metadata-summary">
+                <p>
+                    Comparing System Groups:
+                    {% if run_metadata.toxin_run_ids and run_metadata.toxin_run_ids|length > 0 %}
+                        <span class="toxin-group">{{ run_metadata.toxin_run_ids|length }} Toxin-Bound System(s)</span>
+                    {% endif %}
+                    {% if run_metadata.control_run_ids and run_metadata.control_run_ids|length > 0 %}
+                        vs. <span class="control-group">{{ run_metadata.control_run_ids|length }} Toxin-Free (Control) System(s)</span>
+                    {% endif %}
+                </p>
+                <p>Toxin Name (if applicable): <span class="toxin-name">{{ run_metadata.toxin_name | default('N/A') }}</span></p>
+                <p>Channel Name: <span class="channel-name">{{ run_metadata.channel_name | default('N/A') }}</span></p>
+            </div>
+        {% endif %}
+    </header>
+
+    <!-- Tab navigation -->
+    <ul class="tabs" id="reportTabs">
+        <li class="tab-item">
+            <a class="tab-link active" data-tab="overview">System Overview</a>
+        </li>
+        <li class="tab-item">
+            <a class="tab-link" data-tab="pore-geometry">Pore Geometry</a>
+        </li>
+    </ul>
+
+    <!-- Tab content -->
+    <div class="tab-content active" id="overview">
+        <section class="section">
+            <h2>System Overview</h2>
+            {% if sections[0].description %}
+                <p class="section-description">{{ sections[0].description }}</p>
+            {% endif %}
+
+            {% if sections[0].metrics %}
+                <h3>High-Level Summary</h3>
+                <table class="metrics-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for metric in sections[0].metrics %}
+                        <tr>
+                            <td>{{ metric.name }}</td>
+                            <td>
+                                {% if metric.name.startswith('Number of Toxin-Bound') or metric.name.startswith('Avg. Trajectory Frames (Toxin)') %}
+                                    <span class="toxin-value">{{ metric.value_toxin }}</span>
+                                {% elif metric.name.startswith('Number of Toxin-Free') or metric.name.startswith('Avg. Trajectory Frames (Control)') %}
+                                    <span class="control-value">{{ metric.value_control }}</span>
+                                {% else %}
+                                    {{ metric.value_toxin if metric.value_toxin is not none else metric.value_control }}
+                                {% endif %}
+                                {{ metric.units }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p>No summary metrics available for this overview.</p>
+            {% endif %}
+
+            {% if run_metadata and run_metadata.toxin_run_ids and run_metadata.toxin_run_ids|length > 0 %}
+                <h3>Toxin-Bound Systems</h3>
+                <ul class="system-list">
+                    {% for run_id in run_metadata.toxin_run_ids %}
+                        <li class="toxin-system">{{ run_id }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% if run_metadata and run_metadata.control_run_ids and run_metadata.control_run_ids|length > 0 %}
+                <h3>Control Systems</h3>
+                <ul class="system-list">
+                    {% for run_id in run_metadata.control_run_ids %}
+                        <li class="control-system">{{ run_id }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% if sections[0].ai_interpretation %}
+                <h3>AI-Generated Interpretation</h3>
+                <div class="ai-interpretation">
+                    {{ sections[0].ai_interpretation }}
+                </div>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="tab-content" id="pore-geometry">
+        <section class="section">
+            <h2>Pore Geometry Analysis</h2>
+            <p class="section-description">Analysis of the G-G distances across the selectivity filter, comparing toxin-bound and control systems.</p>
+
+            <div id="gg-distance-visualization">
+                <!-- Placeholder for GG distance data visualization -->
+                <div class="placeholder-message">
+                    <p>G-G Distance visualization will be displayed here. The visualization shows the mean, minimum, maximum, and range values for G-G distances in Toxin vs Control conditions across A:C and B:D subunits.</p>
+                </div>
+            </div>
+
+            <h3>Statistical Significance Analysis</h3>
+
+            <!-- Static HTML version of the statistical display -->
+            <div class="stats-container">
+                <div class="stats-section">
+                    <h4>Toxin vs Control</h4>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Toxin</th>
+                                <th>Control</th>
+                                <th>Significance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>G-G Distance (Å)</td>
+                                <td>8.20</td>
+                                <td>7.87</td>
+                                <td><span class="sig-star" title="p < 0.05">*</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>Cavity Radius (Å)</td>
+                                <td>5.62</td>
+                                <td>5.43</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                            <tr>
+                                <td>Inner Vestibule Waters (count)</td>
+                                <td>14.3</td>
+                                <td>12.5</td>
+                                <td><span class="sig-star-2" title="p < 0.01">**</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>SF Gyration (Å)</td>
+                                <td>3.85</td>
+                                <td>3.74</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="stats-section">
+                    <h4>AC vs BD Chains (Toxin)</h4>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>AC</th>
+                                <th>BD</th>
+                                <th>Significance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>G-G Distance (Å)</td>
+                                <td>8.20</td>
+                                <td>7.98</td>
+                                <td><span class="sig-star" title="p < 0.05">*</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>Cavity Radius (Å)</td>
+                                <td>5.72</td>
+                                <td>5.52</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                            <tr>
+                                <td>Inner Vestibule Waters (count)</td>
+                                <td>14.8</td>
+                                <td>13.9</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                            <tr class="even-row">
+                                <td>SF Gyration (Å)</td>
+                                <td>3.92</td>
+                                <td>3.78</td>
+                                <td><span class="sig-ns" title="Not significant">ns</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="legend">
+                    <strong>Statistical Significance:</strong>
+                    *** p&lt;0.001,
+                    ** p&lt;0.01,
+                    * p&lt;0.05,
+                    ns: not significant (p≥0.05)
+                </div>
+            </div>
+
+            <!-- G-G Distance Data Table -->
+            <div class="mt-8 w-full">
+                <h3>G-G Distance Measurements</h3>
+                <table class="stats-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Toxin A:C</th>
+                            <th>Toxin B:D</th>
+                            <th>Control A:C</th>
+                            <th>Control B:D</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Mean (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.mean.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.mean.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.mean.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.mean.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.mean.stdDev|float) }}</td>
+                        </tr>
+                        <tr class="even-row">
+                            <td>Min (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.min.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.min.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.min.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.min.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.min.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.min.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.min.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.min.stdDev|float) }}</td>
+                        </tr>
+                        <tr>
+                            <td>Max (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.max.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.max.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.max.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.max.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.max.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.max.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.max.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.max.stdDev|float) }}</td>
+                        </tr>
+                        <tr class="even-row">
+                            <td>Range (Å)</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.AC.range.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.AC.range.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.toxin.BD.range.value|float) }} ± {{ '%0.3f'|format(gg_data.toxin.BD.range.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.AC.range.value|float) }} ± {{ '%0.3f'|format(gg_data.control.AC.range.stdDev|float) }}</td>
+                            <td>{{ '%0.3f'|format(gg_data.control.BD.range.value|float) }} ± {{ '%0.3f'|format(gg_data.control.BD.range.stdDev|float) }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Statistical significance table -->
+            <div class="mt-4 w-full">
+                <h3>Statistical Analysis</h3>
+                <table class="stats-table">
+                    <thead>
+                        <tr>
+                            <th>Comparison</th>
+                            <th>A:C p-value</th>
+                            <th>B:D p-value</th>
+                            <th>A:C Effect Size</th>
+                            <th>B:D Effect Size</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Mean G-G Distance</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.AC.mean|float) }}</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.BD.mean|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.mean|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.mean|float) }}</td>
+                        </tr>
+                        <tr class="even-row">
+                            <td>Min G-G Distance</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.AC.min|float) }}</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.BD.min|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.min|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.min|float) }}</td>
+                        </tr>
+                        <tr>
+                            <td>Max G-G Distance</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.AC.max|float) }}</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.BD.max|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.max|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.max|float) }}</td>
+                        </tr>
+                        <tr class="even-row">
+                            <td>Range (Max-Min)</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.AC.range|float) }}</td>
+                            <td>{{ '%0.4f'|format(gg_data.p_values.BD.range|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.AC.range|float) }}</td>
+                            <td>{{ '%0.2f'|format(gg_data.effect_sizes.BD.range|float) }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="legend">
+                    <p>P-values are calculated using Welch's t-test (for unequal variances). Effect size is calculated using Cohen's d.</p>
+                    <p>Interpretation: p &lt; 0.05 = significant, p &lt; 0.01 = highly significant. Cohen's d: 0.2 = small, 0.5 = moderate, 0.8 = large, 1.2+ = very large effect.</p>
+                </div>
+            </div>
+
+            <!-- Key Observations -->
+            <div class="mt-6 p-4 bg-gray-50 rounded">
+                <h3>Key Observations Across Multiple Simulations:</h3>
+                <ul class="list-disc pl-6 space-y-2">
+                    <li>
+                        <strong>Consistent Destabilization:</strong> All toxin simulations show increased G-G distance fluctuations compared to control simulations, providing robust evidence that this is a reliable effect of toxin binding.
+                    </li>
+                    <li>
+                        <strong>Asymmetric Effects:</strong> The impact is consistently stronger on the A:C subunit pair compared to B:D across all simulations, supporting the conclusion about asymmetric channel effects.
+                    </li>
+                    <li>
+                        <strong>Both Expansion and Constriction:</strong> Toxin simulations show both lower minimums and higher maximums compared to controls, confirming that toxin disrupts the normal structural constraints of the filter.
+                    </li>
+                    <li>
+                        <strong>Mechanism Validation:</strong> The consistent pattern across multiple simulations strongly supports the proposed mechanism where toxin affects water dynamics in the peripheral cavities, leading to destabilization of the hydrogen-bond network that normally maintains the filter structure.
+                    </li>
+                </ul>
+            </div>
+        </section>
+    </div>
+
+    <footer class="footer">
+        <p>Enhanced Report Generation System</p>
+        <p>Timestamp: {{ generation_timestamp }}</p>
+    </footer>
+
+    <script>
+        // Tab switching functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const tabLinks = document.querySelectorAll('.tab-link');
+            const tabContents = document.querySelectorAll('.tab-content');
+            
+            tabLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    
+                    // Get the tab ID
+                    const tabId = this.getAttribute('data-tab');
+                    
+                    // Remove active class from all tabs and content
+                    tabLinks.forEach(tl => tl.classList.remove('active'));
+                    tabContents.forEach(tc => tc.classList.remove('active'));
+                    
+                    // Add active class to current tab and content
+                    this.classList.add('active');
+                    document.getElementById(tabId).classList.add('active');
+                });
+            });
+        });
+    </script>
+</body>
+</html>

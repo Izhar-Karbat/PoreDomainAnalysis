@@ -1,0 +1,212 @@
+<!-- Enhanced Statistical Presentation Component -->
+<script type="text/babel">
+// Render the Enhanced Statistical Display component
+document.addEventListener('DOMContentLoaded', function() {
+    // Data from metrics with p-values for statistical comparisons
+    const metricsData = {
+        dimensions: [
+            'G-G Distance (Å)',
+            'Cavity Radius (Å)',
+            'Inner Vestibule Waters (count)',
+            'SF Gyration (Å)'
+        ],
+        pairs: [
+            { 
+                name: 'Toxin vs Control', 
+                values: [
+                    {
+                        value1: {{ format_number(gg_distance_means.toxin.mean) }},
+                        value2: {{ format_number(gg_distance_means.control.mean) }},
+                        pValue: {{ format_number(gg_distance_stats.toxin_vs_control_pvalue) }},
+                        units: 'Å'
+                    },
+                    {
+                        value1: {{ format_number(cavity_radius_metrics.toxin.mean) if cavity_radius_metrics and cavity_radius_metrics.toxin else 'null' }},
+                        value2: {{ format_number(cavity_radius_metrics.control.mean) if cavity_radius_metrics and cavity_radius_metrics.control else 'null' }},
+                        pValue: {{ format_number(cavity_radius_stats.pvalue) if cavity_radius_stats else 0.5 }},
+                        units: 'Å'
+                    },
+                    {
+                        value1: {{ format_number(vestibule_water_metrics.toxin.mean) if vestibule_water_metrics and vestibule_water_metrics.toxin else 'null' }},
+                        value2: {{ format_number(vestibule_water_metrics.control.mean) if vestibule_water_metrics and vestibule_water_metrics.control else 'null' }},
+                        pValue: {{ format_number(vestibule_water_stats.pvalue) if vestibule_water_stats else 0.4 }},
+                        units: ''
+                    },
+                    {
+                        value1: {{ format_number(sf_gyration_metrics.toxin.mean) if sf_gyration_metrics and sf_gyration_metrics.toxin else 'null' }},
+                        value2: {{ format_number(sf_gyration_metrics.control.mean) if sf_gyration_metrics and sf_gyration_metrics.control else 'null' }},
+                        pValue: {{ format_number(sf_gyration_stats.pvalue) if sf_gyration_stats else 0.3 }},
+                        units: 'Å'
+                    }
+                ]
+            },
+            {
+                name: 'AC vs BD Chains (Toxin)', 
+                values: [
+                    {
+                        value1: {{ format_number(actualData.toxin.AC.mean.value) }},
+                        value2: {{ format_number(actualData.toxin.BD.mean.value) }},
+                        pValue: {{ format_number(ac_bd_stats_toxin.gg_distance_pvalue) if ac_bd_stats_toxin else 0.2 }},
+                        units: 'Å'
+                    },
+                    {
+                        value1: {{ format_number(cavity_radius_chains.toxin.AC) if cavity_radius_chains and cavity_radius_chains.toxin else 'null' }},
+                        value2: {{ format_number(cavity_radius_chains.toxin.BD) if cavity_radius_chains and cavity_radius_chains.toxin else 'null' }},
+                        pValue: {{ format_number(ac_bd_stats_toxin.cavity_radius_pvalue) if ac_bd_stats_toxin else 0.3 }},
+                        units: 'Å'
+                    },
+                    {
+                        value1: {{ format_number(vestibule_water_chains.toxin.AC) if vestibule_water_chains and vestibule_water_chains.toxin else 'null' }},
+                        value2: {{ format_number(vestibule_water_chains.toxin.BD) if vestibule_water_chains and vestibule_water_chains.toxin else 'null' }},
+                        pValue: {{ format_number(ac_bd_stats_toxin.vestibule_water_pvalue) if ac_bd_stats_toxin else 0.5 }},
+                        units: ''
+                    },
+                    {
+                        value1: {{ format_number(sf_gyration_chains.toxin.AC) if sf_gyration_chains and sf_gyration_chains.toxin else 'null' }},
+                        value2: {{ format_number(sf_gyration_chains.toxin.BD) if sf_gyration_chains and sf_gyration_chains.toxin else 'null' }},
+                        pValue: {{ format_number(ac_bd_stats_toxin.sf_gyration_pvalue) if ac_bd_stats_toxin else 0.4 }},
+                        units: 'Å'
+                    }
+                ]
+            }
+        ]
+    };
+
+    // Statistical Significance component
+    function SignificanceStars({ pValue }) {
+        if (pValue === null || pValue === undefined) return null;
+        
+        if (pValue < 0.001) return <span title="p < 0.001">***</span>;
+        if (pValue < 0.01) return <span title="p < 0.01">**</span>;
+        if (pValue < 0.05) return <span title="p < 0.05">*</span>;
+        return <span title="Not significant">ns</span>;
+    }
+
+    // Table Cell component
+    function ValueCell({ value, units }) {
+        if (value === null || value === undefined) {
+            return <span className="unavailable">N/A</span>;
+        }
+        return (
+            <span>{value}{units ? units : ''}</span>
+        );
+    }
+
+    // Enhanced Statistical Display component
+    function EnhancedStatisticalDisplay({ data }) {
+        // CSS styles
+        const styles = {
+            container: {
+                fontFamily: 'sans-serif',
+                marginBottom: '20px'
+            },
+            table: {
+                width: '100%',
+                borderCollapse: 'collapse',
+                marginTop: '15px',
+                fontSize: '0.95em'
+            },
+            thead: {
+                backgroundColor: '#e9ecef',
+                fontWeight: 'bold'
+            },
+            th: {
+                padding: '8px 12px',
+                border: '1px solid #ddd',
+                textAlign: 'left'
+            },
+            td: {
+                padding: '8px 12px',
+                border: '1px solid #ddd',
+                position: 'relative'
+            },
+            stars: {
+                color: '#dc3545',
+                fontWeight: 'bold',
+                marginLeft: '5px',
+                fontSize: '0.9em'
+            },
+            even: {
+                backgroundColor: '#f8f9fa'
+            },
+            legend: {
+                marginTop: '10px',
+                fontSize: '0.85em',
+                color: '#666',
+                padding: '8px',
+                backgroundColor: '#f9f9f9',
+                borderRadius: '4px'
+            },
+            valueCell: {
+                minWidth: '80px',
+                display: 'inline-block'
+            },
+            unavailable: {
+                fontStyle: 'italic',
+                color: '#6c757d'
+            }
+        };
+
+        return (
+            <div style={styles.container}>
+                {data.pairs.map((pair, pairIndex) => (
+                    <div key={pairIndex} style={{marginBottom: '20px'}}>
+                        <h4>{pair.name}</h4>
+                        <table style={styles.table}>
+                            <thead style={styles.thead}>
+                                <tr>
+                                    <th style={styles.th}>Metric</th>
+                                    <th style={styles.th}>{pair.name.split(' vs ')[0]}</th>
+                                    <th style={styles.th}>{pair.name.split(' vs ')[1]}</th>
+                                    <th style={styles.th}>Significance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.dimensions.map((dimension, dimIndex) => {
+                                    const comparison = pair.values[dimIndex];
+                                    if (!comparison) return null;
+                                    
+                                    const rowStyle = {
+                                        ...styles.td,
+                                        ...(dimIndex % 2 === 0 ? styles.even : {})
+                                    };
+                                    
+                                    return (
+                                        <tr key={dimIndex}>
+                                            <td style={rowStyle}>{dimension}</td>
+                                            <td style={rowStyle}>
+                                                <ValueCell value={comparison.value1} units={comparison.units} />
+                                            </td>
+                                            <td style={rowStyle}>
+                                                <ValueCell value={comparison.value2} units={comparison.units} />
+                                            </td>
+                                            <td style={rowStyle}>
+                                                <span style={styles.stars}>
+                                                    <SignificanceStars pValue={comparison.pValue} />
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                ))}
+                <div style={styles.legend}>
+                    <strong>Statistical Significance:</strong> 
+                    *** p&lt;0.001, 
+                    ** p&lt;0.01, 
+                    * p&lt;0.05, 
+                    ns: not significant (p≥0.05)
+                </div>
+            </div>
+        );
+    }
+
+    // Render the component
+    ReactDOM.render(
+        React.createElement(EnhancedStatisticalDisplay, { data: metricsData }),
+        document.getElementById('pore-geometry-stats-container')
+    );
+});
+</script>

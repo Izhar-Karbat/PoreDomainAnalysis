@@ -1,0 +1,146 @@
+/* 
+ * Enhanced Report Generator - Style Sheet
+ * This stylesheet defines the appearance of the HTML reports
+ */
+
+/* Global styles */
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    line-height: 1.6;
+    color: #333;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Header */
+header {
+    border-bottom: 2px solid #007bff;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+h1 {
+    color: #007bff;
+    margin-bottom: 10px;
+}
+
+h2 {
+    color: #333;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 5px;
+    margin-top: 30px;
+}
+
+h3 {
+    color: #555;
+    margin-top: 20px;
+}
+
+.timestamp {
+    font-size: 0.9em;
+    color: #777;
+    text-align: right;
+}
+
+.metadata-summary {
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 5px;
+    margin-top: 10px;
+}
+
+/* Sections */
+.section {
+    margin-bottom: 40px;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background-color: #f9f9f9;
+}
+
+.section-description {
+    font-style: italic;
+    color: #555;
+    margin-bottom: 15px;
+}
+
+/* Tables */
+.metrics-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+
+.metrics-table th, 
+.metrics-table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+.metrics-table th {
+    background-color: #f0f0f0;
+}
+
+.metrics-table tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+/* Lists */
+.system-list {
+    list-style-type: none;
+    padding-left: 10px;
+}
+
+.system-list li {
+    padding: 5px;
+    margin-bottom: 5px;
+    border-radius: 3px;
+}
+
+/* Group-specific styling */
+.toxin-group, .toxin-value, .toxin-system {
+    color: #d63384;
+    font-weight: bold;
+}
+
+.control-group, .control-value, .control-system {
+    color: #198754;
+    font-weight: bold;
+}
+
+.toxin-system {
+    background-color: #f8d7da;
+    border-left: 3px solid #d63384;
+    padding-left: 5px;
+}
+
+.control-system {
+    background-color: #d1e7dd;
+    border-left: 3px solid #198754;
+    padding-left: 5px;
+}
+
+/* AI Interpretation */
+.ai-interpretation {
+    background-color: #f0f8ff;
+    padding: 15px;
+    border: 1px dashed #add8e6;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    margin-top: 15px;
+    font-size: 0.95em;
+    line-height: 1.5;
+}
+
+/* Footer */
+.footer {
+    margin-top: 30px;
+    text-align: center;
+    font-size: 0.8em;
+    color: #888;
+    border-top: 1px solid #eee;
+    padding-top: 10px;
+}
